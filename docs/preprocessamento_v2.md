@@ -44,13 +44,13 @@ CSV hom -> prep_homography.py ----> homography.parquet (opcional) --------------
 
 | Tarefa | Descrição |
 |---|---|
-| A1 Carga e alinhamento | Ler o ATD com `kloppy.metrica.load_tracking_epts` e `asset_paths()`. `video_frame = frame_id - 1`. Asserts: 199.319 linhas, faixa 0..199.318 em ordem. |
+| A1 Carga e alinhamento | Ler o ATD com `kloppy.metrica.load_tracking_epts` + `asset_paths()`, **ou** em streaming direto do `.txt`/`.xml` como em `starter/baseline.py` (muito mais rápido e leve em RAM; traz também o `s` escalar nativo). `video_frame = frame_id - 1`. Asserts: 199.319 linhas, faixa 0..199.318 em ordem. |
 | A2 Tempos de jogo | `half_video_blocks('BAR-ATH')`: (1, 11185, 90651) e (2, 110808, 190197). Cada tempo é independente. |
 | A3 Metros e orientação | Multiplicar por 105,3 × 68,0 (`games.py`). Descobrir por tempo se a casa defende x pequeno e refletir o campo para que cada time ataque sempre no mesmo sentido. Inverter também velocidade e aceleração. Assert: o flip do 2º tempo é o oposto do 1º. |
 | A4 Bola | Filtro de saltos (maior cadeia consistente) → colunas de confiança depois do filtro → interpolação só de lacunas curtas → suavização offline por trechos contínuos (Kalman + RTS ou Savitzky-Golay) → `ball_vx, ball_vy, ball_speed, ball_acc`. |
-| A5 Jogadores | `slot_break` nos saltos de 1 frame; só apagar a posição de pontos isolados. Velocidade vetorial por derivada da posição suavizada, por trechos entre quebras. Remover duplicatas (mesmo time a <1 m) nas contagens. |
+| A5 Jogadores | `slot_break` nos saltos de 1 frame; apagar a posição de pontos isolados. Velocidade vetorial por derivada da posição suavizada, por trechos entre quebras. Remover duplicatas (mesmo time a <1 m): zerar como `NaN` o slot duplicado no frame no `tracking_clean.parquet` (V1), para que A6 e B2–B4 já fiquem sem duplicatas. |
 | A6 Agregados por time | `centroid_*`, `spread_*`, `mean_speed_*`, `n_still_*`, `n_tracked_*`, robustos à troca de slots. |
-| A7 Time de cada slot | Verificar se o time de um slot é constante e se há objetos que não são jogadores de linha (ex.: árbitros). Exportar `slot_teams.parquet`. Não assumir: confirmar nos dados. |
+| A7 Time de cada slot | Verificar o mapeamento no XML (`starter/baseline.py: team_of_each_track`) e se há objetos que não são jogadores de linha. Exportar `slot_teams.parquet`. |
 | A8 Saída | `tracking_clean.parquet` (V0, depois V1). |
 
 ### Filtro de saltos da bola (maior cadeia consistente)
@@ -207,7 +207,7 @@ def pitch_features(x, y, margin=1.0):
 | C1 Leitura | XML SportsCode do kloppy (ou `starter/load_smart_tagging.py`). Comparar texto sem diferenciar maiúsculas. `round(segundos * 25)`. Os 14 códigos estão no `DATA.md`. |
 | C2 Set pieces | `is_set_piece`, `sp_type`, separados das fases, mais `frames_to_next_sp` e `frames_since_sp_end`. Os segundos antes de lateral, falta ou tiro de meta são candidatos a bola morta. |
 | C3 Fases | `n_tags_favor_home` e `n_tags_favor_away`, sem perda por sobrescrita. Ofensiva favorece o time da tag; defensiva favorece o adversário. `Team = N/A` não conta (e não é falta de dado). |
-| C4 Pontapé inicial | `pre_kickoff`: frames avaliados antes do `Kick Off (Start)` de cada tempo (2º tempo: 2.934 frames D). Usar 113.742 (FAQ) só para conferir. Entregar o frame do pontapé de cada tempo em `kickoffs.json`. |
+| C4 Pontapé inicial | `pre_kickoff`: frames avaliados antes do pontapé inicial de cada tempo (2º tempo: `110808..113741`, 2.934 frames D). **Atenção:** a tag `Kick Off (Start)` no XML é uma janela de ~5 s que abre ~3,5 s antes do chute (`starter/load_smart_tagging.py` e `01_smart_tagging.ipynb`); checar **continência** (`start_frame <= kickoff <= end_frame` para `11185` e `113742`) e gravar `kickoffs.json`. |
 | C5 Homografia (opcional) | `reproj_error` e `valid` do CSV. Baixa prioridade, só para depuração. |
 | C6 Checagens locais | (1) taxa de sobreposição de fases; (2) se ofensiva e defensiva do mesmo time coexistem (não deveriam); (3) onde o intervalo de set piece começa/termina em relação à bola. |
 | C7 Saída | `tagging.parquet` (+ `homography.parquet`). |
@@ -235,7 +235,7 @@ def build_tag_features(ev, n=199_319, fps=25):
             sp_type[a:b + 1] = str(r["Type"]).strip().lower()
             starts.append(a); ends.append(b)
             if "kick off (start)" in str(r["Type"]).lower():
-                kicks.append(a)
+                kicks.append((a, b))                      # janela [a, b] da tag (~5 s ao redor da batida)
             continue
         team = TEAM.get(str(r["Team"]).strip().lower())
         if team is None:
@@ -259,14 +259,17 @@ def distance_to_set_pieces(starts, ends, n=199_319):
     since_end[ok] = f[ok] - ends[j[ok]]
     return to_next, since_end
 
-def pre_kickoff_mask(kicks, blocks, n=199_319):
+def pre_kickoff_mask(kick_frames, blocks, n=199_319):
+    """kick_frames: dict {1: 11185, 2: 113742} (apos validar que caem dentro das janelas (a, b) de kicks)."""
     m = np.zeros(n, bool)
-    for _, f0, f1 in blocks:                                        # blocks = half_video_blocks(...)
-        ks = [k for k in kicks if f0 <= k <= f1]
-        if ks:
-             m[f0:min(ks)] = True                                    # antes do pontape inicial do tempo
+    for half, f0, f1 in blocks:                                     # blocks = half_video_blocks(...)
+        k = kick_frames.get(half)
+        if k is not None and f0 <= k <= f1:
+             m[f0:k] = True                                         # antes do pontape inicial do tempo
     return m
 ```
+> **Nota importante sobre `Kick Off (Start)` (`starter/01_smart_tagging.ipynb`, célula 11, e `starter/load_smart_tagging.py`):** no XML, cada tag `Kick Off (Start)` marca uma **janela `[a, b]` de ~5 s** ao redor do reinício, abrindo ~3,5 s **antes** do chute real (`a < 11185 <= b` no 1º tempo e `a < 113742 <= b` no 2º tempo). Se usássemos `a` como o frame do chute, perderíamos ~88 frames `D` antes do pontapé do 2º tempo e no 1º tempo `a < f0`. Por isso, `C4` verifica a **continência** `a <= kick_frame <= b` (como faz `load_smart_tagging.check_time_base()`) e usa os frames de pontapé `11185` e `113742` em `pre_kickoff_mask` e em `kickoffs.json`.
+
 Hipóteses a confirmar, não fatos: (a) a classificação ofensiva/defensiva dos códigos segue as descrições do `OVERVIEW.md`; `DEFENSIVE TRANSITION` foi tratada como "o time da tag acabou de perder a bola"; (b) o valor do time vem escrito `Atletic Club`, com um t só, segundo o `DATA.md`. A tag é evidência, não resposta: é automática, tem falsos positivos e negativos, e os intervalos são fases, não posses.
 
 ## 6. Testes de sanidade automatizados

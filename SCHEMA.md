@@ -126,12 +126,13 @@ Se A7 mostrar que o time de um slot **não é constante**, a A7 avisa o grupo an
 
 ### `kickoffs.json` (C4)
 ```json
-{"1": <frame do Kick Off (Start) do 1º tempo>, "2": <frame do 2º tempo>}
+{"1": 11185, "2": 113742, "tag_windows": {"1": [start_1, end_1], "2": [start_2, end_2]}}
 ```
-Valores de conferência (`FAQ.md`/`DATA.md`): 11.185 e 113.742.
+> **Atenção (`starter/01_smart_tagging.ipynb`, célula 11, e `starter/load_smart_tagging.py`):** no XML do Smart Tagging, a tag `Kick Off (Start)` marca uma **janela de ~5 s ao redor do pontapé** (abre ~3,5 s antes da batida), e **não** o frame exato do chute. Portanto, o teste correto sobre o XML é de **continência** (`start_frame <= kickoff <= end_frame`, como em `load_smart_tagging.check_time_base()`), e não de igualdade (`start_frame == kickoff`). Os frames exatos do pontapé inicial são `11185` (1º tempo) e `113742` (2º tempo, após os 2.934 frames `D` de `110808..113741`), publicados em `DATA.md`, `FAQ.md` e `starter/load_smart_tagging.py` (ou refinados dentro da janela da tag pelo início do movimento da bola no tracking).
 
 ### Colunas por slot em `tracking_clean.parquet`
 `s01_x`, `s01_y`, `s01_vx`, `s01_vy`, `s01_break` … `s46_*` (`NN` com dois dígitos; metros e m/s, orientados). Mais: `flip` (int8: 1 se o campo foi refletido naquele tempo), `ball_x_raw`, `ball_y_raw` (posição original em metros, antes de qualquer filtro). Essas colunas **não** entram no master.
+- **Pontos isolados e duplicatas (A5):** quando um slot tem ponto isolado ou é duplicata de outro slot do mesmo time no mesmo frame (distância < `DEDUP_DIST` = 1 m), sua posição `(sNN_x, sNN_y, sNN_vx, sNN_vy)` naquele frame já vira `NaN` no `tracking_clean.parquet` (V1). Assim, tanto os agregados de A6 quanto as proximidades e contagens de B2–B4 ficam livres de duplicatas automaticamente.
 
 ## Decisões fechadas (reunião de 27/10)
 
