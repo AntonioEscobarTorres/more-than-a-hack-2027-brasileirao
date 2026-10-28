@@ -106,3 +106,74 @@ def test_flip_orients_coordinates_and_velocity_and_halves_oppose():
     assert frame.loc[3, "s01_vx"] > 0  # original negative velocity was reflected
     assert frame.loc[0, "ball_vx"] > 0
     assert frame.loc[3, "ball_vx"] > 0
+"""Testes complementares para prep_tracking alinhados à implementação real."""
+import numpy as np
+import pytest
+from preprocessing import prep_tracking as pt
+
+
+def test_kickoff_fallback_when_file_missing(tmp_path):
+    """Garante fallback para KICKOFF_FALLBACK quando kickoffs.json não existe no data_dir."""
+    # Passa um diretório vazio
+    kickoffs = pt._kickoff_frames(data_dir=str(tmp_path))
+    assert kickoffs[1] == pt.KICKOFF_FALLBACK[1]
+    assert kickoffs[2] == pt.KICKOFF_FALLBACK[2]
+
+
+def test_kickoff_loads_from_valid_json(tmp_path):
+    """Garante leitura correta quando kickoffs.json existe."""
+    import json
+    proc_dir = tmp_path / "processed"
+    proc_dir.mkdir(parents=True)
+    payload = {"1": 12000, "2": 115000}
+    (proc_dir / "kickoffs.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    kickoffs = pt._kickoff_frames(data_dir=str(tmp_path))
+    assert kickoffs[1] == 12000
+    assert kickoffs[2] == 115000
+
+
+def test_coordinates_and_velocities_scaled_to_meters():
+    """Garante que as saídas do prepare_tracking estão em metros (PITCH_L x PITCH_W)."""
+    blocks = [(1, 0, 1)]
+    teams = np.arange(pt.N_SLOTS) % 2
+    players = np.full((2, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    # Jogador 0 no centro normalizado (0.5, 0.5)
+    players[:, 0, :2] = [0.5, 0.5]
+    ball = np.full((2, 3), np.nan, dtype=np.float32)
+    ball[:, :2] = [0.5, 0.5]
+
+    frame, _ = pt.prepare_tracking(
+        players, ball, teams, blocks=blocks, pitch=(105.3, 68.0), kickoffs={1: 0}, n_frames=2
+    )
+
+    # 0.5 * 105.3 = 52.65m; 0.5 * 68.0 = 34.0m
+    np.testing.assert_allclose(frame.loc[0, "s01_x"], 52.65, rtol=1e-3)
+    np.testing.assert_allclose(frame.loc[0, "s01_y"], 34.00, rtol=1e-3)
+    np.testing.assert_allclose(frame.loc[0, "ball_x"], 52.65, rtol=1e-3)
+    np.testing.assert_allclose(frame.loc[0, "ball_y"], 34.00, rtol=1e-3)
+
+
+def test_orient_half_reflects_x_y_and_vectors():
+    """Valida reflexão direta da função _orient_half em coordenadas e velocidades."""
+    length, width = 105.3, 68.0
+    players = np.full((5, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    ball = np.full((5, 3), np.nan, dtype=np.float32)
+    teams = [0] + [1] * (pt.N_SLOTS - 1)  # slot 0 é time da casa (0)
+
+    # Time da casa em x alto (> length/2) -> Deve forçar flip=True
+    players[:, 0, :2] = [80.0, 20.0]
+    players[:, 0, 2] = 5.0  # speed escalar bruto
+    ball[:, :2] = [70.0, 15.0]
+
+    flipped = pt._orient_half(players, ball, teams, start=0, end=5, kick_frame=0, pitch=(length, width))
+
+    assert flipped is True or flipped == 1
+    # Posições refletidas: L - x e W - y
+    # Inputs and reflected arrays use float32, so allow their rounding error.
+    np.testing.assert_allclose(players[0, 0, 0], length - 80.0, atol=1e-5)
+    np.testing.assert_allclose(players[0, 0, 1], width - 20.0, atol=1e-5)
+    np.testing.assert_allclose(ball[0, 0], length - 70.0, atol=1e-5)
+    np.testing.assert_allclose(ball[0, 1], width - 15.0, atol=1e-5)
+    # Inversão do componente escalar/vetorial bruto
+    np.testing.assert_allclose(players[0, 0, 2], -5.0)
