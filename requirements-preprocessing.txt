@@ -5,3 +5,4 @@
 pyarrow>=14.0.0
 scipy
 pytest
+matplotlib
