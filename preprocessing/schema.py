@@ -28,7 +28,7 @@ MASTER_GROUPS = OrderedDict([
     ("velocidade_relativa", ("B", [("speed_rel_home", "float32"), ("speed_rel_away", "float32")])),
     ("campo", ("B", [("out_of_pitch", "float32"), ("d_touchline", "float32"),
                      ("d_goalline", "float32")])),
-    ("set_pieces", ("C", [("is_set_piece", "bool"), ("sp_type", "string"),
+    ("set_pieces", ("C", [("is_set_piece", "bool"), ("sp_type", "string"), ("sp_team", "string"),
                           ("frames_to_next_sp", "float32"), ("frames_since_sp_end", "float32")])),
     ("fases", ("C", [("n_tags_favor_home", "int16"), ("n_tags_favor_away", "int16")])),
     ("pontape", ("C", [("pre_kickoff", "bool")])),

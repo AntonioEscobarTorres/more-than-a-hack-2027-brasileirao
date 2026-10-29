@@ -205,11 +205,11 @@ def pitch_features(x, y, margin=1.0):
 | Tarefa | Descrição |
 |---|---|
 | C1 Leitura | XML SportsCode do kloppy (ou `starter/load_smart_tagging.py`). Comparar texto sem diferenciar maiúsculas. `round(segundos * 25)`. Os 14 códigos estão no `DATA.md`. |
-| C2 Set pieces | `is_set_piece`, `sp_type`, separados das fases, mais `frames_to_next_sp` e `frames_since_sp_end`. Os segundos antes de lateral, falta ou tiro de meta são candidatos a bola morta. |
+| C2 Set pieces | `is_set_piece`, `sp_type`, `sp_team`, separados das fases, mais `frames_to_next_sp` e `frames_since_sp_end` (**calculados por tempo de jogo**, `NaN` quando `half == 0`). Os segundos antes de lateral, falta ou tiro de meta são candidatos a bola morta, e `sp_team` indica quem cobra o reinício quando disponível (`H`/`A`/`U`). |
 | C3 Fases | `n_tags_favor_home` e `n_tags_favor_away`, sem perda por sobrescrita. Ofensiva favorece o time da tag; defensiva favorece o adversário. `Team = N/A` não conta (e não é falta de dado). |
 | C4 Pontapé inicial | `pre_kickoff`: frames avaliados antes do pontapé inicial de cada tempo (2º tempo: `110808..113741`, 2.934 frames D). **Atenção:** a tag `Kick Off (Start)` no XML é uma janela de ~5 s que abre ~3,5 s antes do chute (`starter/load_smart_tagging.py` e `01_smart_tagging.ipynb`); checar **continência** (`start_frame <= kickoff <= end_frame` para `11185` e `113742`) e gravar `kickoffs.json`. |
 | C5 Homografia (opcional) | `reproj_error` e `valid` do CSV. Baixa prioridade, só para depuração. |
-| C6 Checagens locais | (1) taxa de sobreposição de fases; (2) se ofensiva e defensiva do mesmo time coexistem (não deveriam); (3) onde o intervalo de set piece começa/termina em relação à bola. |
+| C6 Checagens locais | (1) taxa de sobreposição de fases; (2) se ofensiva e defensiva do mesmo time coexistem (não deveriam); (3) onde o intervalo de set piece (e de `GOALS`) começa/termina em relação à bola. |
 | C7 Saída | `tagging.parquet` (+ `homography.parquet`). |
 
 ```python
@@ -227,20 +227,22 @@ def build_tag_features(ev, n=199_319):
     favor = {"H": np.zeros(n, np.int16), "A": np.zeros(n, np.int16)}
     is_sp = np.zeros(n, bool)
     sp_type = np.full(n, "", dtype=object)
+    sp_team = np.full(n, "", dtype=object)
     starts, ends, kicks = [], [], []
     for _, r in ev.iterrows():
         code = str(r["code"]).strip().upper()
         a, b = int(r["start_frame"]), int(r["end_frame"])   # [a, b) semiaberto (sem + 1)
+        team = str(r["team"]).strip().upper()
         if code == "SET PIECES":                            # set pieces: NUNCA misturar com fases
             typ = str(r["type"]).strip().lower()
             is_sp[a:b] = True
             sp_type[a:b] = typ
+            sp_team[a:b] = team if team in ("H", "A", "U") else "U"
             if b > a:
                 starts.append(a); ends.append(b - 1)        # b - 1 = ultimo frame ativo do set piece
             if "kick off (start)" in typ:
                 kicks.append((a, b))                        # janela [a, b) da tag (~5 s ao redor da batida)
             continue
-        team = str(r["team"]).strip().upper()
         if team not in ("H", "A"):
             continue                                        # 'U' (N/A): nao diz a favor de quem
         other = "A" if team == "H" else "H"
@@ -248,18 +250,25 @@ def build_tag_features(ev, n=199_319):
             favor[team][a:b] += 1                           # fase ofensiva favorece o time da tag
         elif code in DEF:
             favor[other][a:b] += 1                          # fase defensiva favorece o adversario
-    return favor["H"], favor["A"], is_sp, sp_type, np.sort(starts), np.sort(ends), sorted(kicks)
+    return favor["H"], favor["A"], is_sp, sp_type, sp_team, np.sort(starts), np.sort(ends), sorted(kicks)
 
-def distance_to_set_pieces(starts, ends, n=199_319):
-    f = np.arange(n)
-    i = np.searchsorted(starts, f, side="left")                    # 1o inicio >= f
-    to_next = np.full(n, np.nan)
-    ok = i < len(starts)
-    to_next[ok] = starts[i[ok]] - f[ok]
-    j = np.searchsorted(ends, f, side="right") - 1                  # ultimo fim <= f
-    since_end = np.full(n, np.nan)
-    ok = j >= 0
-    since_end[ok] = f[ok] - ends[j[ok]]
+def distance_to_set_pieces(starts, ends, blocks, n=199_319):
+    """Calcula distancias apenas dentro de cada tempo (blocks = half_video_blocks).
+    Fora dos tempos (half == 0) fica NaN; nada cruza o intervalo."""
+    starts = np.asarray(starts, dtype=int)
+    ends = np.asarray(ends, dtype=int)
+    to_next = np.full(n, np.nan, dtype=np.float32)
+    since_end = np.full(n, np.nan, dtype=np.float32)
+    for _, f0, f1 in blocks:
+        f = np.arange(f0, f1 + 1)
+        s_half = starts[(starts >= f0) & (starts <= f1)]
+        e_half = ends[(ends >= f0) & (ends <= f1)]
+        i = np.searchsorted(s_half, f, side="left")         # 1o inicio >= f no mesmo tempo
+        ok = i < len(s_half)
+        to_next[f[ok]] = s_half[i[ok]] - f[ok]
+        j = np.searchsorted(e_half, f, side="right") - 1    # ultimo fim <= f no mesmo tempo
+        ok = j >= 0
+        since_end[f[ok]] = f[ok] - e_half[j[ok]]
     return to_next, since_end
 
 def pre_kickoff_mask(kick_frames, blocks, n=199_319):

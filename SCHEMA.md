@@ -95,8 +95,9 @@ Usa `ball_x/ball_y` (observadas + preenchidas). Slots NaN são ignorados.
 |---|---|---|---|
 | `is_set_piece` | bool | | — |
 | `sp_type` | string | minúsculas, vazio se não há set piece | tipos do XML: `throw-in`, `corner kick`, `goal kick`, `free kick`, `kick off (after goal)`, `kick off (start)` |
-| `frames_to_next_sp` | float32 | frames | não há set piece depois |
-| `frames_since_sp_end` | float32 | frames | não houve set piece antes |
+| `sp_team` | string | `'H'`, `'A'`, `'U'` (`N/A`) ou vazio se não há set piece | time da bola parada no XML (`r["team"]` da `C1`) |
+| `frames_to_next_sp` | float32 | frames | não há set piece depois **neste tempo** (ou `half == 0`) |
+| `frames_since_sp_end` | float32 | frames | não houve set piece antes **neste tempo** (ou `half == 0`) |
 
 ### Fases (C)
 | Coluna | Tipo | Significado |
