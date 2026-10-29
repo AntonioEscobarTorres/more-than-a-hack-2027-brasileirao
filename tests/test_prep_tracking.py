@@ -177,3 +177,96 @@ def test_orient_half_reflects_x_y_and_vectors():
     np.testing.assert_allclose(ball[0, 1], width - 15.0, atol=1e-5)
     # Inversão do componente escalar/vetorial bruto
     np.testing.assert_allclose(players[0, 0, 2], -5.0)
+
+
+def test_remove_ball_jump_outliers_bridges_long_phantom_block_exceeding_k():
+    """Garante que um bloco de >K (40 > 30) frames fantasmas é removido sem quebrar a cadeia real."""
+    x = np.full(110, np.nan, dtype=np.float32)
+    y = np.full(110, 34.0, dtype=np.float32)
+    # Bola real antes (35 frames) e depois (35 frames), movendo-se a 2.5 m/s (0.1 m/frame)
+    x[0:35] = 10.0 + 0.1 * np.arange(35, dtype=np.float32)
+    # Bloco fantasma de 40 frames (> BALL_K = 30) a ~35 m de distância
+    x[35:75] = 48.0
+    y[35:75] = 62.0
+    # Bola real reaparece na continuidade natural da trajetória original
+    x[75:110] = 10.0 + 0.1 * np.arange(75, 110, dtype=np.float32)
+
+    xo, yo = pt.remove_ball_jump_outliers(x, y, k=30)
+
+    assert np.isfinite(xo[0:35]).all() and np.isfinite(yo[0:35]).all()
+    assert np.isnan(xo[35:75]).all() and np.isnan(yo[35:75]).all()
+    assert np.isfinite(xo[75:110]).all() and np.isfinite(yo[75:110]).all()
+
+
+def test_remove_ball_jump_outliers_keeps_disjoint_long_chains_after_multiball_jump():
+    """Garante que duas cadeias longas disjuntas (ex.: reposição multi-bolas) são preservadas."""
+    x = np.full(80, np.nan, dtype=np.float32)
+    y = np.full(80, 34.0, dtype=np.float32)
+    x[0:35] = 10.0 + 0.1 * np.arange(35, dtype=np.float32)
+    x[35:75] = 80.0 - 0.1 * np.arange(40, dtype=np.float32)  # 2a bola a ~67 m em 1 frame
+    x[75:77] = 5.0  # pico fantasma curto de 2 frames no fim
+
+    xo, _ = pt.remove_ball_jump_outliers(x, y, k=30, min_chain=30)
+
+    assert np.isfinite(xo[0:35]).all()
+    assert np.isfinite(xo[35:75]).all()
+    assert np.isnan(xo[75:77]).all()
+
+
+def test_ball_derivatives_masked_when_filled_and_smoothed_against_jitter():
+    """Garante que velocidades/aceleração ficam NaN onde ball_filled == 1 e que o Savitzky-Golay atenua jitter."""
+    n = 20
+    blocks = [(1, 0, n - 1)]
+    teams = np.arange(pt.N_SLOTS) % 2
+    players = np.full((n, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    players[:, 0, :2] = [0.2, 0.5]
+    ball = np.full((n, 3), np.nan, dtype=np.float32)
+
+    # Trajetória linear com jitter de alta frequência nos primeiros 10 frames
+    t_obs = np.arange(10, dtype=np.float32)
+    jitter = (0.002 * np.sin(1.8 * t_obs)).astype(np.float32)
+    ball[0:10, 0] = 0.2 + 0.002 * t_obs + jitter
+    ball[0:10, 1] = 0.5
+    # Lacuna curta de 2 frames (frames 10 e 11 -> ball_filled == 1), seguida de observações em 12..19
+    ball[12:20, 0] = 0.2 + 0.002 * np.arange(12, 20, dtype=np.float32)
+    ball[12:20, 1] = 0.5
+
+    frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks, kickoffs={1: 0}, n_frames=n)
+
+    # Posição bruta observada (em metros) não é alterada pelo filtro de derivada
+    np.testing.assert_allclose(frame.loc[0:9, "ball_x"], frame.loc[0:9, "ball_x_raw"], rtol=1e-6)
+    # Nos frames interpolados (10 e 11), posição existe mas velocidades e aceleração são NaN
+    assert (frame.loc[10:11, "ball_filled"] == 1).all()
+    assert frame.loc[10:11, ["ball_vx", "ball_vy", "ball_speed", "ball_acc"]].isna().all().all()
+    # Nos frames observados (12..19), velocidades e aceleração existem
+    assert frame.loc[12:19, ["ball_vx", "ball_speed", "ball_acc"]].notna().all().all()
+    # Aceleração suavizada no trecho com jitter é muito menor que a 2a derivada crua
+    raw_vx = np.gradient(frame.loc[0:9, "ball_x_raw"].to_numpy()) * pt.FPS
+    raw_acc = np.abs(np.gradient(raw_vx) * pt.FPS)
+    assert frame.loc[2:7, "ball_acc"].mean() < 0.5 * raw_acc[2:8].mean()
+
+
+def test_ball_dir_change_detects_turn_and_masks_slow_ball():
+    """Garante que ball_dir_change vale ~0 em linha reta, >0 em curva rápida e NaN em bola lenta."""
+    n = 14
+    blocks = [(1, 0, n - 1)]
+    teams = np.arange(pt.N_SLOTS) % 2
+    players = np.full((n, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    players[:, 0, :2] = [0.2, 0.5]
+    ball = np.full((n, 3), np.nan, dtype=np.float32)
+
+    # Frames 0..6: bola rápida (10.5 m/s) em linha reta ao longo de +x -> dir_change == 0 em 1..4
+    for f in range(7):
+        ball[f, :2] = [0.2 + 0.004 * f, 0.5]
+    # Frames 7..10: curva de 90 graus movendo-se ao longo de +y (6.8 m/s)
+    for f in range(7, 11):
+        ball[f, :2] = [0.2 + 0.004 * 6, 0.5 + 0.004 * (f - 6)]
+    # Frames 11..13: bola praticamente parada (< 1.0 m/s) -> dir_change deve ser NaN
+    for f in range(11, 14):
+        ball[f, :2] = [0.2 + 0.004 * 6, 0.5 + 0.004 * 4]
+
+    frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks, kickoffs={1: 0}, n_frames=n)
+
+    np.testing.assert_allclose(frame.loc[1:4, "ball_dir_change"], 0.0, atol=1e-5)
+    assert frame.loc[7, "ball_dir_change"] > 0.4  # mudança brusca de direção na quina
+    assert frame.loc[12:13, "ball_dir_change"].isna().all()

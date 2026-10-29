@@ -45,11 +45,12 @@ Especificação completa: [`docs/preprocessamento_v2.md`](docs/preprocessamento_
 | Coluna | Tipo | Unidade | NaN significa |
 |---|---|---|---|
 | `ball_x`, `ball_y` | float32 | m, orientados | bola sem evidência (não observada e não preenchida) |
-| `ball_vx`, `ball_vy` | float32 | m/s, orientados | sem posição vizinha suficiente |
+| `ball_vx`, `ball_vy` | float32 | m/s, orientados | sem observação real vizinha suficiente (ou `ball_filled == 1`) |
 | `ball_speed` | float32 | m/s | idem |
 | `ball_acc` | float32 | m/s² (norma do vetor) | idem |
+| `ball_dir_change` | float32 | rad (`0..π`) | variação angular entre `v[t-1]` e `v[t]`; NaN se `ball_speed < MIN_BALL_SPEED_DIR` (1,0 m/s) em `t-1` ou `t` |
 
-`ball_x/ball_y` incluem as lacunas curtas interpoladas. NaN **sse** `ball_observed == 0` e `ball_filled == 0`.
+`ball_x/ball_y` incluem as lacunas curtas interpoladas (NaN **sse** `ball_observed == 0` e `ball_filled == 0`), sem suavização da posição armazenada. As derivadas (`ball_vx`, `ball_vy`, `ball_speed`, `ball_acc`) são calculadas com suavização zero-fase apenas nos trechos observados (`ball_observed == 1`) e ficam `NaN` onde `ball_filled == 1`.
 
 ### Confiança da bola (A) — calculada **depois** do filtro de saltos
 | Coluna | Tipo | Significado |
@@ -77,11 +78,13 @@ Usa `ball_x/ball_y` (observadas + preenchidas). Slots NaN são ignorados.
 | `d_near_home`, `d_near_away` | float32 | m | sem bola ou sem jogadores do time |
 | `d_diff` | float32 | m | `d_near_home - d_near_away` (negativo = casa mais perto) |
 | `n_home_r2`, `n_home_r3`, `n_home_r5`, `n_away_r2`, `n_away_r3`, `n_away_r5` | float32 | jogadores | **sem bola** (nunca zero) |
+| `pressure_home`, `pressure_away` | float32 | adimensional | `sum(exp(-d / PRESSURE_TAU))` com `PRESSURE_TAU = 3,0 m`; NaN **sem bola** |
 
 ### Velocidade relativa (B)
 | Coluna | Tipo | Unidade | Observação |
 |---|---|---|---|
-| `speed_rel_home`, `speed_rel_away` | float32 | m/s | norma da **diferença vetorial** bola − jogador mais próximo do time; NaN sem bola/jogador |
+| `speed_rel_home`, `speed_rel_away` | float32 | m/s | norma da **diferença vetorial** bola − jogador mais próximo do time; NaN sem velocidade observada da bola (ex.: sem bola ou `ball_filled == 1`) ou sem velocidade do jogador |
+| `speed_radial_home`, `speed_radial_away` | float32 | m/s | componente radial de afastamento/aproximação `(b - p) · (vb - vp) / max(d, 1e-3)` (negativo = aproximando, positivo = afastando); NaN nas mesmas condições de `speed_rel_*` |
 
 ### Campo (B)
 | Coluna | Tipo | Unidade | Observação |
@@ -98,6 +101,8 @@ Usa `ball_x/ball_y` (observadas + preenchidas). Slots NaN são ignorados.
 | `sp_team` | string | `'H'`, `'A'`, `'U'` (`N/A`) ou vazio se não há set piece | time da bola parada no XML (`r["team"]` da `C1`) |
 | `frames_to_next_sp` | float32 | frames | não há set piece depois **neste tempo** (ou `half == 0`) |
 | `frames_since_sp_end` | float32 | frames | não houve set piece antes **neste tempo** (ou `half == 0`) |
+| `next_sp_type` | string | minúsculas, vazio se `frames_to_next_sp` é NaN | tipo do próximo set piece neste tempo (distingue duração de parada antes de gol, tiro de meta, lateral etc.) |
+| `prev_sp_type` | string | minúsculas, vazio se `frames_since_sp_end` é NaN | tipo do último set piece encerrado neste tempo |
 
 ### Fases (C)
 | Coluna | Tipo | Significado |
@@ -121,7 +126,7 @@ Usa `ball_x/ball_y` (observadas + preenchidas). Slots NaN são ignorados.
 |---|---|---|
 | `slot` | int8 | 1..46 |
 | `is_home` | bool | time do slot (Barcelona = True) |
-| `is_field_player` | bool | False para objetos que não são jogadores de linha (ex.: árbitro), se existirem |
+| `is_field_player` | bool | True para jogadores dos dois clubes (inclui goleiros; o XML atribui todos os 46 slots a Barcelona ou Athletic); False apenas se um slot for identificado como não-jogador (ex.: árbitro) |
 
 Se A7 mostrar que o time de um slot **não é constante**, a A7 avisa o grupo antes de seguir; o plano alternativo é uma coluna `s{NN}_is_home` por frame no `tracking_clean.parquet`, com `slot_teams.parquet` só para os slots constantes.
 

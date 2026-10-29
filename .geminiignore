@@ -1,0 +1,9 @@
+# Block AI agents from indexing or reading restricted match assets or processed tracking tables
+data/
+*.parquet
+*.mp4
+*.pl3container
+*_possession_gt.csv
+*_possession_gt_meta.json
+*_possession_gt_reference.csv
+possession_by_frame.pkl

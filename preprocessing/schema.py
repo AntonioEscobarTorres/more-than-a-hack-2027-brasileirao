@@ -13,7 +13,8 @@ MASTER_GROUPS = OrderedDict([
     ("indice", ("D", [("video_frame", "int32"), ("half", "int8"), ("is_graded", "bool"),
                       ("frame_in_half", "float32")])),
     ("bola", ("A", [(c, "float32") for c in
-                    ("ball_x", "ball_y", "ball_vx", "ball_vy", "ball_speed", "ball_acc")])),
+                    ("ball_x", "ball_y", "ball_vx", "ball_vy", "ball_speed", "ball_acc",
+                     "ball_dir_change")])),
     ("confianca", ("A", [("ball_observed", "int8"), ("ball_jump_removed", "int8"),
                          ("ball_filled", "int8"), ("gap_length", "float32"),
                          ("since_last_obs", "float32"), ("until_next_obs", "float32")])),
@@ -24,12 +25,15 @@ MASTER_GROUPS = OrderedDict([
         "n_tracked_home", "n_tracked_away")])),
     ("proximidade", ("B", [(c, "float32") for c in (
         "d_near_home", "d_near_away", "d_diff",
-        "n_home_r2", "n_home_r3", "n_home_r5", "n_away_r2", "n_away_r3", "n_away_r5")])),
-    ("velocidade_relativa", ("B", [("speed_rel_home", "float32"), ("speed_rel_away", "float32")])),
+        "n_home_r2", "n_home_r3", "n_home_r5", "n_away_r2", "n_away_r3", "n_away_r5",
+        "pressure_home", "pressure_away")])),
+    ("velocidade_relativa", ("B", [("speed_rel_home", "float32"), ("speed_rel_away", "float32"),
+                                   ("speed_radial_home", "float32"), ("speed_radial_away", "float32")])),
     ("campo", ("B", [("out_of_pitch", "float32"), ("d_touchline", "float32"),
                      ("d_goalline", "float32")])),
     ("set_pieces", ("C", [("is_set_piece", "bool"), ("sp_type", "string"), ("sp_team", "string"),
-                          ("frames_to_next_sp", "float32"), ("frames_since_sp_end", "float32")])),
+                          ("frames_to_next_sp", "float32"), ("frames_since_sp_end", "float32"),
+                          ("next_sp_type", "string"), ("prev_sp_type", "string")])),
     ("fases", ("C", [("n_tags_favor_home", "int16"), ("n_tags_favor_away", "int16")])),
     ("pontape", ("C", [("pre_kickoff", "bool")])),
     ("homografia", ("C", [("reproj_error", "float32")])),   # opcional

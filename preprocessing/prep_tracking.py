@@ -21,7 +21,7 @@ import pandas as pd
 from games import GAME, GAMES, asset_paths, half_video_blocks
 from starter.baseline import team_of_each_track
 from .params import (BALL_EPS, BALL_K, BALL_VMAX, DEDUP_DIST, FPS, KICKOFF_FALLBACK, MAX_GAP_FRAMES,
-                     N_FRAMES, ORIENT_WIN, PITCH_L, PITCH_W, PLAYER_VMAX, STILL_SPEED)
+                     MIN_BALL_SPEED_DIR, N_FRAMES, ORIENT_WIN, PITCH_L, PITCH_W, PLAYER_VMAX, STILL_SPEED)
 from .schema import N_SLOTS
 from .params import SCHEMA_VERSION
 
@@ -100,27 +100,74 @@ def _triple(text):
     return vals if np.isfinite(vals[:2]).all() else None
 
 
-def remove_ball_jump_outliers(x, y, vmax=BALL_VMAX, fps=FPS, eps=BALL_EPS, k=BALL_K):
-    """Keep the longest mutually plausible chain of ball observations (O(n*k))."""
+def remove_ball_jump_outliers(x, y, vmax=BALL_VMAX, fps=FPS, eps=BALL_EPS, k=BALL_K, min_chain=None):
+    """Keep mutually plausible chains of ball observations (O(n*k)).
+
+    Tracks contiguous smooth runs so interior frames of a phantom burst cannot attach to
+    an earlier trajectory that the burst start could not reach, always includes pre-break
+    anchors so real play reconnects across phantom bursts longer than ``k`` observations,
+    and retains disjoint chains of length >= ``min_chain`` (default ``k``) so a legitimate
+    discontinuity (e.g. multi-ball restart) never discards a whole section of a half.
+    """
     obs = np.flatnonzero(np.isfinite(x) & np.isfinite(y))
     xo, yo = x.copy(), y.copy()
-    if len(obs) < 2:
+    m = len(obs)
+    if m < 2:
         return xo, yo
-    best = np.ones(len(obs), dtype=np.int32)
-    prev = np.full(len(obs), -1, dtype=np.int32)
-    for i in range(1, len(obs)):
-        js = np.arange(max(0, i - k), i)
+    if min_chain is None:
+        min_chain = k
+    best = np.ones(m, dtype=np.int32)
+    prev = np.full(m, -1, dtype=np.int32)
+    run_start = np.zeros(m, dtype=np.int32)
+    anchors = []  # end indices of previous smooth runs before a jump
+    for i in range(1, m):
+        dt_prev = (obs[i] - obs[i - 1]) / fps
+        step_dist = np.hypot(x[obs[i]] - x[obs[i - 1]], y[obs[i]] - y[obs[i - 1]])
+        if step_dist <= vmax * dt_prev + eps:
+            run_start[i] = run_start[i - 1]
+            # Inside a smooth run, only look back to the start of this run so a long
+            # stationary phantom never hooks onto an earlier real segment partway through.
+            js = np.arange(max(run_start[i], i - k), i, dtype=np.int32)
+        else:
+            run_start[i] = i
+            anchors.append(i - 1)
+            start_j = max(0, i - k)
+            js = np.arange(start_j, i, dtype=np.int32)
+            if anchors:
+                # Include prior run-end anchors so real play bridges across phantom bursts > k.
+                prior = np.asarray(anchors[-k:], dtype=np.int32)
+                prior = prior[prior < start_j]
+                if len(prior):
+                    js = np.r_[prior, js]
         dt = (obs[i] - obs[js]) / fps
         dist = np.hypot(x[obs[i]] - x[obs[js]], y[obs[i]] - y[obs[js]])
         valid = js[dist <= vmax * dt + eps]
         if len(valid):
             j = valid[np.argmax(best[valid])]
             best[i], prev[i] = best[j] + 1, j
+
     keep = np.zeros(len(x), dtype=bool)
-    i = int(np.argmax(best))
-    while i >= 0:
-        keep[obs[i]] = True
-        i = int(prev[i])
+    blocked = np.zeros(m, dtype=bool)
+    first_chain = True
+    while not blocked.all():
+        candidates = np.flatnonzero(~blocked)
+        i = int(candidates[np.argmax(best[candidates])])
+        chain = []
+        while i >= 0 and not blocked[i]:
+            chain.append(i)
+            p = int(prev[i])
+            # Never jump across an interval already claimed by a stronger valid chain.
+            if p >= 0 and blocked[p:i + 1].any():
+                break
+            i = p
+        if not first_chain and len(chain) < min_chain:
+            blocked[chain] = True
+            continue
+        first_chain = False
+        for idx in chain:
+            keep[obs[idx]] = True
+        blocked[min(chain):max(chain) + 1] = True
+
     xo[~keep], yo[~keep] = np.nan, np.nan
     return xo, yo
 
@@ -169,13 +216,30 @@ def slot_breaks(px, py, fps=FPS, vmax=PLAYER_VMAX):
     return broken, isolated
 
 
-def _segment_gradient(values, valid, fps=FPS):
-    """Differentiate finite contiguous runs independently; singleton runs have no speed."""
+def _binomial3_smooth(seg):
+    """Zero-phase [0.25, 0.5, 0.25] smoother with linear boundary reflection (exact on lines)."""
+    seg = np.asarray(seg, dtype=np.float64)
+    if len(seg) < 3:
+        return seg
+    padded = np.empty(len(seg) + 2, dtype=np.float64)
+    padded[0] = 2.0 * seg[0] - seg[1]
+    padded[1:-1] = seg
+    padded[-1] = 2.0 * seg[-1] - seg[-2]
+    return 0.25 * padded[:-2] + 0.5 * padded[1:-1] + 0.25 * padded[2:]
+
+
+def _segment_gradient(values, valid, fps=FPS, smooth=True):
+    """Differentiate finite contiguous runs independently; singleton runs have no speed.
+
+    When ``smooth=True``, applies a zero-phase 3-point binomial filter to each contiguous
+    run before differentiating, attenuating 25 Hz position jitter without altering stored positions.
+    """
     out = np.full(len(values), np.nan, dtype=np.float32)
     edges = np.flatnonzero(np.diff(np.r_[False, valid, False].astype(np.int8)))
     for start, end in zip(edges[::2], edges[1::2]):
         if end - start >= 2:
-            out[start:end] = np.gradient(values[start:end]) * fps
+            seg = _binomial3_smooth(values[start:end]) if smooth else values[start:end]
+            out[start:end] = np.gradient(seg) * fps
     return out
 
 
@@ -235,7 +299,7 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
 
     # Ball filtering and confidence features are calculated independently within each half.
     bx = np.full(t, np.nan, np.float32); by = bx.copy()
-    bvx = bx.copy(); bvy = bx.copy(); bspeed = bx.copy(); bacc = bx.copy()
+    bvx = bx.copy(); bvy = bx.copy(); bspeed = bx.copy(); bacc = bx.copy(); bdir = bx.copy()
     observed = np.zeros(t, np.int8); jump_removed = np.zeros(t, np.int8); filled_flag = np.zeros(t, np.int8)
     gap = np.full(t, np.nan, np.float32); since = gap.copy(); until = gap.copy()
     for _, first, last in blocks:
@@ -249,19 +313,26 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
         gap[sl], since[sl], until[sl] = gl, st, un
         ix, iy = _fill_short_gaps(fx, MAX_GAP_FRAMES), _fill_short_gaps(fy, MAX_GAP_FRAMES)
         filled_flag[sl] = ~obs & np.isfinite(ix) & np.isfinite(iy)
-        # Keep measured/interpolated positions as-is; no undocumented smoothing of observations.
-        sx, sy = ix, iy
-        bx[sl], by[sl] = sx, sy
-        valid = np.isfinite(sx) & np.isfinite(sy)
-        dvx, dvy = _segment_gradient(sx, valid), _segment_gradient(sy, valid)
+        # Keep measured/interpolated positions as-is; smooth only inside _segment_gradient,
+        # and differentiate strictly over observed runs (masked to NaN where ball_filled == 1).
+        bx[sl], by[sl] = ix, iy
+        dvx, dvy = _segment_gradient(fx, obs), _segment_gradient(fy, obs)
         bvx[sl], bvy[sl] = dvx, dvy
         speed = np.hypot(dvx, dvy)
         bspeed[sl] = speed
-        ax = _segment_gradient(dvx, np.isfinite(dvx) & np.isfinite(dvy))
-        ay = _segment_gradient(dvy, np.isfinite(dvx) & np.isfinite(dvy))
+        valid_vel = np.isfinite(dvx) & np.isfinite(dvy)
+        ax, ay = _segment_gradient(dvx, valid_vel), _segment_gradient(dvy, valid_vel)
         bacc[sl] = np.hypot(ax, ay)
+        dir_change = np.full(len(dvx), np.nan, dtype=np.float32)
+        if len(dvx) >= 2:
+            fast = (speed[:-1] >= MIN_BALL_SPEED_DIR) & (speed[1:] >= MIN_BALL_SPEED_DIR)
+            cross = np.abs(dvx[:-1] * dvy[1:] - dvy[:-1] * dvx[1:])
+            dot = dvx[:-1] * dvx[1:] + dvy[:-1] * dvy[1:]
+            dir_change[1:] = np.where(fast, np.arctan2(cross, dot), np.nan).astype(np.float32)
+        bdir[sl] = dir_change
     frame_data["ball_x"], frame_data["ball_y"] = bx, by
     frame_data["ball_vx"], frame_data["ball_vy"], frame_data["ball_speed"], frame_data["ball_acc"] = bvx, bvy, bspeed, bacc
+    frame_data["ball_dir_change"] = bdir
     frame_data["ball_observed"], frame_data["ball_jump_removed"], frame_data["ball_filled"] = observed, jump_removed, filled_flag
     frame_data["gap_length"], frame_data["since_last_obs"], frame_data["until_next_obs"] = gap, since, until
     frame_data["ball_x_raw"], frame_data["ball_y_raw"] = ball_raw[:, 0], ball_raw[:, 1]

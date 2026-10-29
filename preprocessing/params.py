@@ -17,6 +17,7 @@ BALL_VMAX = 38.0            # m/s, limite fisico de um chute muito forte (faixa 
 BALL_EPS = 1.0              # m, ruido de posicao do tracker (sensibilidade 0.5 / 1 / 2)
 BALL_K = 30                 # observacoes anteriores consideradas no filtro (estavel de 20 a 60)
 MAX_GAP_FRAMES = 12         # lacuna maxima para interpolar (0.5 s); comparar 6 / 12 / 25
+MIN_BALL_SPEED_DIR = 1.0    # m/s, velocidade minima da bola para calcular mudanca de direcao
 
 # Jogadores
 PLAYER_VMAX = 12.0          # m/s, acima do sprint humano; saltos acima viram slot_break
@@ -29,4 +30,5 @@ KICKOFF_FALLBACK = {1: 11_185, 2: 113_742}   # valores publicados (FAQ/DATA); so
 
 # Proximidade e campo
 RADII = (2.0, 3.0, 5.0)     # m, contagens n_*_r2/r3/r5
+PRESSURE_TAU = 3.0          # m, decaimento exponencial de pressao sum(exp(-d / tau))
 PITCH_MARGIN = 1.0          # m, margem de out_of_pitch

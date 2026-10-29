@@ -35,6 +35,7 @@ data/*
 *.mp4
 *.gzip
 *.pl3container
+*.parquet
 
 # -- internal documents ---------------------------------------------------------------------------
 # OVERVIEW.md -- the institutional description of the competition -- IS committed. It is the only
@@ -57,6 +58,7 @@ organizers/
 .idea/
 .vscode/
 __pycache__/
+.pytest_cache/
 *.py[cod]
 .venv/
 venv/
