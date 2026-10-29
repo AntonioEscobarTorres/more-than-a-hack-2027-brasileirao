@@ -390,8 +390,10 @@ Hipóteses a confirmar, não fatos: (a) a classificação ofensiva/defensiva dos
 - **Parametrização por partida (`games.py`):** Receber `--game` (default `games.GAME`) e buscar `n_video_frames`, `fps`, `pitch` e `half_video_blocks(game)` de `games.py` (usando `params.py` apenas como fallback), garantindo que o pipeline rode sem alterações nas 10 partidas da Fase 2.
 - **Zero anotação manual da partida (`RULES.md`):** É estritamente proibido anotar manualmente qualquer frame do jogo fornecido (nem para treinar, nem para validar).
 - **Como validar e escolher modelos sem overfit nos 5 min públicos:**
-  1. **Sanidade de sinal nos 5 min públicos:** Checar automaticamente que nos frames públicos `H` tem `d_diff < 0` em média e `n_tags_favor_home > n_tags_favor_away` (e o oposto para `A`), prevenindo erros de `flip` ou mapeamento de time.
-  2. **Auto-supervisão no jogo inteiro (*Masked Possession Reconstruction*):** Avaliar modelos ocultando artificialmente a bola por janelas de 2 a 15 s em trechos de posse fisicamente inequívoca no jogo completo e medindo a recuperação do possuidor e das transições, além de auditar contagem de posses, duração média e concordância com reinícios de `SET PIECES`.
+  1. **Métrica oficial de ranking (`evaluation/run_evaluation.py` e `possession_metrics.py`):** O ranking é decidido por **`spell_f1_mean` (`spellF1`, IoU temporal 0,3..0,7 sobre posses `H`/`A`, com `X` preenchido por *forward-fill* no tempo)**, tendo **`macro_f1` (`{H, A, D}`)** apenas como **1º critério de desempate** (seguido por `transF1` em $\pm 25$ frames e latência). Não existe fórmula ponderada combinando `spellF1` e `macroF1`.
+  2. **Sanidade de sinal nos 5 min públicos (*smoke test*):** Checar automaticamente que nos frames públicos `H` tem `d_diff < 0` em média e `n_tags_favor_home > n_tags_favor_away` (e o oposto para `A`). Falhas indicam bug de orientação/alinhamento (nunca usar os 5 min públicos para escolher hiperparâmetros ou modelos).
+  3. **Teste de robustez por auto-supervisão (*Masked Possession Reconstruction*) + Partidas externas (ex.: *Metrica Sample Games*):** Usar a ocultação artificial da bola no jogo como teste de regressão/robustez a lacunas (cuidando da circularidade nas transições) e, após confirmação via issue com a organização, validar escolhas de arquitetura e pós-processamento temporal em partidas abertas de outros jogos (permitido pelo `RULES.md` e `FAQ.md`).
+- **Segurança de dados com agentes/LLMs (`FAQ.md` e Termos):** Manter os dados reais fora do workspace aberto por agentes de IA via variável de ambiente `MTAH_DATA_DIR` e rodar scripts sobre dados reais apenas no terminal local.
 - **Determinismo bit-a-bit em GBDTs (`RULES.md`):** Em scripts de modelagem (LightGBM, CatBoost, XGBoost), fixar `PYTHONHASHSEED=0`, `seed=42`, `deterministic=True`, `force_col_wise=True` e `num_threads=1` (ou número fixo com redução determinística) para que duas execuções gerem exatamente o mesmo CSV.
 
 ## 6. Testes de sanidade automatizados
@@ -436,14 +438,15 @@ Valor único e central em `preprocessing/params.py`. Confirmar cada um na distri
 
 ## 8. Verificações locais antes de congelar o schema
 Rodar localmente e levar **conclusões (não tabelas)** ao grupo.
-- Tamanho das lacunas da bola, % de frames em lacunas >1 s, % de pontos removidos pelo filtro.
-- Nas trocas de slot, o `s` nativo do ATD fica normal ou também dispara?
-- O time de cada slot é constante? Há objetos que não são jogadores de linha?
-- Objetos por time por frame; frames com >22 objetos.
+- Tamanho das lacunas da bola, % de frames em lacunas >1 s, % de pontos removidos pelo filtro ao longo do tempo, maior bloco removido e quantas cadeias disjuntas sobraram (verificar se não há fantasma estacionário $\ge K$ antes da 1ª ou após a última observação real do tempo).
+- Fração de frames observados que ficam com velocidade válida (`ball_vx/vy` não-`NaN`) após o mascaramento de `ball_filled == 1`, e distribuição de `ball_acc` (tratá-la como feature ruidosa/secundária na modelagem).
+- Correlação por slot entre o `s` nativo do ATD e a velocidade derivada $\sqrt{v_x^2 + v_y^2}$, e comportamento do `s` nativo nas trocas de slot (`slot_break`).
+- O time de cada slot é constante? Há objetos que não são jogadores de linha? Com que frequência o jogador mais recuado (goleiro) some do tracking?
+- Objetos por time por frame; frames com >22 objetos antes e depois da deduplicação.
 - Sentido de ataque em cada tempo: a inferência bate com o vídeo?
 - Smart Tagging: sobreposição de fases, coexistência de ofensiva/defensiva do mesmo time, valores exatos de `Team`.
-- Set pieces: o intervalo começa quando a bola sai ou na cobrança? O que fazem os jogadores no segmento pré-pontapé do 2º tempo?
-- Frame do `Kick Off (Start)` de cada tempo e se bate com 11.185 e 113.742.
+- Set pieces: distribuição empírica das durações de bola parada por `sp_type` (não usar durações fixas sem medir nos dados); onde o intervalo começa/termina em relação à bola; o que fazem os jogadores no segmento pré-pontapé do 2º tempo.
+- Frame do `Kick Off (Start)` de cada tempo e se a janela da tag contém 11.185 e 113.742.
 
 ## 9. Cronograma
 | Quando | Marco |
