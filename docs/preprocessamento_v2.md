@@ -221,30 +221,33 @@ DEF = {"DEFENDING IN ATTACKING THIRD", "DEFENDING IN MIDDLE THIRD",
        "DEFENDING IN DEFENSIVE THIRD", "DEFENSIVE TRANSITION"}
 TEAM = {"barcelona": "H", "atletic club": "A"}   # 'Atletic' (um t so), como no XML; N/A -> None
 
-def build_tag_features(ev, n=199_319, fps=25):
+def build_tag_features(ev, n=199_319):
+    """ev: DataFrame de eventos da C1 (load_tagging_events / events_from_frame), com colunas
+    start_frame, end_frame (EXCLUSIVO: fatia semiaberta [a, b)), code, team ('H'/'A'/'U'), type."""
     favor = {"H": np.zeros(n, np.int16), "A": np.zeros(n, np.int16)}
     is_sp = np.zeros(n, bool)
     sp_type = np.full(n, "", dtype=object)
     starts, ends, kicks = [], [], []
     for _, r in ev.iterrows():
         code = str(r["code"]).strip().upper()
-        a = int(round(r["timestamp"].total_seconds() * fps))
-        b = int(round(r["end_timestamp"].total_seconds() * fps))
-        if code == "SET PIECES":                      # set pieces: NUNCA misturar com fases
-            is_sp[a:b + 1] = True
-            sp_type[a:b + 1] = str(r["Type"]).strip().lower()
-            starts.append(a); ends.append(b)
-            if "kick off (start)" in str(r["Type"]).lower():
-                kicks.append((a, b))                      # janela [a, b] da tag (~5 s ao redor da batida)
+        a, b = int(r["start_frame"]), int(r["end_frame"])   # [a, b) semiaberto (sem + 1)
+        if code == "SET PIECES":                            # set pieces: NUNCA misturar com fases
+            typ = str(r["type"]).strip().lower()
+            is_sp[a:b] = True
+            sp_type[a:b] = typ
+            if b > a:
+                starts.append(a); ends.append(b - 1)        # b - 1 = ultimo frame ativo do set piece
+            if "kick off (start)" in typ:
+                kicks.append((a, b))                        # janela [a, b) da tag (~5 s ao redor da batida)
             continue
-        team = TEAM.get(str(r["Team"]).strip().lower())
-        if team is None:
-            continue                                  # N/A: nao diz a favor de quem
+        team = str(r["team"]).strip().upper()
+        if team not in ("H", "A"):
+            continue                                        # 'U' (N/A): nao diz a favor de quem
         other = "A" if team == "H" else "H"
         if code in OFF:
-            favor[team][a:b + 1] += 1                 # fase ofensiva favorece o time da tag
+            favor[team][a:b] += 1                           # fase ofensiva favorece o time da tag
         elif code in DEF:
-            favor[other][a:b + 1] += 1                # fase defensiva favorece o adversario
+            favor[other][a:b] += 1                          # fase defensiva favorece o adversario
     return favor["H"], favor["A"], is_sp, sp_type, np.sort(starts), np.sort(ends), sorted(kicks)
 
 def distance_to_set_pieces(starts, ends, n=199_319):
