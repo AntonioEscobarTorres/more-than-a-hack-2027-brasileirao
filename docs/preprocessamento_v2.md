@@ -382,8 +382,8 @@ Hipóteses a confirmar, não fatos: (a) a classificação ofensiva/defensiva dos
 | Tarefa | Descrição |
 |---|---|
 | D1 Junção (`build_master_table.py`) | Ler `tracking_clean.parquet` (colunas de `indice`, `bola`, `confianca`, `times`), `proximities.parquet` (`proximidade`, `velocidade_relativa`, `campo`), `tagging.parquet` (`set_pieces`, `fases`, `pontape`) e opcionalmente `homography.parquet` (`reproj_error`). Validar que todos têm `N_FRAMES` linhas (`0..N_FRAMES-1`), mesmo `half`, sem colunas duplicadas, e que nomes e dtypes seguem `preprocessing.schema.master_columns(include_optional=...)`. Salvar `data/processed/master_features.parquet` com metadado `schema_version = SCHEMA_VERSION`. |
-| D2 Mock (`make_mock_master.py`) | Gerar um DataFrame sintético determinístico (`np.random.default_rng(42)`) respeitando exatamente `preprocessing/schema.py` (60 colunas, tipos `int32`, `int8`, `int16`, `bool`, `float32`, `string`, e regras de `NaN` quando `half == 0` ou sem bola) para permitir desenvolvimento e teste de modelos sem depender dos arquivos locais de `data/`. |
-| D3 Testes de contrato (`tests/test_master_schema.py`) | Validar que o mock e a saída de `build_master_table` batem com `MASTER_GROUPS`, `INTERMEDIATE_FILES` e todas as invariantes de `NaN` e determinismo. |
+| M1 / D2 Mock (`make_mock_master.py`) | Gerar um DataFrame sintético determinístico (`np.random.default_rng(42)`) respeitando exatamente `preprocessing/schema.py` (60 colunas, tipos `int32`, `int8`, `int16`, `bool`, `float32`, `string`, e regras de `NaN` quando `half == 0` ou sem bola) para permitir desenvolvimento e teste de modelos sem depender dos arquivos locais de `data/`. |
+| M2 / D3 Testes de contrato (`tests/test_master_schema.py`) | Validar que o mock e a saída de `build_master_table` (via `--master`) batem com `MASTER_GROUPS`, `INTERMEDIATE_FILES` e todas as invariantes de `NaN` e determinismo. |
 
 ## 5.2. Diretrizes para Generalização, Validação e Determinismo na Modelagem
 

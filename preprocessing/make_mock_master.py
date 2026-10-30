@@ -212,7 +212,7 @@ def generate_mock_master(
     # Set piece types pool
     sp_pool = [
         "throw-in", "corner kick", "goal kick", "free kick",
-        "throw-in", "throw-in", "corner kick", "goal kick"
+        "kick off (after goal)", "throw-in", "corner kick", "goal kick"
     ]
     sp_team_pool = ["H", "A", "U", "H", "A"]
 
@@ -251,9 +251,21 @@ def generate_mock_master(
             jump_arr[jump_idx] = 1
             ball_jump_removed[sl] = jump_arr
 
-        # Trajetoria da bola
+        # Trajetoria da bola (com breves excursoes fora das linhas para exercitar out_of_pitch == 1)
         has_ball = obs | (filled == 1)
         raw_bx, raw_by = _smooth_trajectory(half_len, rng, (3.0, pitch_l - 3.0), (3.0, pitch_w - 3.0))
+        for frac, bx_out, by_out in (
+            (0.20, None, -PITCH_MARGIN - 0.5),
+            (0.45, None, pitch_w + PITCH_MARGIN + 0.5),
+            (0.70, -PITCH_MARGIN - 0.5, None),
+            (0.85, pitch_l + PITCH_MARGIN + 0.5, None),
+        ):
+            idx0 = int(half_len * frac)
+            idx1 = min(idx0 + 15, half_len)
+            if bx_out is not None:
+                raw_bx[idx0:idx1] = np.float32(bx_out)
+            if by_out is not None:
+                raw_by[idx0:idx1] = np.float32(by_out)
 
         cur_bx = np.where(has_ball, raw_bx, np.nan).astype(np.float32)
         cur_by = np.where(has_ball, raw_by, np.nan).astype(np.float32)
@@ -326,13 +338,21 @@ def generate_mock_master(
         d_near_away[sl] = np.where(has_ball, d_a, np.nan)
         d_diff[sl] = np.where(has_ball, d_h - d_a, np.nan)
 
-        # Contagens de jogadores ao redor da bola (nunca zero sem bola, sempre NaN)
-        n_home_r2[sl] = np.where(has_ball, (d_h < 2.0).astype(np.float32), np.nan)
-        n_home_r3[sl] = np.where(has_ball, (d_h < 3.0).astype(np.float32) + rng.integers(0, 2, half_len), np.nan)
-        n_home_r5[sl] = np.where(has_ball, (d_h < 5.0).astype(np.float32) + rng.integers(1, 3, half_len), np.nan)
-        n_away_r2[sl] = np.where(has_ball, (d_a < 2.0).astype(np.float32), np.nan)
-        n_away_r3[sl] = np.where(has_ball, (d_a < 3.0).astype(np.float32) + rng.integers(0, 2, half_len), np.nan)
-        n_away_r5[sl] = np.where(has_ball, (d_a < 5.0).astype(np.float32) + rng.integers(1, 3, half_len), np.nan)
+        # Contagens de jogadores ao redor da bola (coerentes com d_near_*; NaN sem bola)
+        r2_h = np.where(d_h < 2.0, 1.0 + rng.integers(0, 2, half_len), 0.0).astype(np.float32)
+        r3_h = np.where(d_h < 3.0, np.maximum(r2_h, 1.0) + rng.integers(0, 2, half_len), 0.0).astype(np.float32)
+        r5_h = np.where(d_h < 5.0, np.maximum(r3_h, 1.0) + rng.integers(0, 3, half_len), 0.0).astype(np.float32)
+
+        r2_a = np.where(d_a < 2.0, 1.0 + rng.integers(0, 2, half_len), 0.0).astype(np.float32)
+        r3_a = np.where(d_a < 3.0, np.maximum(r2_a, 1.0) + rng.integers(0, 2, half_len), 0.0).astype(np.float32)
+        r5_a = np.where(d_a < 5.0, np.maximum(r3_a, 1.0) + rng.integers(0, 3, half_len), 0.0).astype(np.float32)
+
+        n_home_r2[sl] = np.where(has_ball, r2_h, np.nan)
+        n_home_r3[sl] = np.where(has_ball, r3_h, np.nan)
+        n_home_r5[sl] = np.where(has_ball, r5_h, np.nan)
+        n_away_r2[sl] = np.where(has_ball, r2_a, np.nan)
+        n_away_r3[sl] = np.where(has_ball, r3_a, np.nan)
+        n_away_r5[sl] = np.where(has_ball, r5_a, np.nan)
 
         press_h = np.exp(-d_h / PRESSURE_TAU) + rng.uniform(0.0, 0.5, size=half_len)
         press_a = np.exp(-d_a / PRESSURE_TAU) + rng.uniform(0.0, 0.5, size=half_len)
@@ -357,12 +377,13 @@ def generate_mock_master(
         d_touchline[sl] = np.where(has_ball, d_touch, np.nan)
         d_goalline[sl] = np.where(has_ball, d_goal, np.nan)
 
-        # 6. Set pieces (calculados estritamente por tempo)
+        # 6. Set pieces (calculados estritamente por tempo; apos o pontape inicial de cada tempo)
         events_half: list[tuple[int, int, str, str]] = []
-        cur_pos = f0 + int(rng.integers(20, 60))
-        # Adiciona kickoff inicial do tempo
-        kick_end = min(cur_pos + int(rng.integers(100, 200)), f1)
-        events_half.append((cur_pos, kick_end, "kick off (start)", "H" if h == 1 else "A"))
+        kick_frame = min(max(int(KICKOFF_FALLBACK.get(h, f0)), f0), f1)
+        # Janela da tag Kick Off (Start) contem kick_frame (start_frame <= kick_frame < end_frame)
+        kick_start = max(f0, kick_frame - int(rng.integers(50, 85)))
+        kick_end = min(kick_frame + int(rng.integers(40, 75)), f1)
+        events_half.append((kick_start, kick_end, "kick off (start)", "H" if h == 1 else "A"))
         cur_pos = kick_end + int(rng.integers(500, 1500))
 
         while cur_pos < f1 - 300:
@@ -379,7 +400,8 @@ def generate_mock_master(
             sp_team[ev_start:ev_end] = tm_name
 
         sp_starts = np.array([ev[0] for ev in events_half], dtype=int)
-        sp_ends = np.array([ev[1] for ev in events_half], dtype=int)
+        # ev[1] e exclusivo na fatia [ev_start, ev_end); ultimo frame ativo e ev[1] - 1
+        sp_ends = np.array([ev[1] - 1 for ev in events_half], dtype=int)
 
         frames_half = np.arange(f0, f1 + 1)
         # to_next_sp
