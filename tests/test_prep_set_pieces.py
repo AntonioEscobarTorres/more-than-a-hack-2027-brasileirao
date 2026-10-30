@@ -1,5 +1,4 @@
 """
-Unit tests for Set Pieces Feature Extraction (Task C2).
 Uses ONLY SYNTHETIC data to prevent real data leakage.
 """
 import numpy as np
@@ -13,7 +12,6 @@ BLOCKS = [(1, 100, 200), (2, 300, 400)]
 N_FRAMES = 500
 
 def make_synthetic_events():
-    """Creates a synthetic event DataFrame mimicking C1 output."""
     return pd.DataFrame([
         # Half 1: Set piece from 120 to 130
         {"start_frame": 120, "end_frame": 130, "code": "SET PIECES", "team": "H", "type": "throw-in", "half": 1},
@@ -29,7 +27,7 @@ def test_build_set_piece_features_semi_open_slice():
     
     # Check exclusive end slicing [120, 130) -> Length is exactly 10
     assert is_sp[120:130].all()
-    assert not is_sp[130]  # Frame 130 should NOT be a set piece
+    assert not is_sp[130]  # Frame 130 should not be a set piece
     assert sum(is_sp[100:200]) == 10
     
     # Check sp_team mapping
@@ -77,9 +75,9 @@ def test_blocks_never_cross_halftime():
     df = sp.process_set_pieces(ev, blocks=BLOCKS, n_frames=N_FRAMES)
     
     # Frame 199 is in Half 1, next SP is in Half 2.
-    # It must NOT calculate distance to Half 2's set piece.
+    # It must not calculate distance to Half 2's set piece.
     assert pd.isna(df.loc[199, "frames_to_next_sp"])
     
     # Frame 310 is in Half 2, previous SP was in Half 1.
-    # It must NOT calculate distance from Half 1's set piece.
+    # It must not calculate distance from Half 1's set piece.
     assert pd.isna(df.loc[310, "frames_since_sp_end"])
