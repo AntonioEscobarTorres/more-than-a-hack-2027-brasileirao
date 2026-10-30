@@ -13,7 +13,7 @@ Especificação completa: [`docs/preprocessamento_v2.md`](docs/preprocessamento_
 - **Tipos:** `float32` para medidas; `int8`/`int16` para flags e contagens sem NaN; `bool` para booleanos puros. Coluna que pode ter NaN é `float32` (inclusive flags 0/1/NaN e contagens).
 - **NaN = "sem evidência"**, nunca zero. O significado do NaN de cada coluna está nas tabelas abaixo.
 - **Metadados do Parquet:** `schema_version = "1.0"`. O `tracking_clean.parquet` também grava `tracking_stage = "V0"` ou `"V1"`.
-- **Nomes:** `snake_case`; `_home`/`_away` para times (home = Barcelona, away = Athletic); `_r2/_r3/_r5` para raios; `_x/_y` para coordenadas.
+- **Nomes:** `snake_case`; `_home`/`_away` para times (home = Barcelona, away = Atletic); `_r2/_r3/_r5` para raios; `_x/_y` para coordenadas.
 - **Unidades:** metros, m/s, m/s², frames (25 fps), pixels (só `reproj_error`).
 - **Orientação:** após `flip` por tempo, o campo vai de `x = 0` a `x = 105,3` e `y = 0` a `68,0`. **A casa sempre ataca para x crescente; o visitante, para x decrescente.** Velocidades e acelerações são invertidas junto com as posições.
 - **Parâmetros:** todos em `preprocessing/params.py`. Nenhum é ajustado nos 5 minutos públicos.
@@ -126,7 +126,7 @@ Usa `ball_x/ball_y` (observadas + preenchidas). Slots NaN são ignorados.
 |---|---|---|
 | `slot` | int8 | 1..46 |
 | `is_home` | bool | time do slot (Barcelona = True) |
-| `is_field_player` | bool | True para jogadores dos dois clubes (inclui goleiros; o XML atribui todos os 46 slots a Barcelona ou Athletic); False apenas se um slot for identificado como não-jogador (ex.: árbitro) |
+| `is_field_player` | bool | True para jogadores dos dois clubes (inclui goleiros; o XML atribui todos os 46 slots a Barcelona ou Atletic); False apenas se um slot for identificado como não-jogador (ex.: árbitro) |
 
 Se A7 mostrar que o time de um slot **não é constante**, a A7 avisa o grupo antes de seguir; o plano alternativo é uma coluna `s{NN}_is_home` por frame no `tracking_clean.parquet`, com `slot_teams.parquet` só para os slots constantes.
 
