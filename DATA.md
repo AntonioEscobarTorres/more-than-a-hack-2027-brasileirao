@@ -1,7 +1,7 @@
 # The data
 
-One match: **FC Barcelona vs Athletic Club**, LaLiga EA Sports 2024-25, matchday 2.
-Home is Barcelona (`H`), away is Athletic (`A`).
+One match: **FC Barcelona vs Atletic Club**, LaLiga EA Sports 2024-25, matchday 2.
+Home is Barcelona (`H`), away is Atletic (`A`).
 
 It was recorded twice, by two different cameras, and you get tracking for both.
 

@@ -4,7 +4,7 @@ message: "If you use this benchmark, its data or its metrics, please cite it."
 type: dataset
 abstract: >-
   A frame-level ball-possession benchmark built on one full professional football match
-  (FC Barcelona vs Athletic Club, LaLiga EA Sports 2024-25, matchday 2). Participants label
+  (FC Barcelona vs Atletic Club, LaLiga EA Sports 2024-25, matchday 2). Participants label
   each of 199,319 video frames as home in possession, away in possession, or dead ball.
   Entries are ranked by spellF1, a possession-interval metric that scores each possession
   once rather than each frame, and macroF1 is reported alongside it. The repository provides

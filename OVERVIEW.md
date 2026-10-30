@@ -51,7 +51,7 @@ For each of the **199,319 frames** of the tactical video, output one label:
 | label | meaning |
 |---|---|
 | `H` | home team (Barcelona) in possession, ball alive |
-| `A` | away team (Athletic Club) in possession, ball alive |
+| `A` | away team (Atletic Club) in possession, ball alive |
 | `D` | dead ball — not in play |
 | `X` | no answer — the system declines to guess |
 
@@ -68,7 +68,7 @@ point, not a constraint.
 
 # Data and resources
 
-One match: **FC Barcelona vs Athletic Club**, LaLiga EA Sports 2024-25, matchday 2, recorded by
+One match: **FC Barcelona vs Atletic Club**, LaLiga EA Sports 2024-25, matchday 2, recorded by
 two cameras.
 
 | | **tactical** | **broadcast** |

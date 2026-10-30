@@ -14,11 +14,11 @@ def test_run_checks_synthetic_data(capsys):
         
         # set pieces
         {"start_frame": 100, "end_frame": 150, "code": "SET PIECES", "team": "U", "team_raw": "N/A", "type": "throw-in", "half": 1},
-        {"start_frame": 200, "end_frame": 250, "code": "SET PIECES", "team": "A", "team_raw": "Athletic Club", "type": "corner kick", "half": 1},
+        {"start_frame": 200, "end_frame": 250, "code": "SET PIECES", "team": "A", "team_raw": "Atletic Club", "type": "corner kick", "half": 1},
         
         # goals
         {"start_frame": 300, "end_frame": 320, "code": "GOALS", "team": "H", "team_raw": "Barcelona", "type": "", "half": 1},
-        {"start_frame": 500, "end_frame": 550, "code": "SET PIECES", "team": "A", "team_raw": "Athletic Club", "type": "kick off (after goal)", "half": 1}
+        {"start_frame": 500, "end_frame": 550, "code": "SET PIECES", "team": "A", "team_raw": "Atletic Club", "type": "kick off (after goal)", "half": 1}
     ])
     
     clt.run_checks(ev, n_frames=1000)
@@ -30,4 +30,4 @@ def test_run_checks_synthetic_data(capsys):
     assert "Maximum active phases at the same time:" in output
     assert "Goals tracking:" in output
     assert "Barcelona" in output
-    assert "Athletic Club" in output
+    assert "Atletic Club" in output

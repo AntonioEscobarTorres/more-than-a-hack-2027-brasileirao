@@ -106,22 +106,22 @@ def test_flip_orients_coordinates_and_velocity_and_halves_oppose():
     assert frame.loc[3, "s01_vx"] > 0  # original negative velocity was reflected
     assert frame.loc[0, "ball_vx"] > 0
     assert frame.loc[3, "ball_vx"] > 0
-"""Testes complementares para prep_tracking alinhados à implementação real."""
+"""Complementary tests for prep_tracking aligned with the actual implementation."""
 import numpy as np
 import pytest
 from preprocessing import prep_tracking as pt
 
 
 def test_kickoff_fallback_when_file_missing(tmp_path):
-    """Garante fallback para KICKOFF_FALLBACK quando kickoffs.json não existe no data_dir."""
-    # Passa um diretório vazio
+    """Ensures fallback to KICKOFF_FALLBACK when kickoffs.json does not exist in data_dir."""
+    # Pass an empty directory
     kickoffs = pt._kickoff_frames(data_dir=str(tmp_path))
     assert kickoffs[1] == pt.KICKOFF_FALLBACK[1]
     assert kickoffs[2] == pt.KICKOFF_FALLBACK[2]
 
 
 def test_kickoff_loads_from_valid_json(tmp_path):
-    """Garante leitura correta quando kickoffs.json existe."""
+    """Ensures correct reading when kickoffs.json exists."""
     import json
     proc_dir = tmp_path / "processed"
     proc_dir.mkdir(parents=True)
@@ -134,11 +134,11 @@ def test_kickoff_loads_from_valid_json(tmp_path):
 
 
 def test_coordinates_and_velocities_scaled_to_meters():
-    """Garante que as saídas do prepare_tracking estão em metros (PITCH_L x PITCH_W)."""
+    """Ensures prepare_tracking outputs are in meters (PITCH_L x PITCH_W)."""
     blocks = [(1, 0, 1)]
     teams = np.arange(pt.N_SLOTS) % 2
     players = np.full((2, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
-    # Jogador 0 no centro normalizado (0.5, 0.5)
+    # Player 0 at normalized center (0.5, 0.5)
     players[:, 0, :2] = [0.5, 0.5]
     ball = np.full((2, 3), np.nan, dtype=np.float32)
     ball[:, :2] = [0.5, 0.5]
@@ -155,40 +155,40 @@ def test_coordinates_and_velocities_scaled_to_meters():
 
 
 def test_orient_half_reflects_x_y_and_vectors():
-    """Valida reflexão direta da função _orient_half em coordenadas e velocidades."""
+    """Validates direct reflection by _orient_half on coordinates and velocities."""
     length, width = 105.3, 68.0
     players = np.full((5, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
     ball = np.full((5, 3), np.nan, dtype=np.float32)
-    teams = [0] + [1] * (pt.N_SLOTS - 1)  # slot 0 é time da casa (0)
+    teams = [0] + [1] * (pt.N_SLOTS - 1)  # slot 0 is home team (0)
 
-    # Time da casa em x alto (> length/2) -> Deve forçar flip=True
+    # Home team at high x (> length/2) -> Must force flip=True
     players[:, 0, :2] = [80.0, 20.0]
-    players[:, 0, 2] = 5.0  # speed escalar bruto
+    players[:, 0, 2] = 5.0  # raw scalar speed
     ball[:, :2] = [70.0, 15.0]
 
     flipped = pt._orient_half(players, ball, teams, start=0, end=5, kick_frame=0, pitch=(length, width))
 
     assert flipped is True or flipped == 1
-    # Posições refletidas: L - x e W - y
+    # Reflected positions: L - x and W - y
     # Inputs and reflected arrays use float32, so allow their rounding error.
     np.testing.assert_allclose(players[0, 0, 0], length - 80.0, atol=1e-5)
     np.testing.assert_allclose(players[0, 0, 1], width - 20.0, atol=1e-5)
     np.testing.assert_allclose(ball[0, 0], length - 70.0, atol=1e-5)
     np.testing.assert_allclose(ball[0, 1], width - 15.0, atol=1e-5)
-    # Inversão do componente escalar/vetorial bruto
+    # Inversion of raw scalar/vector component
     np.testing.assert_allclose(players[0, 0, 2], -5.0)
 
 
 def test_remove_ball_jump_outliers_bridges_long_phantom_block_exceeding_k():
-    """Garante que um bloco de >K (40 > 30) frames fantasmas é removido sem quebrar a cadeia real."""
+    """Ensures a block of >K (40 > 30) phantom frames is removed without breaking the real chain."""
     x = np.full(110, np.nan, dtype=np.float32)
     y = np.full(110, 34.0, dtype=np.float32)
-    # Bola real antes (35 frames) e depois (35 frames), movendo-se a 2.5 m/s (0.1 m/frame)
+    # Real ball before (35 frames) and after (35 frames), moving at 2.5 m/s (0.1 m/frame)
     x[0:35] = 10.0 + 0.1 * np.arange(35, dtype=np.float32)
-    # Bloco fantasma de 40 frames (> BALL_K = 30) a ~35 m de distância
+    # Phantom block of 40 frames (> BALL_K = 30) ~35 m away
     x[35:75] = 48.0
     y[35:75] = 62.0
-    # Bola real reaparece na continuidade natural da trajetória original
+    # Real ball reappears in the natural continuation of the original trajectory
     x[75:110] = 10.0 + 0.1 * np.arange(75, 110, dtype=np.float32)
 
     xo, yo = pt.remove_ball_jump_outliers(x, y, k=30)
@@ -199,12 +199,12 @@ def test_remove_ball_jump_outliers_bridges_long_phantom_block_exceeding_k():
 
 
 def test_remove_ball_jump_outliers_keeps_disjoint_long_chains_after_multiball_jump():
-    """Garante que duas cadeias longas disjuntas (ex.: reposição multi-bolas) são preservadas."""
+    """Ensures two disjoint long chains (e.g., multi-ball restart) are preserved."""
     x = np.full(80, np.nan, dtype=np.float32)
     y = np.full(80, 34.0, dtype=np.float32)
     x[0:35] = 10.0 + 0.1 * np.arange(35, dtype=np.float32)
-    x[35:75] = 80.0 - 0.1 * np.arange(40, dtype=np.float32)  # 2a bola a ~67 m em 1 frame
-    x[75:77] = 5.0  # pico fantasma curto de 2 frames no fim
+    x[35:75] = 80.0 - 0.1 * np.arange(40, dtype=np.float32)  # 2nd ball ~67 m away in 1 frame
+    x[75:77] = 5.0  # short phantom spike of 2 frames at the end
 
     xo, _ = pt.remove_ball_jump_outliers(x, y, k=30, min_chain=30)
 
@@ -214,7 +214,7 @@ def test_remove_ball_jump_outliers_keeps_disjoint_long_chains_after_multiball_ju
 
 
 def test_ball_derivatives_masked_when_filled_and_smoothed_against_jitter():
-    """Garante que velocidades/aceleração ficam NaN onde ball_filled == 1 e que o Savitzky-Golay atenua jitter."""
+    """Ensures velocities/acceleration are NaN where ball_filled == 1 and that Savitzky-Golay attenuates jitter."""
     n = 20
     blocks = [(1, 0, n - 1)]
     teams = np.arange(pt.N_SLOTS) % 2
@@ -222,32 +222,32 @@ def test_ball_derivatives_masked_when_filled_and_smoothed_against_jitter():
     players[:, 0, :2] = [0.2, 0.5]
     ball = np.full((n, 3), np.nan, dtype=np.float32)
 
-    # Trajetória linear com jitter de alta frequência nos primeiros 10 frames
+    # Linear trajectory with high-frequency jitter in the first 10 frames
     t_obs = np.arange(10, dtype=np.float32)
     jitter = (0.002 * np.sin(1.8 * t_obs)).astype(np.float32)
     ball[0:10, 0] = 0.2 + 0.002 * t_obs + jitter
     ball[0:10, 1] = 0.5
-    # Lacuna curta de 2 frames (frames 10 e 11 -> ball_filled == 1), seguida de observações em 12..19
+    # Short gap of 2 frames (frames 10 and 11 -> ball_filled == 1), followed by observations in 12..19
     ball[12:20, 0] = 0.2 + 0.002 * np.arange(12, 20, dtype=np.float32)
     ball[12:20, 1] = 0.5
 
     frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks, kickoffs={1: 0}, n_frames=n)
 
-    # Posição bruta observada (em metros) não é alterada pelo filtro de derivada
+    # Raw observed position (in meters) is not altered by the derivative filter
     np.testing.assert_allclose(frame.loc[0:9, "ball_x"], frame.loc[0:9, "ball_x_raw"], rtol=1e-6)
-    # Nos frames interpolados (10 e 11), posição existe mas velocidades e aceleração são NaN
+    # In interpolated frames (10 and 11), position exists but velocities and acceleration are NaN
     assert (frame.loc[10:11, "ball_filled"] == 1).all()
     assert frame.loc[10:11, ["ball_vx", "ball_vy", "ball_speed", "ball_acc"]].isna().all().all()
-    # Nos frames observados (12..19), velocidades e aceleração existem
+    # In observed frames (12..19), velocities and acceleration exist
     assert frame.loc[12:19, ["ball_vx", "ball_speed", "ball_acc"]].notna().all().all()
-    # Aceleração suavizada no trecho com jitter é muito menor que a 2a derivada crua
+    # Smoothed acceleration in jitter segment is much lower than raw 2nd derivative
     raw_vx = np.gradient(frame.loc[0:9, "ball_x_raw"].to_numpy()) * pt.FPS
     raw_acc = np.abs(np.gradient(raw_vx) * pt.FPS)
     assert frame.loc[2:7, "ball_acc"].mean() < 0.5 * raw_acc[2:8].mean()
 
 
 def test_ball_dir_change_detects_turn_and_masks_slow_ball():
-    """Garante que ball_dir_change vale ~0 em linha reta, >0 em curva rápida e NaN em bola lenta."""
+    """Ensures ball_dir_change is ~0 in a straight line, >0 in a sharp turn, and NaN for a slow ball."""
     n = 14
     blocks = [(1, 0, n - 1)]
     teams = np.arange(pt.N_SLOTS) % 2
@@ -255,18 +255,18 @@ def test_ball_dir_change_detects_turn_and_masks_slow_ball():
     players[:, 0, :2] = [0.2, 0.5]
     ball = np.full((n, 3), np.nan, dtype=np.float32)
 
-    # Frames 0..6: bola rápida (10.5 m/s) em linha reta ao longo de +x -> dir_change == 0 em 1..4
+    # Frames 0..6: fast ball (10.5 m/s) in a straight line along +x -> dir_change == 0 in 1..4
     for f in range(7):
         ball[f, :2] = [0.2 + 0.004 * f, 0.5]
-    # Frames 7..10: curva de 90 graus movendo-se ao longo de +y (6.8 m/s)
+    # Frames 7..10: 90-degree turn moving along +y (6.8 m/s)
     for f in range(7, 11):
         ball[f, :2] = [0.2 + 0.004 * 6, 0.5 + 0.004 * (f - 6)]
-    # Frames 11..13: bola praticamente parada (< 1.0 m/s) -> dir_change deve ser NaN
+    # Frames 11..13: virtually stationary ball (< 1.0 m/s) -> dir_change must be NaN
     for f in range(11, 14):
         ball[f, :2] = [0.2 + 0.004 * 6, 0.5 + 0.004 * 4]
 
     frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks, kickoffs={1: 0}, n_frames=n)
 
     np.testing.assert_allclose(frame.loc[1:4, "ball_dir_change"], 0.0, atol=1e-5)
-    assert frame.loc[7, "ball_dir_change"] > 0.4  # mudança brusca de direção na quina
+    assert frame.loc[7, "ball_dir_change"] > 0.4  # sharp direction change at the corner
     assert frame.loc[12:13, "ball_dir_change"].isna().all()

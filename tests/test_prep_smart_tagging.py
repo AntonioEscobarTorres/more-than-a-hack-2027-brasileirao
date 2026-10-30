@@ -98,9 +98,9 @@ def test_check_counts_passes_with_published_counts_and_detects_errors():
     assert st.check_counts(ev.iloc[1:]) != []  # Missing one instance
     
     ev2 = ev.copy()
-    ev2.loc[ev2["team_raw"] == "Atletic Club", "team_raw"] = "Athletic Club"  # Different spelling
+    ev2.loc[ev2["team_raw"] == "Atletic Club", "team_raw"] = "Athletic Club"  # different spelling
     msgs = " ".join(st.check_counts(ev2))
-    
+
     assert "Athletic Club" in msgs and "Atletic Club" in msgs
 
 
