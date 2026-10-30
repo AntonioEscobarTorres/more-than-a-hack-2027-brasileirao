@@ -44,12 +44,13 @@ def get_kickoff_metadata(ev: pd.DataFrame, exact_frames: dict[int, int] | None =
         h_str = str(h_int)
         out[h_str] = k_frame
         
-        if h_str in windows:
-            a, b = windows[h_str]
-            if not (a <= k_frame <= b):
-                raise ValueError(
-                    f"Kickoff frame {k_frame} for half {h_int} is outside tag window [{a}, {b}]"
-                )
+        if h_str not in windows:
+            raise ValueError(f"Missing 'kick off (start)' tag window for half {h_int}")
+        a, b = windows[h_str]
+        if not (a <= k_frame <= b):
+            raise ValueError(
+                f"Kickoff frame {k_frame} for half {h_int} is outside tag window [{a}, {b}]"
+            )
                 
     return out
 
@@ -84,7 +85,7 @@ def pre_kickoff_mask(
     
     for half, f0, f1 in blocks:
         # Safely retrieve the kickoff frame whether the key is a string or integer
-        k = kick_frames.get(str(half)) or kick_frames.get(half)
+        k = kick_frames.get(str(half)) if str(half) in kick_frames else kick_frames.get(half)
         if k is not None and f0 <= k <= f1:
             m[f0:k] = True
             

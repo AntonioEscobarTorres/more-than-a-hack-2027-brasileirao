@@ -38,6 +38,12 @@ def test_kickoff_metadata_raises_on_out_of_bounds():
     with pytest.raises(ValueError, match="outside tag window"):
         pk.get_kickoff_metadata(ev, exact_frames)
 
+
+def test_kickoff_metadata_raises_when_half_window_missing():
+    ev = make_synthetic_kickoff_events().iloc[:1]  # Only half 1 present
+    with pytest.raises(ValueError, match="Missing 'kick off \\(start\\)' tag window"):
+        pk.get_kickoff_metadata(ev, {1: 125, 2: 320})
+
 def test_pre_kickoff_mask_generation():
     # Simulate the dictionary structure that gets saved to JSON
     metadata = {

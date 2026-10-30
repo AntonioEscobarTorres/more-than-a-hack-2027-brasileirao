@@ -21,14 +21,21 @@ def process_homography(
     Extracts homography features from the raw dataframe.
     
     Args:
-        raw_df: DataFrame loaded from the homography CSV containing 
-                'frame', 'valid', and 'reproj_error'.
+        raw_df: DataFrame loaded from the homography CSV containing
+                'frame', 'valid', and 'reprojection_error' (or 'reproj_error').
         blocks: List of tuples (half, first_frame, last_frame).
         n_frames: Total number of frames in the video.
         
     Returns:
         DataFrame containing 'video_frame', 'half', and 'reproj_error'.
     """
+    err_col = "reprojection_error" if "reprojection_error" in raw_df.columns else "reproj_error"
+    if err_col not in raw_df.columns:
+        raise ValueError(
+            "Homography DataFrame must contain 'reprojection_error' or 'reproj_error'; "
+            f"got columns {list(raw_df.columns)}"
+        )
+
     video_frame = np.arange(n_frames, dtype=np.int32)
     half = np.zeros(n_frames, dtype=np.int8)
     reproj_error = np.full(n_frames, np.nan, dtype=np.float32)
@@ -39,9 +46,10 @@ def process_homography(
     valid_mask = (raw_df["valid"] == 1) & (raw_df["frame"] >= 0) & (raw_df["frame"] < n_frames)
     
     valid_frames = raw_df.loc[valid_mask, "frame"].to_numpy(dtype=int)
-    errors = raw_df.loc[valid_mask, "reproj_error"].to_numpy(dtype=np.float32)
+    errors = raw_df.loc[valid_mask, err_col].to_numpy(dtype=np.float32)
     
     reproj_error[valid_frames] = errors
+    reproj_error[half == 0] = np.nan
     
     return pd.DataFrame({
         "video_frame": video_frame,

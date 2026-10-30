@@ -26,11 +26,17 @@ DEFENSIVE_CODES = {
     "DEFENDING IN DEFENSIVE THIRD", "DEFENSIVE TRANSITION"
 }
 
-def build_phase_features(ev: pd.DataFrame, n_frames: int = params.N_FRAMES) -> pd.DataFrame:
+def build_phase_features(
+    ev: pd.DataFrame,
+    n_frames: int = params.N_FRAMES,
+    blocks: list[tuple[int, int, int]] | None = None,
+) -> pd.DataFrame:
     """    
     Args:
         ev: Event DataFrame from prep_smart_tagging.py
         n_frames: Total number of frames in the video/tracking data.
+        blocks: Optional list of (half, first_frame, last_frame) from half_video_blocks.
+                When provided, frames outside the half blocks (half == 0) are forced to 0.
         
     Returns:
         DataFrame with columns 'n_tags_favor_home' and 'n_tags_favor_away' (int16).
@@ -57,6 +63,13 @@ def build_phase_features(ev: pd.DataFrame, n_frames: int = params.N_FRAMES) -> p
                 favor_away[a:b] += 1  # Defensive phase favors the opponent
             else:
                 favor_home[a:b] += 1  # Defensive phase favors the opponent
+
+    if blocks is not None:
+        in_half = np.zeros(n_frames, dtype=bool)
+        for _, f0, f1 in blocks:
+            in_half[f0:f1 + 1] = True
+        favor_home[~in_half] = 0
+        favor_away[~in_half] = 0
 
     return pd.DataFrame({
         "n_tags_favor_home": favor_home,

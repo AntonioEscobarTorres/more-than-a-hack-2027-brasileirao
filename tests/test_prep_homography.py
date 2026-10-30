@@ -28,6 +28,21 @@ def test_process_homography_valid_masking():
     assert pd.isna(df.loc[15, "reproj_error"])
     
     assert df.loc[35, "reproj_error"] == np.float32(2.1)
+    # Frame 45 has valid == 1 but is outside BLOCKS (half == 0), so it must be NaN
+    assert pd.isna(df.loc[45, "reproj_error"])
+
+
+def test_process_homography_accepts_reprojection_error_csv_column():
+    raw_df = pd.DataFrame([
+        {"frame": 12, "valid": 1, "reprojection_error": 0.42},
+        {"frame": 15, "valid": 0, "reprojection_error": 5.0},
+        {"frame": 25, "valid": 1, "reprojection_error": 1.8},  # half == 0
+    ])
+    df = ph.process_homography(raw_df, blocks=BLOCKS, n_frames=N_FRAMES)
+
+    assert df.loc[12, "reproj_error"] == np.float32(0.42)
+    assert pd.isna(df.loc[15, "reproj_error"])
+    assert pd.isna(df.loc[25, "reproj_error"])
 
 def test_process_homography_half_assignment():
     raw_df = make_synthetic_homography()

@@ -74,3 +74,16 @@ def test_defensive_home_favors_away():
     # Event 5 (Defensive H) spans 70 to 80
     assert df.loc[75, "n_tags_favor_home"] == 0
     assert df.loc[75, "n_tags_favor_away"] == 1
+
+
+def test_build_phase_features_masks_outside_blocks_when_blocks_given():
+    ev = make_synthetic_events()
+    blocks = [(1, 15, 45), (2, 70, 75)]
+    df = pp.build_phase_features(ev, n_frames=N_FRAMES, blocks=blocks)
+
+    # Frames 10..14 and 76..79 are outside blocks -> forced to 0
+    assert (df.loc[0:14, "n_tags_favor_home"] == 0).all()
+    assert (df.loc[76:99, "n_tags_favor_away"] == 0).all()
+    # Inside blocks -> preserved
+    assert df.loc[15, "n_tags_favor_home"] == 2
+    assert df.loc[75, "n_tags_favor_away"] == 1

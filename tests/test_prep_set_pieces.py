@@ -81,3 +81,26 @@ def test_blocks_never_cross_halftime():
     # Frame 310 is in Half 2, previous SP was in Half 1.
     # It must not calculate distance from Half 1's set piece.
     assert pd.isna(df.loc[310, "frames_since_sp_end"])
+
+
+def test_set_piece_crossing_half_start_boundary_is_clipped_to_block():
+    """Kick Off (Start) in Half 1 opens ~3.5s before f0 (start_frame < f0 < end_frame)."""
+    ev = pd.DataFrame([
+        {"start_frame": 90, "end_frame": 110, "code": "SET PIECES", "team": "H", "type": "kick off (start)", "half": 1},
+        {"start_frame": 150, "end_frame": 160, "code": "SET PIECES", "team": "U", "type": "throw-in", "half": 1},
+    ])
+    df = sp.process_set_pieces(ev, blocks=BLOCKS, n_frames=N_FRAMES)
+
+    # Outside half blocks (0..99), set piece flags/strings must stay False/empty
+    assert not df.loc[0:99, "is_set_piece"].any()
+    assert (df.loc[0:99, "sp_type"] == "").all()
+    assert (df.loc[0:99, "sp_team"] == "").all()
+
+    # Inside Half 1 [100, 110), set piece is active and starts at f0 = 100
+    assert df.loc[100:109, "is_set_piece"].all()
+    assert not df.loc[110, "is_set_piece"]
+    assert df.loc[100, "frames_to_next_sp"] == 0.0
+    assert df.loc[100, "next_sp_type"] == "kick off (start)"
+    assert df.loc[109, "frames_since_sp_end"] == 0.0
+    assert df.loc[110, "frames_since_sp_end"] == 1.0
+    assert df.loc[110, "prev_sp_type"] == "kick off (start)"

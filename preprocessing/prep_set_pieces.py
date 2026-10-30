@@ -14,11 +14,18 @@ import pandas as pd
 
 from . import params
 
-def build_set_piece_features(ev: pd.DataFrame, n_frames: int = params.N_FRAMES):
+def build_set_piece_features(
+    ev: pd.DataFrame,
+    n_frames: int = params.N_FRAMES,
+    blocks: list[tuple[int, int, int]] | None = None,
+):
     """    
     Args:
         ev: Event DataFrame from prep_smart_tagging.py
         n_frames: Total number of frames in the tracking/video data.
+        blocks: Optional list of (half, first_frame, last_frame) from half_video_blocks.
+                When provided, set piece intervals are clipped to each half block so that
+                outside frames (half == 0) remain False/empty.
         
     Returns:
         is_sp: boolean array of set piece phases.
@@ -40,14 +47,23 @@ def build_set_piece_features(ev: pd.DataFrame, n_frames: int = params.N_FRAMES):
             a, b = int(r["start_frame"]), int(r["end_frame"])  # [a, b) semi-open
             team = str(r["team"]).strip().upper()
             typ = str(r["type"]).strip().lower()
-            
-            is_sp[a:b] = True
-            sp_type[a:b] = typ
-            sp_team[a:b] = team if team in ("H", "A", "U") else "U"
-            
-            if b > a:
-                # b - 1 ensures we capture the last active frame of the set piece
-                sp_events.append((a, b - 1, typ))
+            valid_team = team if team in ("H", "A", "U") else "U"
+
+            if blocks is not None:
+                slices = [
+                    (max(a, f0), min(b, f1 + 1))
+                    for _, f0, f1 in blocks
+                    if min(b, f1 + 1) > max(a, f0)
+                ]
+            else:
+                slices = [(a, b)] if b > a else []
+
+            for ca, cb in slices:
+                is_sp[ca:cb] = True
+                sp_type[ca:cb] = typ
+                sp_team[ca:cb] = valid_team
+                # cb - 1 ensures we capture the last active frame of the set piece
+                sp_events.append((ca, cb - 1, typ))
                 
     sp_events.sort(key=lambda item: (item[0], item[1], item[2]))
     
@@ -88,23 +104,22 @@ def distance_to_set_pieces(starts: np.ndarray, ends: np.ndarray, sp_types: np.nd
     for _, f0, f1 in blocks:
         f = np.arange(f0, f1 + 1)
         
-        m_start = (starts >= f0) & (starts <= f1)
-        m_end = (ends >= f0) & (ends <= f1)
-        
-        s_half, ts_half = starts[m_start], sp_types[m_start]
-        e_half, te_half = ends[m_end], sp_types[m_end]
+        m_half = (starts <= f1) & (ends >= f0)
+        s_half = np.maximum(starts[m_half], f0)
+        e_half = np.minimum(ends[m_half], f1)
+        t_half = sp_types[m_half]
         
         # 1. Frames to next set piece
         i = np.searchsorted(s_half, f, side="left")
         ok_next = i < len(s_half)
         to_next[f[ok_next]] = (s_half[i[ok_next]] - f[ok_next]).astype(np.float32)
-        next_type[f[ok_next]] = ts_half[i[ok_next]]
+        next_type[f[ok_next]] = t_half[i[ok_next]]
         
         # 2. Frames since previous set piece ended
         j = np.searchsorted(e_half, f, side="right") - 1
         ok_prev = j >= 0
         since_end[f[ok_prev]] = (f[ok_prev] - e_half[j[ok_prev]]).astype(np.float32)
-        prev_type[f[ok_prev]] = te_half[j[ok_prev]]
+        prev_type[f[ok_prev]] = t_half[j[ok_prev]]
         
     return to_next, since_end, next_type, prev_type
 
@@ -113,7 +128,7 @@ def process_set_pieces(ev: pd.DataFrame, blocks: list[tuple[int, int, int]], n_f
     """
     Combines feature building and distance calculation.
     """
-    is_sp, sp_type, sp_team, starts, ends, types = build_set_piece_features(ev, n_frames)
+    is_sp, sp_type, sp_team, starts, ends, types = build_set_piece_features(ev, n_frames, blocks=blocks)
     
     to_next, since_end, next_type, prev_type = distance_to_set_pieces(
         starts, ends, types, blocks, n_frames
