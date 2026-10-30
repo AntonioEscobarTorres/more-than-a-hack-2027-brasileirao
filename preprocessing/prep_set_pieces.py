@@ -1,6 +1,4 @@
 """
-Set Pieces Feature Extraction (Task C2).
-
 Calculates set piece presence, type, team, and temporal distances
 (frames to next SP, frames since last SP end).
 
@@ -17,9 +15,7 @@ import pandas as pd
 from . import params
 
 def build_set_piece_features(ev: pd.DataFrame, n_frames: int = params.N_FRAMES):
-    """
-    Extracts set piece arrays from the C1 events DataFrame.
-    
+    """    
     Args:
         ev: Event DataFrame from prep_smart_tagging.py
         n_frames: Total number of frames in the tracking/video data.
@@ -50,7 +46,7 @@ def build_set_piece_features(ev: pd.DataFrame, n_frames: int = params.N_FRAMES):
             sp_team[a:b] = team if team in ("H", "A", "U") else "U"
             
             if b > a:
-                # b - 1 ensures we capture the LAST active frame of the set piece
+                # b - 1 ensures we capture the last active frame of the set piece
                 sp_events.append((a, b - 1, typ))
                 
     sp_events.sort(key=lambda item: (item[0], item[1], item[2]))
@@ -98,13 +94,13 @@ def distance_to_set_pieces(starts: np.ndarray, ends: np.ndarray, sp_types: np.nd
         s_half, ts_half = starts[m_start], sp_types[m_start]
         e_half, te_half = ends[m_end], sp_types[m_end]
         
-        # 1. Frames to NEXT set piece
+        # 1. Frames to next set piece
         i = np.searchsorted(s_half, f, side="left")
         ok_next = i < len(s_half)
         to_next[f[ok_next]] = (s_half[i[ok_next]] - f[ok_next]).astype(np.float32)
         next_type[f[ok_next]] = ts_half[i[ok_next]]
         
-        # 2. Frames since PREVIOUS set piece ended
+        # 2. Frames since previous set piece ended
         j = np.searchsorted(e_half, f, side="right") - 1
         ok_prev = j >= 0
         since_end[f[ok_prev]] = (f[ok_prev] - e_half[j[ok_prev]]).astype(np.float32)
@@ -115,7 +111,6 @@ def distance_to_set_pieces(starts: np.ndarray, ends: np.ndarray, sp_types: np.nd
 
 def process_set_pieces(ev: pd.DataFrame, blocks: list[tuple[int, int, int]], n_frames: int = params.N_FRAMES):
     """
-    Main pipeline function for Task C2. 
     Combines feature building and distance calculation.
     """
     is_sp, sp_type, sp_team, starts, ends, types = build_set_piece_features(ev, n_frames)
