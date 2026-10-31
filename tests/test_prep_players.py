@@ -105,6 +105,27 @@ def test_prepare_removes_isolated_and_same_team_duplicate_before_aggregates():
     assert frame.loc[3, "s04_break"]  # reacquisition after the removed isolated point
 
 
+def test_quality_before_dedup_is_measured_after_isolated_removal(caplog):
+    """An isolated point that overlaps another slot is excluded from the before count."""
+    players, ball, teams = _synthetic(n=5)
+    # 21 base tracks plus a duplicate partner and one isolated sample.
+    teams[:] = 0
+    players[:, :21, :2] = np.column_stack((np.linspace(0.1, 0.3, 21), np.full(21, 0.5)))
+    players[:, 21, :2] = [0.8, 0.5]
+    # Slot 23's one-frame spike duplicates slot 22, then is removed as isolated.
+    players[:, 22, :2] = [0.4, 0.5]
+    players[2, 22, :2] = [0.8, 0.5]
+    with caplog.at_level("INFO", logger=pt.__name__):
+        frame, _ = pt.prepare_tracking(
+            players, ball, teams, blocks=[(1, 0, 4)], kickoffs={1: 0},
+            n_frames=5, stage="V0")
+    # Isolated samples are removed before counting, so frame 2 has exactly 22
+    # objects. The other four frames have 23; a premature snapshot would count
+    # frame 2 too and report five frames above the threshold.
+    assert frame.loc[2, "n_tracked_home"] == 22
+    assert "frames >22 objects before=4 (80.00%), after=4 (80.00%)" in caplog.text
+
+
 def test_different_team_nearby_tracks_are_retained():
     players, ball, teams = _synthetic(3)
     players[:, 0, :2] = [0.2, 0.5]
