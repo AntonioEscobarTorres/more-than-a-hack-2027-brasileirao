@@ -29,7 +29,7 @@ def build_tagging_dataframe(
     Assembles the complete tagging dataframe from individual feature modules.
     """
     df_sp = process_set_pieces(ev, blocks, n_frames)
-    df_ph = build_phase_features(ev, n_frames)
+    df_ph = build_phase_features(ev, n_frames, blocks=blocks)
     
     metadata = get_kickoff_metadata(ev, exact_kickoff_frames)
     mask_ko = pre_kickoff_mask(metadata, blocks, n_frames)

@@ -11,7 +11,8 @@ from preprocessing import params
 def test_tagging_parquet_schema_and_metadata(tmp_path, monkeypatch):
     def mock_load_events(*args, **kwargs):
         return pd.DataFrame([
-            {"start_frame": 10, "end_frame": 20, "code": "SET PIECES", "team": "H", "type": "kick off (start)", "half": 1}
+            {"start_frame": 10, "end_frame": 20, "code": "SET PIECES", "team": "H", "type": "kick off (start)", "half": 1},
+            {"start_frame": 20, "end_frame": 35, "code": "BUILD UP", "team": "H", "type": "", "half": 1},
         ])
         
     monkeypatch.setattr("preprocessing.export_tagging.load_tagging_events", mock_load_events)
@@ -46,3 +47,5 @@ def test_tagging_parquet_schema_and_metadata(tmp_path, monkeypatch):
     
     assert df.loc[15, "half"] == 1
     assert df.loc[30, "half"] == 0
+    assert df.loc[22, "n_tags_favor_home"] == 1
+    assert df.loc[30, "n_tags_favor_home"] == 0

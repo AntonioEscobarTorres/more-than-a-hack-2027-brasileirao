@@ -7,8 +7,11 @@ from the standard video blocks.
 """
 from __future__ import annotations
 
+from pathlib import Path
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from . import params
 
@@ -56,3 +59,36 @@ def process_homography(
         "half": half,
         "reproj_error": reproj_error
     })
+
+
+def export_homography_data(
+    output_dir: str | Path,
+    blocks: list[tuple[int, int, int]],
+    data_dir: str | Path | None = None,
+    n_frames: int = params.N_FRAMES,
+) -> None:
+    """
+    Loads the tactical homography CSV, extracts reprojection error features,
+    and writes homography.parquet with schema_version metadata.
+    """
+    from games import GAME, require
+
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    (csv_path,) = require(["homography"], GAME, str(data_dir) if data_dir is not None else None)
+    raw_df = pd.read_csv(csv_path)
+    df = process_homography(raw_df, blocks, n_frames=n_frames)
+
+    table = pa.Table.from_pandas(df)
+    meta = table.schema.metadata or {}
+    meta[b"schema_version"] = str(params.SCHEMA_VERSION).encode("utf-8")
+    table = table.replace_schema_metadata(meta)
+
+    pq.write_table(table, out_path / "homography.parquet")
+
+
+if __name__ == "__main__":
+    from games import GAME, half_video_blocks
+
+    export_homography_data("data/processed", half_video_blocks(GAME))

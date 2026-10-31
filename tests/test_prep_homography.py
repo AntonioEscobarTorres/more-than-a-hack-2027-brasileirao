@@ -63,3 +63,30 @@ def test_process_homography_out_of_bounds_frames_are_ignored():
     df = ph.process_homography(raw_df, blocks=BLOCKS, n_frames=N_FRAMES)
     
     assert pd.isna(df["reproj_error"]).all()
+
+
+def test_export_homography_data_writes_parquet_with_schema_metadata(tmp_path):
+    import pyarrow.parquet as pq
+    from preprocessing import params
+
+    tactical_dir = tmp_path / "data" / "tactical"
+    tactical_dir.mkdir(parents=True)
+    csv_path = tactical_dir / "BAR-ATH_tactical_homography.csv"
+    pd.DataFrame([
+        {"frame": 12, "valid": 1, "reprojection_error": 0.35},
+        {"frame": 25, "valid": 1, "reprojection_error": 1.40},
+    ]).to_csv(csv_path, index=False)
+
+    out_dir = tmp_path / "processed"
+    ph.export_homography_data(out_dir, BLOCKS, data_dir=tmp_path / "data", n_frames=N_FRAMES)
+
+    pq_path = out_dir / "homography.parquet"
+    assert pq_path.exists()
+    table = pq.read_table(pq_path)
+    meta = table.schema.metadata
+    assert meta[b"schema_version"] == str(params.SCHEMA_VERSION).encode("utf-8")
+
+    df = table.to_pandas()
+    assert len(df) == N_FRAMES
+    assert df.loc[12, "reproj_error"] == np.float32(0.35)
+    assert pd.isna(df.loc[25, "reproj_error"])
