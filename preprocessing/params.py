@@ -26,7 +26,9 @@ STILL_SPEED = 0.5           # m/s, abaixo disso o jogador conta em n_still_*
 
 # Orientacao
 ORIENT_WIN = 25             # frames apos o pontape inicial usados para achar o sentido de ataque
-KICKOFF_FALLBACK = {1: 11_185, 2: 113_742}   # valores publicados (FAQ/DATA); so para V0/conferencia
+# Valores publicados no FAQ/DATA, no referencial video_frame tático (índice zero);
+# não foram derivados de ajustes nos cinco minutos públicos.
+KICKOFF_FALLBACK = {1: 11_185, 2: 113_742}   # so para V0/conferencia
 
 # Proximidade e campo
 RADII = (2.0, 3.0, 5.0)     # m, contagens n_*_r2/r3/r5

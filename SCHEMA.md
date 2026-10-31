@@ -138,7 +138,11 @@ Se A7 mostrar que o time de um slot **não é constante**, a A7 avisa o grupo an
 
 ### Colunas por slot em `tracking_clean.parquet`
 `s01_x`, `s01_y`, `s01_vx`, `s01_vy`, `s01_break` … `s46_*` (`NN` com dois dígitos; metros e m/s, orientados). Mais: `flip` (int8: 1 se o campo foi refletido naquele tempo), `ball_x_raw`, `ball_y_raw` (posição original em metros, antes de qualquer filtro). Essas colunas **não** entram no master.
-- **Pontos isolados e duplicatas (A5):** quando um slot tem ponto isolado ou é duplicata de outro slot do mesmo time no mesmo frame (distância < `DEDUP_DIST` = 1 m), sua posição `(sNN_x, sNN_y, sNN_vx, sNN_vy)` naquele frame já vira `NaN` no `tracking_clean.parquet` (V1). Assim, tanto os agregados de A6 quanto as proximidades e contagens de B2–B4 ficam livres de duplicatas automaticamente.
+- **Pontos isolados, breaks e duplicatas (A5):** o terceiro campo do jogador no ATD (`s`) é velocidade escalar, mas não é usado para detectar trocas/descontinuidades de slot: os breaks são calculados pela posição em metros. Pontos isolados são removidos e os breaks recalculados; posições duplicadas do mesmo time a distância `< DEDUP_DIST` (1 m) viram `NaN` por frame. A velocidade vetorial é derivada por trechos separados por breaks, incluindo o frame inicial do trecho novo; posições e velocidades do slot removido ficam `NaN`. Isso mantém agregados de A6 e proximidades/contagens de B2–B4 livres de duplicatas.
+
+  **Verificação no ATD completo:** houve 174 transições acima de 12 m/s no 1º tempo e 723 no 2º tempo. Nessas transições, a mediana do `s` nativo foi 2,29 e 1,19 m/s, enquanto a mediana do deslocamento entre frames foi 15,69 e 16,88 m/s, respectivamente. Portanto, `s` não representa de forma confiável o salto observado na posição e não substitui o teste geométrico. O teste sintético também confirma que um salto permanente é cortado mesmo quando `s=0` em todos os frames.
+
+  **Contagem de frames com mais de 22 objetos no tracking completo (antes → depois da deduplicação):** 1º tempo: 695 → 586 (0,87% → 0,74%); 2º tempo: 3.054 → 2.735 (3,85% → 3,45%). “Antes” é depois da remoção de pontos isolados e antes da deduplicação; os totais são registrados pelo pipeline por tempo.
 
 ## Decisões fechadas (reunião de 27/10)
 

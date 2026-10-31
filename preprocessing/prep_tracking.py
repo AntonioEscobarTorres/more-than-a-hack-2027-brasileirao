@@ -13,31 +13,41 @@ import argparse
 import json
 import logging
 import os
-import xml.etree.ElementTree as ET
+import tempfile
 
 import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 
-from games import GAME, GAMES, asset_paths, half_video_blocks
+from games import GAME, asset_paths, half_video_blocks
 from starter.baseline import team_of_each_track
 from .params import (BALL_EPS, BALL_K, BALL_VMAX, DEDUP_DIST, FPS, KICKOFF_FALLBACK, MAX_GAP_FRAMES,
-                     MIN_BALL_SPEED_DIR, N_FRAMES, ORIENT_WIN, PITCH_L, PITCH_W, PLAYER_VMAX, STILL_SPEED)
+                     MIN_BALL_SPEED_DIR, N_FRAMES, ORIENT_WIN, PITCH_L, PITCH_W, PLAYER_VMAX,
+                     SCHEMA_VERSION, STILL_SPEED)
 from .schema import N_SLOTS
-from .params import SCHEMA_VERSION
 
 FIELD_SEP = ":"
 GROUP_SEP = ";"
 LOGGER = logging.getLogger(__name__)
 
 
+def _data_root(data_dir=None):
+    return data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "data")
+
+
 def _kickoff_frames(data_dir=None):
     """Load C4 kickoff frames, or use published fallback values with a warning."""
-    root = data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    root = _data_root(data_dir)
     path = os.path.join(root, "processed", "kickoffs.json")
     if os.path.isfile(path):
         with open(path, encoding="utf-8") as stream:
-            payload = json.load(stream)
+            try:
+                payload = json.load(stream)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise ValueError(f"Invalid kickoff JSON in {path}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"Kickoff JSON in {path} must be an object")
         result = {}
         for half in (1, 2):
             value = payload.get(str(half), payload.get(half,
@@ -48,10 +58,12 @@ def _kickoff_frames(data_dir=None):
                 value = next((value[k] for k in ("video_frame", "kickoff_frame", "frame") if k in value), None)
             if value is None:
                 raise ValueError(f"{path} must contain a kickoff video frame for half {half}")
-            result[half] = int(value)
-        LOGGER.info("Using kickoff frames from %s: %s", path, result)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"Kickoff frame for half {half} in {path} must be an integer >= 0")
+            result[half] = value
+        LOGGER.info("Kickoffs loaded from %s", path)
         return result
-    LOGGER.warning("%s not found; using published KICKOFF_FALLBACK frames %s", path, KICKOFF_FALLBACK)
+    LOGGER.warning("%s not found; using published kickoff fallback", path)
     return dict(KICKOFF_FALLBACK)
 
 
@@ -65,39 +77,48 @@ def read_atd(raw_path, meta_path, n_frames=N_FRAMES):
     seen = np.zeros(n_frames, dtype=bool)
     with open(raw_path, encoding="utf-8") as stream:
         for line_no, line in enumerate(stream, 1):
-            parts = line.rstrip("\n").split(FIELD_SEP)
+            if not line.strip():
+                continue
+            parts = line.rstrip("\r\n").split(FIELD_SEP)
             if len(parts) != 3:
                 raise ValueError(f"Malformed ATD line {line_no}: expected 3 colon-separated fields")
-            frame = int(parts[0]) - 1
+            try:
+                frame = int(parts[0]) - 1
+            except ValueError as exc:
+                raise ValueError(f"Invalid frame id at ATD line {line_no}") from exc
             if frame < 0 or frame >= n_frames or seen[frame]:
-                raise ValueError(f"Unexpected or duplicate ATD frame_id {frame + 1} at line {line_no}")
+                raise ValueError(f"Unexpected or duplicate ATD frame id at line {line_no}")
             expected = line_no - 1
             if frame != expected:
-                raise ValueError(f"ATD frames out of order at line {line_no}: expected video_frame {expected}, got {frame}")
+                raise ValueError(f"ATD frames out of order at line {line_no}")
             groups = parts[1].split(GROUP_SEP)
             if len(groups) != N_SLOTS:
-                raise ValueError(f"Frame {frame + 1}: expected {N_SLOTS} slots, found {len(groups)}")
+                raise ValueError(f"ATD line {line_no}: expected {N_SLOTS} slots, found {len(groups)}")
             for slot, group in enumerate(groups):
-                values = _triple(group)
+                values = _triple(group, line_no=line_no)
                 if values is not None:
                     players[frame, slot] = values
-            values = _triple(parts[2])
+            values = _triple(parts[2], line_no=line_no)
             if values is not None:
                 ball[frame] = values
             seen[frame] = True
     if not seen.all():
         missing = np.flatnonzero(~seen)
-        raise ValueError(f"ATD has {len(missing)} missing frames; first missing video_frame={missing[0]}")
+        raise ValueError(f"ATD has {len(missing)} missing frames")
     return players, ball, teams
 
 
-def _triple(text):
+def _triple(text, line_no=None):
     if not text or text[0] in "Nn":
         return None
     parts = text.split(",")
     if len(parts) < 3:
-        raise ValueError(f"Malformed ATD object group: {text!r}")
-    vals = np.asarray([float(v) for v in parts[:3]], dtype=np.float32)
+        raise ValueError("Malformed ATD object group: expected three values")
+    try:
+        vals = np.asarray([float(v) for v in parts[:3]], dtype=np.float32)
+    except ValueError as exc:
+        where = f" at ATD line {line_no}" if line_no is not None else ""
+        raise ValueError(f"Malformed numeric value{where}") from exc
     return vals if np.isfinite(vals[:2]).all() else None
 
 
@@ -222,6 +243,21 @@ def slot_breaks(px, py, fps=FPS, vmax=PLAYER_VMAX):
     return broken, isolated
 
 
+def _report_player_quality(before, after, blocks):
+    """Log per-half aggregates of frames above 22 objects.
+
+    ``before`` is after isolated-point removal but before deduplication;
+    ``after`` is after deduplication. No frame-level values or coordinates are logged.
+    """
+    for half, first, last in blocks:
+        pre = np.isfinite(before[first:last + 1]).all(axis=2).sum(axis=1) > 22
+        post = np.isfinite(after[first:last + 1]).all(axis=2).sum(axis=1) > 22
+        total = max(1, last - first + 1)
+        LOGGER.info("Player quality half %s: frames >22 objects before=%d (%.2f%%), after=%d (%.2f%%)",
+                    half, int(pre.sum()), 100 * pre.sum() / total,
+                    int(post.sum()), 100 * post.sum() / total)
+
+
 def _binomial3_smooth(seg):
     """Zero-phase [0.25, 0.5, 0.25] smoother with linear boundary reflection (exact on lines)."""
     seg = np.asarray(seg, dtype=np.float64)
@@ -234,15 +270,25 @@ def _binomial3_smooth(seg):
     return 0.25 * padded[:-2] + 0.5 * padded[1:-1] + 0.25 * padded[2:]
 
 
-def _segment_gradient(values, valid, fps=FPS, smooth=True):
+def _segment_gradient(values, valid, breaks=None, fps=FPS, smooth=True):
     """Differentiate finite contiguous runs independently; singleton runs have no speed.
 
     When ``smooth=True``, applies a zero-phase 3-point binomial filter to each contiguous
     run before differentiating, attenuating 25 Hz position jitter without altering stored positions.
     """
     out = np.full(len(values), np.nan, dtype=np.float32)
-    edges = np.flatnonzero(np.diff(np.r_[False, valid, False].astype(np.int8)))
-    for start, end in zip(edges[::2], edges[1::2]):
+    values = np.asarray(values)
+    valid = np.asarray(valid, dtype=bool) & np.isfinite(values)
+    starts = valid & ~np.r_[False, valid[:-1]]
+    if breaks is not None:
+        breaks = np.asarray(breaks, dtype=bool)
+        if breaks.shape != valid.shape:
+            raise ValueError("breaks and valid must have the same shape")
+        starts |= valid & breaks
+    ends = valid & (~np.r_[valid[1:], False] | np.r_[(valid & breaks)[1:], False]) if breaks is not None else valid & ~np.r_[valid[1:], False]
+    starts_at = np.flatnonzero(starts)
+    ends_at = np.flatnonzero(ends) + 1
+    for start, end in zip(starts_at, ends_at):
         if end - start >= 2:
             seg = _binomial3_smooth(values[start:end]) if smooth else values[start:end]
             out[start:end] = np.gradient(seg) * fps
@@ -291,7 +337,13 @@ def _report_ball_quality(frame):
 
 
 def _report_filter_sensitivity(ball, blocks):
-    """Summarize speed distribution and eps/K removal sensitivity per game time."""
+    """Summarize full-game speed and eps/K removal sensitivity for both halves.
+
+    Interpret the report by choosing the smallest K and eps in a stable region:
+    removed-point fractions should change little at neighboring settings, with
+    enough distance from a small parameter change that causes an abrupt jump.
+    These choices must be based on the complete match, never the public five minutes.
+    """
     speeds = []
     for _, first, last in blocks:
         xy = ball[first:last + 1, :2]
@@ -310,6 +362,7 @@ def _report_filter_sensitivity(ball, blocks):
         total += np.isfinite(ball[first:last + 1, :2]).all(axis=1).sum()
     for eps in (0.5, 1.0, 2.0):
         rates = []
+        percentages = []
         for k in (20, 30, 40, 60):
             kept = 0
             for _, first, last in blocks:
@@ -317,8 +370,12 @@ def _report_filter_sensitivity(ball, blocks):
                                                   ball[first:last + 1, 1] * PITCH_W,
                                                   eps=eps, k=k)
                 kept += (np.isfinite(x) & np.isfinite(y)).sum()
-            rates.append(f"K={k}:{100.0 * (total-kept) / max(1, total):.2f}%")
-        LOGGER.info("Removed-point sensitivity at eps=%.1fm: %s", eps, ", ".join(rates))
+            removed_pct = 100.0 * (total - kept) / max(1, total)
+            percentages.append(removed_pct)
+            rates.append(f"K={k}:{removed_pct:.2f}%")
+        max_neighbor_delta = max((abs(a - b) for a, b in zip(percentages, percentages[1:])), default=0.0)
+        LOGGER.info("Removed-point sensitivity at eps=%.1fm: %s; max neighboring K change=%.2f pp",
+                    eps, ", ".join(rates), max_neighbor_delta)
 
 
 def _orient_half(players, ball, team_ids, start, end, kick_frame, pitch):
@@ -329,20 +386,20 @@ def _orient_half(players, ball, team_ids, start, end, kick_frame, pitch):
     home = np.asarray(team_ids) == 0
     home_mean = np.nanmean(window[:, home]) if np.isfinite(window[:, home]).any() else np.nan
     if not np.isfinite(home_mean):
-        raise ValueError(f"Cannot infer home direction near kickoff frame {kick_frame}")
+        raise ValueError("Cannot infer home direction near kickoff")
     # At kickoff the home team is in its own half: low x means it attacks toward high x.
     flip = home_mean >= length / 2
     if flip:
         players[start:end, :, 0] = length - players[start:end, :, 0]
         players[start:end, :, 1] = width - players[start:end, :, 1]
-        players[start:end, :, 2] = -players[start:end, :, 2]
+        # ATD's third player field is scalar speed (s), so reflection does not change it.
         ball[start:end, 0] = length - ball[start:end, 0]
         ball[start:end, 1] = width - ball[start:end, 1]
     return flip
 
 
 def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, PITCH_W),
-                     n_frames=N_FRAMES, kickoffs=None, stage="V1"):
+                     n_frames=N_FRAMES, kickoffs=None, stage="V1", data_dir=None):
     """Build clean frame table and slot metadata from normalized 0..1 ATD arrays.
 
     Ball kinematics are smoothed within observed runs (V1) rather than over the
@@ -352,6 +409,10 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     stage = str(stage).upper()
     if stage not in {"V0", "V1"}:
         raise ValueError("stage must be 'V0' or 'V1'")
+    players = np.asarray(players)
+    slot_team_ids = np.asarray(slot_team_ids)
+    if slot_team_ids.shape != (players.shape[1],) or not np.isin(slot_team_ids, (0, 1)).all():
+        raise ValueError("slot_team_ids must have one 0/1 value per player slot")
     if blocks is None:
         blocks = half_video_blocks(GAME)
     players = players.astype(np.float32, copy=True)
@@ -365,13 +426,13 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     # per-half orientation transform as well as before filtering/interpolation.
     ball_raw = ball[:, :2].copy()
     if kickoffs is None:
-        kickoffs = _kickoff_frames()
+        kickoffs = _kickoff_frames(data_dir)
     flips = []
     for half, first, last in blocks:
         kick = min(max(int(kickoffs.get(half, first)), first), last)
         flips.append(_orient_half(players, ball, slot_team_ids, first, last + 1, kick, pitch))
     if len(flips) >= 2 and flips[0] == flips[1]:
-        raise ValueError(f"Half orientations should oppose each other, got {flips}")
+        raise ValueError("Half orientations should oppose each other")
 
     t, slots = players.shape[:2]
     frame_data = {"video_frame": np.arange(t, dtype=np.int32)}
@@ -399,8 +460,9 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
         gap[sl], since[sl], until[sl] = gl, st, un
         ix, iy = _fill_short_gaps(fx, MAX_GAP_FRAMES), _fill_short_gaps(fy, MAX_GAP_FRAMES)
         filled_flag[sl] = ~obs & np.isfinite(ix) & np.isfinite(iy)
-        # Keep stored positions untouched. V1 smooths each observed run zero-phase
-        # inside _segment_gradient before differentiation; V0 preserves the legacy
+        # Keep stored positions untouched. V1 smooths each observed run with
+        # Savitzky-Golay (window 7, order 2, mode='interp') inside _ball_gradient;
+        # V0 preserves the legacy
         # unsmoothed baseline. Filled positions never contribute to kinematics.
         bx[sl], by[sl] = ix, iy
         smooth = stage == "V1"
@@ -431,6 +493,7 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     frame_data["ball_y_raw"][half_col == 0] = np.nan
 
     px, py = players[:, :, 0], players[:, :, 1]
+    positions_before_dedup = np.full((t, slots, 2), np.nan, dtype=np.float32)
     valid_halves = np.zeros(t, dtype=bool)
     for _, first, last in blocks:
         valid_halves[first:last + 1] = True
@@ -442,9 +505,10 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     for _, first, last in blocks:
         sl = slice(first, last + 1)
         half_px, half_py = px[sl], py[sl]
-        half_breaks, isolated = slot_breaks(half_px, half_py)
+        _, isolated = slot_breaks(half_px, half_py)
         half_px[isolated], half_py[isolated] = np.nan, np.nan
-        breaks[sl] = half_breaks
+        # "Before" means after isolated-point removal and before duplicate removal.
+        positions_before_dedup[sl] = np.stack((half_px, half_py), axis=2)
         # Remove duplicates within this half, retaining the lower slot index.
         for members in members_by_team:
             for i_pos, i in enumerate(members):
@@ -452,17 +516,18 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
                     close = np.hypot(half_px[:, i] - half_px[:, j],
                                      half_py[:, i] - half_py[:, j]) < DEDUP_DIST
                     half_px[close, j], half_py[close, j] = np.nan, np.nan
+        # Recompute after every position removal so reacquisitions are explicit breaks.
+        breaks[sl], _ = slot_breaks(half_px, half_py)
+    _report_player_quality(positions_before_dedup, np.stack((px, py), axis=2), blocks)
     vx = np.full_like(px, np.nan); vy = np.full_like(py, np.nan)
     for _, first, last in blocks:
         sl = slice(first, last + 1)
         for s in range(slots):
             good = np.isfinite(px[sl, s]) & np.isfinite(py[sl, s])
             # A5 documents smoothed player velocities for V1; keep V0 unsmoothed.
-            dx = _segment_gradient(px[sl, s], good, smooth=(stage == "V1"))
-            dy = _segment_gradient(py[sl, s], good, smooth=(stage == "V1"))
+            dx = _segment_gradient(px[sl, s], good, breaks=breaks[sl, s], smooth=(stage == "V1"))
+            dy = _segment_gradient(py[sl, s], good, breaks=breaks[sl, s], smooth=(stage == "V1"))
             vx[sl, s], vy[sl, s] = dx, dy
-            invalid = breaks[sl, s]
-            vx[sl, s][invalid], vy[sl, s][invalid] = np.nan, np.nan
     for s in range(slots):
         for suffix, values in (("x", px[:, s]), ("y", py[:, s]), ("vx", vx[:, s]), ("vy", vy[:, s])):
             frame_data[f"s{s + 1:02d}_{suffix}"] = values.astype(np.float32)
@@ -513,12 +578,8 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     return frame, slot_teams
 
 
-def build(game=GAME, data_dir=None, output_dir=None):
-    """Load raw frame-aligned tracking arrays for A2/A3; writing is done by ``main``.
-
-    ``output_dir`` remains accepted for call compatibility; this load stage does not
-    transform or persist the arrays.
-    """
+def build(game=GAME, data_dir=None):
+    """Load raw frame-aligned tracking arrays for A2/A3; writing is done by ``main``."""
     if game != GAME:
         raise ValueError(f"This preprocessing module currently supports only {GAME}, got {game!r}")
     paths = asset_paths(game=game, data_dir=data_dir, source="tactical")
@@ -547,7 +608,7 @@ def main(argv=None):
         # Jump filtering is invariant to pitch reflection, so raw unoriented ball
         # coordinates produce the same keep/remove decisions as oriented coordinates.
         _report_filter_sensitivity(ball, half_video_blocks(GAME))
-    root = args.data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    root = _data_root(args.data_dir)
     output_dir = args.output_dir or os.path.join(root, "processed")
     os.makedirs(output_dir, exist_ok=True)
     import pyarrow as pa
@@ -556,11 +617,24 @@ def main(argv=None):
     metadata = dict(tracking_table.schema.metadata or {})
     metadata.update({b"schema_version": SCHEMA_VERSION.encode("ascii"),
                      b"tracking_stage": args.stage.encode("ascii")})
-    pq.write_table(tracking_table.replace_schema_metadata(metadata),
-                   os.path.join(output_dir, "tracking_clean.parquet"))
-    slot_teams.to_parquet(os.path.join(output_dir, "slot_teams.parquet"), index=False)
-    print(f"players={players.shape}, ball={ball.shape}, slots={len(teams)}")
-    print(f"tracking rows={len(frame):,}; flips={frame.groupby('half')['flip'].first().to_dict()}; output={output_dir}")
+    fd, temp_path = tempfile.mkstemp(prefix=".tracking_clean.", suffix=".parquet", dir=output_dir)
+    os.close(fd)
+    try:
+        pq.write_table(tracking_table.replace_schema_metadata(metadata), temp_path)
+        os.replace(temp_path, os.path.join(output_dir, "tracking_clean.parquet"))
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+    fd, temp_path = tempfile.mkstemp(prefix=".slot_teams.", suffix=".parquet", dir=output_dir)
+    os.close(fd)
+    try:
+        slot_teams.to_parquet(temp_path, index=False)
+        os.replace(temp_path, os.path.join(output_dir, "slot_teams.parquet"))
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+    LOGGER.info("Tracking prepared: rows=%d, slots=%d", len(frame), len(teams))
+    LOGGER.info("Tracking and slot metadata written to %s", output_dir)
     return 0
 
 
