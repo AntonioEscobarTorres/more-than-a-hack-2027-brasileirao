@@ -106,6 +106,8 @@ def test_flip_orients_coordinates_and_velocity_and_halves_oppose():
     assert frame.loc[3, "s01_vx"] > 0  # original negative velocity was reflected
     assert frame.loc[0, "ball_vx"] > 0
     assert frame.loc[3, "ball_vx"] > 0
+    # Raw audit fields preserve the input orientation even when clean positions flip.
+    np.testing.assert_allclose(frame.loc[3, "ball_x_raw"], 0.8 * pt.PITCH_L, rtol=1e-6)
 """Complementary tests for prep_tracking aligned with the actual implementation."""
 import numpy as np
 import pytest
@@ -267,6 +269,73 @@ def test_ball_dir_change_detects_turn_and_masks_slow_ball():
 
     frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks, kickoffs={1: 0}, n_frames=n)
 
-    np.testing.assert_allclose(frame.loc[1:4, "ball_dir_change"], 0.0, atol=1e-5)
+    np.testing.assert_allclose(frame.loc[1:2, "ball_dir_change"], 0.0, atol=1e-5)
     assert frame.loc[7, "ball_dir_change"] > 0.4  # sharp direction change at the corner
     assert frame.loc[12:13, "ball_dir_change"].isna().all()
+
+
+def test_ghost_near_gap_end_is_removed_then_short_gap_is_interpolated():
+    n = 24
+    blocks = [(1, 0, n - 1)]
+    players = np.full((n, pt.N_SLOTS, 3), np.nan, np.float32)
+    players[:, 0, :2] = (0.2, 0.5)
+    teams = np.arange(pt.N_SLOTS) % 2
+    ball = np.full((n, 3), np.nan, np.float32)
+    # Smooth 2.5 m/s path with a short missing interval and one distant ghost.
+    true_x = 0.20 + 0.001 * np.arange(n)
+    for f in list(range(0, 8)) + list(range(12, n)):
+        ball[f] = (true_x[f], 0.5, 0.0)
+    ball[11] = (0.75, 0.9, 0.0)
+    frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks,
+                                   kickoffs={1: 0}, n_frames=n)
+    assert frame.loc[11, "ball_jump_removed"] == 1
+    assert frame.loc[8:11, "ball_filled"].eq(1).all()
+    np.testing.assert_allclose(frame.loc[8:11, "ball_x"], true_x[8:12] * pt.PITCH_L, atol=1e-4)
+
+
+def test_v1_smoothing_reduces_synthetic_quantization_acceleration():
+    n = 80
+    blocks = [(1, 0, n - 1)]
+    teams = np.arange(pt.N_SLOTS) % 2
+    players = np.full((n, pt.N_SLOTS, 3), np.nan, np.float32)
+    players[:, 0, :2] = (0.2, 0.5)
+    ball = np.full((n, 3), np.nan, np.float32)
+    frames = np.arange(n)
+    # Deterministic high-frequency tracking noise atop a realistic linear path.
+    ball[:, 0] = 0.20 + 0.0004 * frames + 0.005 * np.sin(1.8 * frames)
+    ball[:, 1] = 0.5
+    v0, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks,
+                                kickoffs={1: 0}, n_frames=n, stage="V0")
+    v1, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks,
+                                kickoffs={1: 0}, n_frames=n, stage="V1")
+    a0 = v0.loc[10:69, "ball_acc"].to_numpy()
+    a1 = v1.loc[10:69, "ball_acc"].to_numpy()
+    assert np.nanmax(a1) < np.nanmax(a0) / 2.0
+    assert np.nanmax(a1) < 600.0
+
+
+def test_gap_features_and_short_long_gap_invariants():
+    n = 50
+    blocks = [(1, 0, n - 1)]
+    teams = np.arange(pt.N_SLOTS) % 2
+    players = np.full((n, pt.N_SLOTS, 3), np.nan, np.float32)
+    players[:, 0, :2] = (0.2, 0.5)
+    ball = np.full((n, 3), np.nan, np.float32)
+    # Leading/trailing gaps verify the boundary semantics. Internal gaps have
+    # lengths 2 and MAX_GAP_FRAMES + 1 and remain within one continuous path.
+    observed_frames = np.r_[np.arange(2, 10), np.arange(12, 20), np.arange(20 + pt.MAX_GAP_FRAMES + 1, n - 2)]
+    true_x = 0.2 + np.arange(n, dtype=np.float32) * 0.0005
+    ball[observed_frames, 0] = true_x[observed_frames]
+    ball[observed_frames, 1] = 0.5
+
+    frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks,
+                                   kickoffs={1: 0}, n_frames=n)
+    assert frame.loc[10:11, "ball_filled"].eq(1).all()
+    assert frame.loc[10:11, "ball_x"].notna().all()
+    long_start, long_end = 20, 20 + pt.MAX_GAP_FRAMES
+    assert frame.loc[long_start:long_end, "ball_filled"].eq(0).all()
+    assert frame.loc[long_start:long_end, "ball_x"].isna().all()
+    assert frame.loc[:1, "since_last_obs"].isna().all()
+    assert frame.loc[n - 2:, "until_next_obs"].isna().all()
+    assert (frame["ball_x"].isna().to_numpy() ==
+            ((frame["ball_observed"].to_numpy() == 0) & (frame["ball_filled"].to_numpy() == 0))).all()

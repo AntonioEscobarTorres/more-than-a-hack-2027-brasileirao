@@ -145,20 +145,17 @@ def fill_short_gaps(x, gap_len, max_gap):
 # chamar SEMPRE por tempo de jogo, nunca atravessando o intervalo
 ```
 
-### Suavização zero-fase, derivadas observadas e mudança de direção da bola
+### Suavização offline, derivadas observadas e mudança de direção da bola
 ```python
 import numpy as np
+from scipy.signal import savgol_filter
 
-def binomial3_smooth(seg):
-    """Filtro [0.25, 0.5, 0.25] zero-fase com reflexao linear nas bordas (exato em retas)."""
+def smooth_ball_segment(seg):
+    """Suavizacao offline de um trecho finito; segmentos curtos ficam inalterados."""
     seg = np.asarray(seg, dtype=np.float64)
-    if len(seg) < 3:
-        return seg
-    padded = np.empty(len(seg) + 2, dtype=np.float64)
-    padded[0] = 2.0 * seg[0] - seg[1]
-    padded[1:-1] = seg
-    padded[-1] = 2.0 * seg[-1] - seg[-2]
-    return 0.25 * padded[:-2] + 0.5 * padded[1:-1] + 0.25 * padded[2:]
+    if len(seg) >= 7:
+        return savgol_filter(seg, window_length=7, polyorder=2, mode="interp")
+    return seg.copy()
 
 def segment_gradient(values, valid, fps=25.0, smooth=True):
     """Deriva apenas dentro de segmentos contiguos validos (valid == True, comprimento >= 2).
@@ -167,7 +164,7 @@ def segment_gradient(values, valid, fps=25.0, smooth=True):
     edges = np.flatnonzero(np.diff(np.r_[False, valid, False].astype(np.int8)))
     for start, end in zip(edges[::2], edges[1::2]):
         if end - start >= 2:
-            seg = binomial3_smooth(values[start:end]) if smooth else values[start:end]
+            seg = smooth_ball_segment(values[start:end]) if smooth else values[start:end]
             out[start:end] = np.gradient(seg) * fps
     return out
 
