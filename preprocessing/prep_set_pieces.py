@@ -79,15 +79,15 @@ def build_set_piece_features(
     return is_sp, sp_type, sp_team, starts, ends, types
 
 
-def distance_to_set_pieces(starts: np.ndarray, ends: np.ndarray, sp_types: np.ndarray, 
+def distance_to_set_pieces(starts: np.ndarray, ends: np.ndarray, sp_types: np.ndarray,
                            blocks: list[tuple[int, int, int]], n_frames: int = params.N_FRAMES):
     """
     Calculates distances and adjacent types strictly within each half block.
     Outside the blocks (e.g., halftime where half == 0), values remain NaN/empty.
-    
+
     Args:
         starts: Array of SP start frames.
-        ends: Array of SP last active frames.
+        ends: Array of SP last active frames (end_frame - 1).
         sp_types: Array of SP types.
         blocks: list of (half, first_frame, last_frame) from half_video_blocks.
         n_frames: Total number of frames.
@@ -95,32 +95,41 @@ def distance_to_set_pieces(starts: np.ndarray, ends: np.ndarray, sp_types: np.nd
     starts = np.asarray(starts, dtype=int)
     ends = np.asarray(ends, dtype=int)
     sp_types = np.asarray(sp_types, dtype=object)
-    
+
+    # Do not rely on the caller's ordering: sort the set pieces by start frame here.
+    order = np.argsort(starts, kind="stable")
+    starts, ends, sp_types = starts[order], ends[order], sp_types[order]
+
     to_next = np.full(n_frames, np.nan, dtype=np.float32)
     since_end = np.full(n_frames, np.nan, dtype=np.float32)
     next_type = np.full(n_frames, "", dtype=object)
     prev_type = np.full(n_frames, "", dtype=object)
-    
+
     for _, f0, f1 in blocks:
         f = np.arange(f0, f1 + 1)
-        
+
         m_half = (starts <= f1) & (ends >= f0)
         s_half = np.maximum(starts[m_half], f0)
         e_half = np.minimum(ends[m_half], f1)
         t_half = sp_types[m_half]
-        
-        # 1. Frames to next set piece
+
+        # Starts are sorted, but ends are NOT when one set piece is nested inside another
+        # (np.searchsorted needs a sorted array), so sort the ends together with their types.
+        end_order = np.argsort(e_half, kind="stable")
+        e_sorted, t_by_end = e_half[end_order], t_half[end_order]
+
+        # 1. Frames to next set piece (first start at or after this frame)
         i = np.searchsorted(s_half, f, side="left")
         ok_next = i < len(s_half)
         to_next[f[ok_next]] = (s_half[i[ok_next]] - f[ok_next]).astype(np.float32)
         next_type[f[ok_next]] = t_half[i[ok_next]]
-        
-        # 2. Frames since previous set piece ended
-        j = np.searchsorted(e_half, f, side="right") - 1
+
+        # 2. Frames since the most recent last-active frame of any set piece
+        j = np.searchsorted(e_sorted, f, side="right") - 1
         ok_prev = j >= 0
-        since_end[f[ok_prev]] = (f[ok_prev] - e_half[j[ok_prev]]).astype(np.float32)
-        prev_type[f[ok_prev]] = t_half[j[ok_prev]]
-        
+        since_end[f[ok_prev]] = (f[ok_prev] - e_sorted[j[ok_prev]]).astype(np.float32)
+        prev_type[f[ok_prev]] = t_by_end[j[ok_prev]]
+
     return to_next, since_end, next_type, prev_type
 
 
