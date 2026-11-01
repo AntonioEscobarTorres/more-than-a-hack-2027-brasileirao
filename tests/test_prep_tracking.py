@@ -108,6 +108,180 @@ def test_flip_orients_coordinates_and_velocity_and_halves_oppose():
     assert frame.loc[3, "ball_vx"] > 0
     # Raw audit fields preserve the input orientation even when clean positions flip.
     np.testing.assert_allclose(frame.loc[3, "ball_x_raw"], 0.8 * pt.PITCH_L, rtol=1e-6)
+    assert frame.loc[0:2, "centroid_home_x"].is_monotonic_increasing
+    assert frame.loc[3:5, "centroid_home_x"].is_monotonic_increasing
+
+
+def test_team_aggregates_are_invariant_to_slots_swapping_player_identity():
+    # Each frame contains the same players, positions, and velocities. Their slot
+    # assignments swap in frame 2, as can happen when track slots change identity.
+    px = np.array([[10.0, 20.0, 70.0, 80.0],
+                   [20.0, 10.0, 80.0, 70.0]], dtype=np.float32)
+    py = np.array([[10.0, 30.0, 40.0, 50.0],
+                   [30.0, 10.0, 50.0, 40.0]], dtype=np.float32)
+    vx = np.array([[0.0, 1.0, 2.0, 3.0],
+                   [1.0, 0.0, 3.0, 2.0]], dtype=np.float32)
+    vy = np.zeros_like(vx)
+    teams = np.array([0, 0, 1, 1])
+
+    aggregates = pt._team_aggregates(px, py, vx, vy, teams, np.ones(4, dtype=bool))
+
+    for values in aggregates.values():
+        np.testing.assert_allclose(values[0], values[1])
+
+
+def test_team_aggregates_use_eligibility_mask_and_zero_counts_when_none_tracked():
+    px = np.array([[10.0, 100.0, np.nan], [np.nan, np.nan, np.nan]], dtype=np.float32)
+    py = np.array([[20.0, 100.0, np.nan], [np.nan, np.nan, np.nan]], dtype=np.float32)
+    vx = np.zeros_like(px)
+    vy = np.zeros_like(py)
+    teams = np.array([0, 0, 1])
+    field_players = np.array([True, False, True])
+
+    aggregates = pt._team_aggregates(px, py, vx, vy, teams, field_players)
+
+    assert aggregates["centroid_home_x"][0] == 10.0
+    assert aggregates["n_tracked_home"][0] == 1.0
+    assert aggregates["n_still_home"][0] == 1.0
+    assert aggregates["n_tracked_home"][1] == 0
+    assert np.isnan(aggregates["centroid_away_x"]).all()
+    assert np.all(aggregates["n_tracked_away"] == 0)
+    assert np.all(aggregates["n_still_away"] == 0)
+    assert np.isnan(aggregates["mean_speed_away"]).all()
+
+
+def test_all_eleven_slots_including_goalkeeper_contribute_to_aggregates():
+    teams = np.r_[np.zeros(11, dtype=np.int8), np.ones(11, dtype=np.int8)]
+    px = np.full((1, 22), np.nan, dtype=np.float32)
+    py = np.full_like(px, np.nan)
+    vx = np.zeros_like(px)
+    vy = np.zeros_like(px)
+    # Home's first slot represents the goalkeeper; all 11 players count.
+    px[0, :11] = np.arange(1, 12, dtype=np.float32)
+    py[0, :11] = 10
+    px[0, 11:] = np.arange(20, 31, dtype=np.float32)
+    py[0, 11:] = 20
+    aggregates = pt._team_aggregates(px, py, vx, vy, teams, np.ones(22, dtype=bool))
+    assert aggregates["n_tracked_home"][0] == 11
+    assert aggregates["centroid_home_x"][0] == 6
+    assert aggregates["spread_home_x"][0] == pytest.approx(np.sqrt(10))
+    assert aggregates["centroid_home_y"][0] == 10
+    assert aggregates["spread_home_y"][0] == 0
+
+
+def test_prepare_tracking_defaults_all_slots_to_eligible_including_goalkeeper():
+    teams = np.r_[np.zeros(11, dtype=np.int8), np.ones(pt.N_SLOTS - 11, dtype=np.int8)]
+    players = np.full((2, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    players[:, 0, :2] = (0.02, 0.5)  # goalkeeper near the goal
+    players[:, 1, :2] = (0.2, 0.5)
+    ball = np.full((2, 3), np.nan, dtype=np.float32)
+    frame, slots = pt.prepare_tracking(players, ball, teams, blocks=[(1, 0, 1)],
+                                       kickoffs={1: 0}, n_frames=2)
+    assert slots["is_field_player"].all()
+    assert (frame["n_tracked_home"] == 2).all()
+    np.testing.assert_allclose(frame["centroid_home_x"], 0.11 * pt.PITCH_L)
+
+
+def test_no_tracked_players_yields_nan_metrics_and_zero_counts():
+    teams = np.array([0, 1])
+    missing = np.full((2, 2), np.nan, dtype=np.float32)
+    zeros = np.zeros_like(missing)
+    aggregates = pt._team_aggregates(missing, missing, zeros, zeros, teams,
+                                     np.ones(2, dtype=bool))
+    for team in ("home", "away"):
+        for name in (f"centroid_{team}_x", f"centroid_{team}_y",
+                     f"spread_{team}_x", f"spread_{team}_y", f"mean_speed_{team}"):
+            assert np.isnan(aggregates[name]).all()
+        assert np.all(aggregates[f"n_tracked_{team}"] == 0)
+        assert np.all(aggregates[f"n_still_{team}"] == 0)
+
+
+def test_team_aggregate_team_membership_does_not_mix_sides():
+    px = np.array([[10.0, 90.0]], dtype=np.float32)
+    py = np.array([[20.0, 40.0]], dtype=np.float32)
+    zeros = np.zeros_like(px)
+    mask = np.ones(2, dtype=bool)
+    original = pt._team_aggregates(px, py, zeros, zeros, np.array([0, 1]), mask)
+    reassigned = pt._team_aggregates(px, py, zeros, zeros, np.array([1, 1]), mask)
+    assert original["centroid_home_x"][0] == 10
+    assert original["centroid_away_x"][0] == 90
+    assert np.isnan(reassigned["centroid_home_x"][0])
+    assert reassigned["centroid_away_x"][0] == 50
+
+
+def test_aggregate_duplicate_slots_are_removed_before_count_and_centroid():
+    blocks = [(1, 0, 2)]
+    teams = np.zeros(pt.N_SLOTS, dtype=np.int8)
+    teams[2:] = 1
+    players = np.full((3, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    players[:, 0, :2] = (0.2, 0.5)
+    players[:, 1, :2] = (0.2 + pt.DEDUP_DIST / pt.PITCH_L / 2, 0.5)
+    players[:, 2, :2] = (0.8, 0.5)
+    ball = np.full((3, 3), np.nan, dtype=np.float32)
+    frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks,
+                                   kickoffs={1: 0}, n_frames=3)
+    assert (frame["n_tracked_home"] == 1).all()
+    np.testing.assert_allclose(frame["centroid_home_x"], 0.2 * pt.PITCH_L)
+    assert frame["s02_x"].isna().all()
+
+
+def test_aggregate_columns_are_nan_outside_tracking_periods_and_repeat_deterministically():
+    blocks = [(1, 1, 3), (2, 4, 6)]
+    teams = np.arange(pt.N_SLOTS) % 2
+    players = np.full((8, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    players[1:4, 0, :2] = (0.2, 0.4)
+    players[4:7, 0, :2] = (0.8, 0.4)
+    ball = np.full((8, 3), np.nan, dtype=np.float32)
+    ball[1:4, :2] = (0.2, 0.5)
+    ball[4:7, :2] = (0.8, 0.5)
+    args = (players, ball, teams)
+    kwargs = dict(blocks=blocks, kickoffs={1: 1, 2: 4}, n_frames=8)
+    first, _ = pt.prepare_tracking(*args, **kwargs)
+    second, _ = pt.prepare_tracking(*args, **kwargs)
+    aggregate_columns = [c for c in first if c.startswith((
+        "centroid_", "spread_", "mean_speed_", "n_still_", "n_tracked_"))]
+    assert first.loc[[0, 7], aggregate_columns].isna().all().all()
+    np.testing.assert_allclose(first[aggregate_columns], second[aggregate_columns], equal_nan=True)
+
+
+def test_aggregates_keep_home_left_of_away_at_both_oriented_kickoffs():
+    blocks = [(1, 0, 2), (2, 3, 5)]
+    teams = np.arange(pt.N_SLOTS) % 2
+    players = np.full((6, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    # Two players per side. Home starts left in half 1 and right in half 2;
+    # orientation reflects half 2 so Home is left at both kickoffs.
+    players[:, 0, :2] = (np.array([.20, .21, .22, .80, .79, .78])[:, None]
+                          * np.array([pt.PITCH_L, pt.PITCH_W]))
+    players[:, 2, :2] = (np.array([.25, .26, .27, .75, .74, .73])[:, None]
+                          * np.array([pt.PITCH_L, pt.PITCH_W]))
+    players[:, 1, :2] = (np.array([.75, .74, .73, .25, .26, .27])[:, None]
+                          * np.array([pt.PITCH_L, pt.PITCH_W]))
+    players[:, 3, :2] = (np.array([.80, .79, .78, .20, .21, .22])[:, None]
+                          * np.array([pt.PITCH_L, pt.PITCH_W]))
+    # prepare_tracking expects normalized positions.
+    players[:, :, 0] /= pt.PITCH_L
+    players[:, :, 1] /= pt.PITCH_W
+    ball = np.full((6, 3), np.nan, dtype=np.float32)
+    ball[:, :2] = (np.array([.3, .31, .32, .7, .69, .68])[:, None]
+                   * np.array([pt.PITCH_L, pt.PITCH_W]))
+    ball[:, 0] /= pt.PITCH_L
+    ball[:, 1] /= pt.PITCH_W
+    frame, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks,
+                                   kickoffs={1: 0, 2: 3}, n_frames=6)
+    assert frame.loc[0, "centroid_home_x"] < frame.loc[0, "centroid_away_x"]
+    assert frame.loc[3, "centroid_home_x"] < frame.loc[3, "centroid_away_x"]
+    assert frame.groupby("half")["flip"].first().tolist() == [0, 1]
+
+
+@pytest.mark.parametrize("field_player", [np.ones(pt.N_SLOTS - 1, dtype=bool),
+                                           np.ones(pt.N_SLOTS, dtype=np.int8)])
+def test_prepare_tracking_rejects_invalid_field_player_mask(field_player):
+    players = np.full((1, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    ball = np.full((1, 3), np.nan, dtype=np.float32)
+    teams = np.arange(pt.N_SLOTS) % 2
+    with pytest.raises(ValueError, match="slot_is_field_player"):
+        pt.prepare_tracking(players, ball, teams, blocks=[], n_frames=1,
+                            slot_is_field_player=field_player)
 """Complementary tests for prep_tracking aligned with the actual implementation."""
 import numpy as np
 import pytest

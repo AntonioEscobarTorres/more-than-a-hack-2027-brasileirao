@@ -97,7 +97,24 @@ def team_of_each_track(meta_path):
     slots = [player.get("teamId") for player in root.iter("Player")]
     if not slots:
         raise ValueError("{}: no Player entries".format(meta_path))
+    unknown = sorted({team_id for team_id in slots if team_id not in team_ids})
+    if unknown:
+        raise ValueError("{}: track slots reference unknown team IDs {}".format(meta_path, unknown))
     return np.array([HOME if team_id == home_id else AWAY for team_id in slots], dtype=np.int8)
+
+
+def field_player_of_each_track(meta_path):
+    """Return field-player flags in ATD slot order, including goalkeepers.
+
+    The ATD metadata represents these tracklets as ``Player`` elements. It has no
+    separate role field, and this match's 46 elements are all player tracklets;
+    officials or other non-player objects would be represented separately.
+    """
+    root = ET.parse(meta_path).getroot()
+    players = list(root.iter("Player"))
+    if not players:
+        raise ValueError("{}: no Player entries".format(meta_path))
+    return np.ones(len(players), dtype=bool)
 
 
 def team_names(meta_path):
