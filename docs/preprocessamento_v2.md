@@ -50,7 +50,7 @@ CSV hom -> prep_homography.py ----> homography.parquet (opcional) --------------
 | A4 Bola | Filtro de saltos (cadeias mutuamente consistentes com reconexão sobre blocos fantasmas `> K` e retenção de cadeias longas disjuntas) → colunas de confiança depois do filtro → interpolação só de lacunas curtas → suavização zero-fase apenas para derivar nos trechos observados (`ball_observed == 1`), mascarando velocidades e aceleração como `NaN` onde `ball_filled == 1` → `ball_vx, ball_vy, ball_speed, ball_acc, ball_dir_change`. |
 | A5 Jogadores | `slot_break` nos saltos de 1 frame; apagar a posição de pontos isolados. Velocidade vetorial por derivada da posição suavizada, por trechos entre quebras. Remover duplicatas (mesmo time a <1 m): zerar como `NaN` o slot duplicado no frame no `tracking_clean.parquet` (V1), para que A6 e B2–B4 já fiquem sem duplicatas. |
 | A6 Agregados por time | `centroid_*`, `spread_*`, `mean_speed_*`, `n_still_*`, `n_tracked_*`, robustos à troca de slots. |
-| A7 Time de cada slot | Verificar o mapeamento no XML (`starter/baseline.py: team_of_each_track`) e se há objetos que não são jogadores de linha. Exportar `slot_teams.parquet`. |
+| A7 Time de cada slot | **Concluído (issue #14):** `slot_teams.parquet` usa o `teamId` constante do XML; `kloppy` concorda nos 46 slots. Detalhes e limite da conclusão em [`SCHEMA.md`](../SCHEMA.md#slot_teamsparquet-a7). |
 | A8 Saída | `tracking_clean.parquet` (V0, depois V1). |
 
 ### Filtro de saltos da bola (cadeias mutuamente consistentes)
