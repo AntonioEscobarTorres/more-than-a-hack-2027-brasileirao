@@ -456,6 +456,27 @@ Rodar localmente e levar **conclusões (não tabelas)** ao grupo.
 - Set pieces: distribuição empírica das durações de bola parada por `sp_type` (não usar durações fixas sem medir nos dados); onde o intervalo começa/termina em relação à bola; o que fazem os jogadores no segmento pré-pontapé do 2º tempo.
 - Frame do `Kick Off (Start)` de cada tempo e se a janela da tag contém 11.185 e 113.742.
 
+### Registro da execução local (31/10/2026)
+Com os assets táticos instalados localmente, o ATD completo produziu 199.319 linhas em
+`data/processed/tracking_clean.parquet`; os arquivos processados são locais e ignorados pelo
+Git. A contagem de frames com mais de 22 objetos, antes → depois da deduplicação, foi 695 →
+586 no 1º tempo e 3.054 → 2.735 no 2º tempo. A tabela contém `flip=0` no 1º e `flip=1` no
+2º tempo, conforme esperado.
+
+O campo escalar `s` nativo do ATD foi comparado com a norma da velocidade derivada nos
+2.975.960 pares finitos: correlação agregada 0,967 e mediana da diferença absoluta 0,109 m/s.
+Nos 1.665 cortes de slot com `s` finito nos dois frames adjacentes, a mediana de `s` foi
+1,25 m/s antes e no frame do corte; o percentil 95 no frame do corte foi 3,91 m/s e nenhum
+valor excedeu 12 m/s. Isso indica que `s` pode permanecer normal durante os cortes espaciais,
+portanto não deve ser usado sozinho para rejeitá-los.
+
+Validação: `tests/test_prep_players.py` (8 testes) e suíte completa (75 testes) passaram em
+31/10/2026. O teste sintético da contagem foi corrigido para refletir que quatro outros frames
+continuam acima de 22 objetos; o frame com o ponto isolado cai para exatamente 22.
+
+Pendente de confirmação externa: a dependência A3 (#10), o estado do PR e o compartilhamento
+das conclusões com o grupo não puderam ser consultados nesta execução.
+
 ## 9. Cronograma
 | Quando | Marco |
 |---|---|

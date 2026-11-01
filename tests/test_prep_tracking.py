@@ -93,8 +93,8 @@ def test_flip_orients_coordinates_and_velocity_and_halves_oppose():
     teams = np.arange(pt.N_SLOTS) % 2
     players = np.full((6, pt.N_SLOTS, 3), np.nan, np.float32)
     # Home moves toward low x in half 1, high x in half 2: only half 2 is reflected.
-    players[0:3, 0, :2] = np.array([[0.30, .40], [.31, .40], [.32, .40]])
-    players[3:6, 0, :2] = np.array([[.70, .40], [.69, .40], [.68, .40]])
+    players[0:3, 0, :2] = np.array([[0.30, .40], [.301, .40], [.302, .40]])
+    players[3:6, 0, :2] = np.array([[.70, .40], [.699, .40], [.698, .40]])
     ball = np.full((6, 3), np.nan, np.float32)
     ball[0:3, :2] = np.array([[.2, .5], [.21, .5], [.22, .5]])
     ball[3:6, :2] = np.array([[.8, .5], [.79, .5], [.78, .5]])
@@ -177,8 +177,8 @@ def test_orient_half_reflects_x_y_and_vectors():
     np.testing.assert_allclose(players[0, 0, 1], width - 20.0, atol=1e-5)
     np.testing.assert_allclose(ball[0, 0], length - 70.0, atol=1e-5)
     np.testing.assert_allclose(ball[0, 1], width - 15.0, atol=1e-5)
-    # Inversion of raw scalar/vector component
-    np.testing.assert_allclose(players[0, 0, 2], -5.0)
+    # The third ATD player field is scalar speed and is unchanged by reflection.
+    np.testing.assert_allclose(players[0, 0, 2], 5.0)
 
 
 def test_remove_ball_jump_outliers_bridges_long_phantom_block_exceeding_k():
