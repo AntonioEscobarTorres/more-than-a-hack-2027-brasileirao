@@ -128,7 +128,9 @@ Usa `ball_x/ball_y` (observadas + preenchidas). Slots NaN são ignorados.
 | `is_home` | bool | time do slot (Barcelona = True) |
 | `is_field_player` | bool | True para jogadores dos dois clubes (inclui goleiros; o XML atribui todos os 46 slots a Barcelona ou Atletic); False apenas se um slot for identificado como não-jogador (ex.: árbitro) |
 
-Se A7 mostrar que o time de um slot **não é constante**, a A7 avisa o grupo antes de seguir; o plano alternativo é uma coluna `s{NN}_is_home` por frame no `tracking_clean.parquet`, com `slot_teams.parquet` só para os slots constantes.
+**Decisão A7 (issue #14):** os 46 slots pertencem aos dois times (24 Home/Barcelona, 22 Away/Athletic). O XML atribui um único `teamId` a cada slot, sem time por frame nem datas de validade; a ordem dos canais corresponde à ordem dos jogadores. `kloppy` e `team_of_each_track` concordam nos 46 slots. Portanto, `is_home` é constante em `slot_teams.parquet`; não é necessária a alternativa `s{NN}_is_home` por frame. No saque inicial, 28 dos 30 slots avaliáveis (93%) estavam na metade esperada. O XML não identifica funções ou posições, então todos recebem `is_field_player=True`, inclusive goleiros. Três slots nunca aparecem no tracking; permanecem `True`, e `n_tracked` já ignora posições ausentes.
+
+**Limite da conclusão:** não é possível provar que o tracker nunca reutiliza um slot para alguém do outro time durante a partida. Os testes por proximidade não resolvem essa hipótese devido à marcação individual; não há evidência de reutilização, e o formato oficial não prevê time por frame.
 
 ### `kickoffs.json` (C4)
 ```json
