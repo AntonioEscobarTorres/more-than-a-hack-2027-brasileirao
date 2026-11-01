@@ -48,9 +48,9 @@ CSV hom -> prep_homography.py ----> homography.parquet (opcional) --------------
 | A2 Tempos de jogo | `half_video_blocks('BAR-ATH')`: (1, 11185, 90651) e (2, 110808, 190197). Cada tempo é independente. |
 | A3 Metros e orientação | Multiplicar por 105,3 × 68,0 (`games.py`). Descobrir por tempo se a casa defende x pequeno e refletir o campo para que cada time ataque sempre no mesmo sentido. Inverter também velocidade e aceleração. Assert: o flip do 2º tempo é o oposto do 1º. |
 | A4 Bola | Filtro de saltos (cadeias mutuamente consistentes com reconexão sobre blocos fantasmas `> K` e retenção de cadeias longas disjuntas) → colunas de confiança depois do filtro → interpolação só de lacunas curtas → suavização zero-fase apenas para derivar nos trechos observados (`ball_observed == 1`), mascarando velocidades e aceleração como `NaN` onde `ball_filled == 1` → `ball_vx, ball_vy, ball_speed, ball_acc, ball_dir_change`. |
-| A5 Jogadores | `slot_break` nos saltos de 1 frame; apagar a posição de pontos isolados. Velocidade vetorial por derivada da posição suavizada, por trechos entre quebras. Remover duplicatas (mesmo time a <1 m): zerar como `NaN` o slot duplicado no frame no `tracking_clean.parquet` (V1), para que A6 e B2–B4 já fiquem sem duplicatas. |
-| A6 Agregados por time | `centroid_*`, `spread_*`, `mean_speed_*`, `n_still_*`, `n_tracked_*`, robustos à troca de slots. |
-| A7 Time de cada slot | **Concluído (issue #14):** `slot_teams.parquet` usa o `teamId` constante do XML; `kloppy` concorda nos 46 slots. Detalhes e limite da conclusão em [`SCHEMA.md`](../SCHEMA.md#slot_teamsparquet-a7). |
+| A5 Jogadores | `slot_break` nos saltos de 1 frame; apagar a posição de pontos isolados. Velocidade vetorial por derivada da posição suavizada, por trechos entre quebras. Remover duplicatas (mesmo time a <1 m) apenas entre slots com `is_field_player == True`: zerar como `NaN` o segundo slot no frame no `tracking_clean.parquet` (V1), para que A6 e B2–B4 já fiquem sem duplicatas. |
+| A6 Agregados por time | Calcular `centroid_*`, `spread_*`, `mean_speed_*`, `n_still_*` e `n_tracked_*` com todos os slots do time cuja máscara `is_field_player == True`; essa definição inclui goleiros. Métricas espaciais e velocidade ficam `NaN` sem posições rastreadas; contagens ficam zero. |
+| A7 Time de cada slot | **Verificado:** `team_of_each_track` lê os 46 slots do XML, todos associados a um dos dois clubes; os elementos são `<Player>` (incluindo goleiros), sem árbitros ou outros objetos. Portanto, `is_field_player` é `True` para os 46 slots e é exportado em `slot_teams.parquet`; nenhuma posição ou papel de goleiro é inferido. |
 | A8 Saída | `tracking_clean.parquet` (V0, depois V1). |
 
 ### Filtro de saltos da bola (cadeias mutuamente consistentes)
@@ -449,7 +449,7 @@ Rodar localmente e levar **conclusões (não tabelas)** ao grupo.
 - Tamanho das lacunas da bola, % de frames em lacunas >1 s, % de pontos removidos pelo filtro ao longo do tempo, maior bloco removido e quantas cadeias disjuntas sobraram (verificar se não há fantasma estacionário $\ge K$ antes da 1ª ou após a última observação real do tempo).
 - Fração de frames observados que ficam com velocidade válida (`ball_vx/vy` não-`NaN`) após o mascaramento de `ball_filled == 1`, e distribuição de `ball_acc` (tratá-la como feature ruidosa/secundária na modelagem).
 - Correlação por slot entre o `s` nativo do ATD e a velocidade derivada $\sqrt{v_x^2 + v_y^2}$, e comportamento do `s` nativo nas trocas de slot (`slot_break`).
-- O time de cada slot é constante? Há objetos que não são jogadores de linha? Com que frequência o jogador mais recuado (goleiro) some do tracking?
+- O time de cada slot é constante? Os 46 slots pertencem aos clubes e `is_field_player == True` inclui goleiros; avaliar a disponibilidade de rastreamento de todos os slots sem inferir papéis pela posição.
 - Objetos por time por frame; frames com >22 objetos antes e depois da deduplicação.
 - Sentido de ataque em cada tempo: a inferência bate com o vídeo?
 - Smart Tagging: sobreposição de fases, coexistência de ofensiva/defensiva do mesmo time, valores exatos de `Team`.

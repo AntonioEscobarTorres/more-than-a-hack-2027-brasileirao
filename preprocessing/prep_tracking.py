@@ -258,6 +258,50 @@ def _report_player_quality(before, after, blocks):
                     int(post.sum()), 100 * post.sum() / total)
 
 
+def _team_aggregates(px, py, vx, vy, slot_team_ids, is_field_player):
+    """Aggregate every eligible player slot by team, independent of slot identity."""
+    t = px.shape[0]
+    features = {}
+    slot_team_ids = np.asarray(slot_team_ids)
+    is_field_player = np.asarray(is_field_player)
+    if slot_team_ids.shape != (px.shape[1],) or is_field_player.shape != (px.shape[1],):
+        raise ValueError("slot team and field-player metadata must have one value per slot")
+    if is_field_player.dtype.kind != "b":
+        raise ValueError("is_field_player must contain one boolean value per player slot")
+
+    for team, label in ((0, "home"), (1, "away")):
+        members = np.flatnonzero((slot_team_ids == team) & is_field_player)
+        tx, ty = px[:, members], py[:, members]
+        tv = np.hypot(vx[:, members], vy[:, members])
+        valid = np.isfinite(tx) & np.isfinite(ty)
+        count = valid.sum(axis=1)
+        has_players = count > 0
+        cx = np.divide(np.nansum(tx, axis=1), count, out=np.full(t, np.nan), where=has_players)
+        cy = np.divide(np.nansum(ty, axis=1), count, out=np.full(t, np.nan), where=has_players)
+        spread_x = np.sqrt(np.divide(np.nansum((tx-cx[:, None])**2, axis=1), count,
+            out=np.full(t, np.nan), where=has_players))
+        spread_y = np.sqrt(np.divide(np.nansum((ty-cy[:, None])**2, axis=1), count,
+            out=np.full(t, np.nan), where=has_players))
+        speed_valid = valid & np.isfinite(tv)
+        speed_count = speed_valid.sum(axis=1)
+        mean_speed = np.divide(np.nansum(np.where(speed_valid, tv, np.nan), axis=1), speed_count,
+            out=np.full(t, np.nan), where=speed_count > 0)
+        n_still = ((tv < STILL_SPEED) & speed_valid).sum(axis=1).astype(np.float32)
+
+        n_tracked = count.astype(np.float32)
+        # Spatial and speed metrics are undefined without a tracked slot. Counts
+        # remain meaningful and are zero in that case.
+        for values in (cx, cy, spread_x, spread_y, mean_speed):
+            values[~has_players] = np.nan
+        features.update({
+            f"centroid_{label}_x": cx, f"centroid_{label}_y": cy,
+            f"spread_{label}_x": spread_x, f"spread_{label}_y": spread_y,
+            f"mean_speed_{label}": mean_speed, f"n_still_{label}": n_still,
+            f"n_tracked_{label}": n_tracked,
+        })
+    return {name: np.asarray(values, dtype=np.float32) for name, values in features.items()}
+
+
 def _binomial3_smooth(seg):
     """Zero-phase [0.25, 0.5, 0.25] smoother with linear boundary reflection (exact on lines)."""
     seg = np.asarray(seg, dtype=np.float64)
@@ -403,8 +447,13 @@ def _orient_half(players, ball, team_ids, start, end, kick_frame, pitch):
 
 
 def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, PITCH_W),
-                     n_frames=N_FRAMES, kickoffs=None, stage="V1", data_dir=None):
+                     n_frames=N_FRAMES, kickoffs=None, stage="V1", data_dir=None,
+                     slot_is_field_player=None):
     """Build clean frame table and slot metadata from normalized 0..1 ATD arrays.
+
+    ``slot_is_field_player`` controls eligibility for deduplication and team
+    aggregates. The ATD's 46 slots are club players, including goalkeepers, so
+    every slot is eligible by default.
 
     Ball kinematics are smoothed within observed runs (V1) rather than over the
     interpolated ``ix, iy`` series described in the issue. This keeps interpolation
@@ -417,6 +466,14 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     slot_team_ids = np.asarray(slot_team_ids)
     if slot_team_ids.shape != (players.shape[1],) or not np.isin(slot_team_ids, (0, 1)).all():
         raise ValueError("slot_team_ids must have one 0/1 value per player slot")
+    if slot_is_field_player is None:
+        slot_is_field_player = np.ones(players.shape[1], dtype=bool)
+    else:
+        slot_is_field_player = np.asarray(slot_is_field_player)
+    if slot_is_field_player.shape != (players.shape[1],):
+        raise ValueError("slot_is_field_player must have one boolean value per player slot")
+    if slot_is_field_player.dtype.kind != "b":
+        raise ValueError("slot_is_field_player must have one boolean value per player slot")
     if blocks is None:
         blocks = half_video_blocks(GAME)
     players = players.astype(np.float32, copy=True)
@@ -437,7 +494,6 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
         flips.append(_orient_half(players, ball, slot_team_ids, first, last + 1, kick, pitch))
     if len(flips) >= 2 and flips[0] == flips[1]:
         raise ValueError("Half orientations should oppose each other")
-
     t, slots = players.shape[:2]
     frame_data = {"video_frame": np.arange(t, dtype=np.int32)}
     half_col = np.zeros(t, dtype=np.int8)
@@ -505,7 +561,8 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     breaks = np.zeros(px.shape, dtype=bool)
     # Keep every player operation local to a half, just like the ball pipeline.
     # This makes the boundary rule explicit and robust if blocks ever become adjacent.
-    members_by_team = [np.flatnonzero(np.asarray(slot_team_ids) == team) for team in (0, 1)]
+    members_by_team = [np.flatnonzero((np.asarray(slot_team_ids) == team) & slot_is_field_player)
+                       for team in (0, 1)]
     for _, first, last in blocks:
         sl = slice(first, last + 1)
         half_px, half_py = px[sl], py[sl]
@@ -537,23 +594,11 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
             frame_data[f"s{s + 1:02d}_{suffix}"] = values.astype(np.float32)
         frame_data[f"s{s + 1:02d}_break"] = breaks[:, s]
 
-    for team, label in ((0, "home"), (1, "away")):
-        members = np.flatnonzero(np.asarray(slot_team_ids) == team)
-        tx, ty, tv = px[:, members], py[:, members], np.hypot(vx[:, members], vy[:, members])
-        valid = np.isfinite(tx) & np.isfinite(ty)
-        count = valid.sum(axis=1)
-        cx = np.divide(np.nansum(tx, axis=1), count, out=np.full(t, np.nan), where=count > 0)
-        cy = np.divide(np.nansum(ty, axis=1), count, out=np.full(t, np.nan), where=count > 0)
-        frame_data[f"centroid_{label}_x"], frame_data[f"centroid_{label}_y"] = cx, cy
-        frame_data[f"spread_{label}_x"] = np.sqrt(np.divide(np.nansum((tx-cx[:, None])**2, axis=1), count,
-            out=np.full(t, np.nan), where=count > 0))
-        frame_data[f"spread_{label}_y"] = np.sqrt(np.divide(np.nansum((ty-cy[:, None])**2, axis=1), count,
-            out=np.full(t, np.nan), where=count > 0))
-        speed_count = (valid & np.isfinite(tv)).sum(axis=1)
-        frame_data[f"mean_speed_{label}"] = np.divide(np.nansum(np.where(valid, tv, np.nan), axis=1), speed_count,
-            out=np.full(t, np.nan), where=speed_count > 0)
-        frame_data[f"n_still_{label}"] = ((tv < STILL_SPEED) & valid).sum(axis=1).astype(np.float32)
-        frame_data[f"n_tracked_{label}"] = count.astype(np.float32)
+    slot_teams = pd.DataFrame({"slot": np.arange(1, slots + 1, dtype=np.int8),
+        "is_home": np.asarray(slot_team_ids) == 0, "is_field_player": slot_is_field_player})
+    # The same eligibility mask controls deduplication and team aggregates.
+    frame_data.update(_team_aggregates(px, py, vx, vy, slot_team_ids,
+                                       slot_teams["is_field_player"].to_numpy()))
 
     # Team aggregates are tracking-derived features. Frames outside the two
     # tracked periods must stay unknown (NaN), including the count columns.
@@ -571,8 +616,6 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
         values[outside_tracking] = np.nan
         frame_data[column] = values
 
-    slot_teams = pd.DataFrame({"slot": np.arange(1, slots + 1, dtype=np.int8),
-        "is_home": np.asarray(slot_team_ids) == 0, "is_field_player": True})
     frame_data["half"] = np.asarray(frame_data["half"], dtype=np.int8)
     frame_data["is_graded"] = np.asarray(frame_data["is_graded"], dtype=bool)
     frame_data["flip"] = np.zeros(t, dtype=np.int8)
@@ -605,8 +648,12 @@ def main(argv=None):
                         help="run the optional eps/K ball-filter sensitivity report")
     args = parser.parse_args(argv)
     players, ball, teams = build(data_dir=args.data_dir)
+    paths = asset_paths(game=GAME, data_dir=args.data_dir, source="tactical")
+    # All 46 ATD slots belong to the two clubs. The flag means player vs
+    # non-player and therefore includes goalkeepers for this match.
+    is_field_player = np.ones(len(teams), dtype=bool)
     frame, slot_teams = prepare_tracking(players, ball, teams, kickoffs=_kickoff_frames(args.data_dir),
-                                         stage=args.stage)
+                                         stage=args.stage, slot_is_field_player=is_field_player)
     _report_ball_quality(frame)
     if args.report_sensitivity:
         # Jump filtering is invariant to pitch reflection, so raw unoriented ball
@@ -632,7 +679,10 @@ def main(argv=None):
     fd, temp_path = tempfile.mkstemp(prefix=".slot_teams.", suffix=".parquet", dir=output_dir)
     os.close(fd)
     try:
-        slot_teams.to_parquet(temp_path, index=False)
+        slot_table = pa.Table.from_pandas(slot_teams, preserve_index=False)
+        slot_metadata = dict(slot_table.schema.metadata or {})
+        slot_metadata[b"schema_version"] = SCHEMA_VERSION.encode("ascii")
+        pq.write_table(slot_table.replace_schema_metadata(slot_metadata), temp_path)
         os.replace(temp_path, os.path.join(output_dir, "slot_teams.parquet"))
     finally:
         if os.path.exists(temp_path):
