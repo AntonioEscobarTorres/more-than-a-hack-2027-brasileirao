@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pandas as pd
+from scipy.signal import savgol_filter
 
 from games import GAME, GAMES, asset_paths, half_video_blocks
 from starter.baseline import team_of_each_track
@@ -173,6 +174,11 @@ def remove_ball_jump_outliers(x, y, vmax=BALL_VMAX, fps=FPS, eps=BALL_EPS, k=BAL
 
 
 def _gap_features(obs):
+    """Return gap lengths (including leading/trailing gaps) and bidirectional distances.
+
+    The frozen schema defines gap_length for every in-half gap, including gaps at
+    either edge; only since/until are NaN where the corresponding observation is absent.
+    """
     idx = np.arange(len(obs))
     last = np.maximum.accumulate(np.where(obs, idx, -1))
     nxt = np.minimum.accumulate(np.where(obs, idx, len(obs))[::-1])[::-1]
@@ -243,6 +249,78 @@ def _segment_gradient(values, valid, fps=FPS, smooth=True):
     return out
 
 
+def _smooth_ball_segment(seg):
+    """Offline Savitzky-Golay smoothing for a single finite ball segment."""
+    seg = np.asarray(seg, dtype=np.float64)
+    if len(seg) >= 7:
+        return savgol_filter(seg, window_length=7, polyorder=2, mode="interp")
+    return seg.copy()
+
+
+def _ball_gradient(values, valid, fps=FPS, smooth=True):
+    """Differentiate contiguous ball observations, smoothing each V1 segment once."""
+    out = np.full(len(values), np.nan, dtype=np.float32)
+    edges = np.flatnonzero(np.diff(np.r_[False, valid, False].astype(np.int8)))
+    for start, end in zip(edges[::2], edges[1::2]):
+        if end - start >= 2:
+            seg = values[start:end]
+            if smooth:
+                seg = _smooth_ball_segment(seg)
+            out[start:end] = np.gradient(seg) * fps
+    return out
+
+
+def _report_ball_quality(frame):
+    """Log aggregate ball quality metrics; never emit frame-level or coordinate data."""
+    graded = frame["half"].to_numpy() > 0
+    gap = frame.loc[graded, "gap_length"].to_numpy()
+    observed = frame.loc[graded, "ball_observed"].to_numpy(dtype=bool)
+    removed = frame.loc[graded, "ball_jump_removed"].to_numpy(dtype=bool)
+    gap_frames = gap > 0
+    long_gap_frames = gap > FPS  # strictly longer than one second
+    starts = gap_frames & ~np.r_[False, gap_frames[:-1]]
+    finite_gaps = gap[starts]
+    gap_summary = ", ".join(
+        f"{label}:{int(((finite_gaps >= lo) & (finite_gaps <= hi)).sum())}"
+        for label, lo, hi in (("1f", 1, 1), ("2-6f", 2, 6), ("7-12f", 7, 12),
+                              ("13-25f", 13, 25), (">25f", 26, np.inf)))
+    removed_pct = 100.0 * removed.sum() / max(1, (removed | observed).sum())
+    LOGGER.info("Ball quality: gap sizes (frames:count)=%s; frames in gaps >1s=%.2f%%; "
+                "removed points=%.2f%%", gap_summary,
+                100.0 * long_gap_frames.sum() / max(1, len(gap)), removed_pct)
+
+
+def _report_filter_sensitivity(ball, blocks):
+    """Summarize speed distribution and eps/K removal sensitivity per game time."""
+    speeds = []
+    for _, first, last in blocks:
+        xy = ball[first:last + 1, :2]
+        valid = np.isfinite(xy).all(axis=1)
+        edges = np.flatnonzero(valid[1:] & valid[:-1]) + 1
+        if len(edges):
+            delta = xy[edges] - xy[edges - 1]
+            speeds.extend((np.hypot(delta[:, 0] * PITCH_L, delta[:, 1] * PITCH_W) * FPS).tolist())
+    speed = np.asarray(speeds, dtype=np.float64)
+    if speed.size:
+        counts, _ = np.histogram(speed, bins=(0, 5, 10, 20, 38, np.inf))
+        LOGGER.info("Raw consecutive-observation speed histogram (m/s bins 0-5,5-10,10-20,20-38,>38): %s",
+                    counts.tolist())
+    total = 0
+    for _, first, last in blocks:
+        total += np.isfinite(ball[first:last + 1, :2]).all(axis=1).sum()
+    for eps in (0.5, 1.0, 2.0):
+        rates = []
+        for k in (20, 30, 40, 60):
+            kept = 0
+            for _, first, last in blocks:
+                x, y = remove_ball_jump_outliers(ball[first:last + 1, 0] * PITCH_L,
+                                                  ball[first:last + 1, 1] * PITCH_W,
+                                                  eps=eps, k=k)
+                kept += (np.isfinite(x) & np.isfinite(y)).sum()
+            rates.append(f"K={k}:{100.0 * (total-kept) / max(1, total):.2f}%")
+        LOGGER.info("Removed-point sensitivity at eps=%.1fm: %s", eps, ", ".join(rates))
+
+
 def _orient_half(players, ball, team_ids, start, end, kick_frame, pitch):
     """Reflect one half so home attacks toward increasing x; return whether reflected."""
     length, width = pitch
@@ -264,8 +342,16 @@ def _orient_half(players, ball, team_ids, start, end, kick_frame, pitch):
 
 
 def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, PITCH_W),
-                     n_frames=N_FRAMES, kickoffs=None):
-    """Build clean frame table and slot metadata from normalized 0..1 ATD arrays."""
+                     n_frames=N_FRAMES, kickoffs=None, stage="V1"):
+    """Build clean frame table and slot metadata from normalized 0..1 ATD arrays.
+
+    Ball kinematics are smoothed within observed runs (V1) rather than over the
+    interpolated ``ix, iy`` series described in the issue. This keeps interpolation
+    boundaries out of the derivative estimate and avoids edge artifacts.
+    """
+    stage = str(stage).upper()
+    if stage not in {"V0", "V1"}:
+        raise ValueError("stage must be 'V0' or 'V1'")
     if blocks is None:
         blocks = half_video_blocks(GAME)
     players = players.astype(np.float32, copy=True)
@@ -275,6 +361,9 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     players[:, :, 1] *= width
     ball[:, 0] *= length
     ball[:, 1] *= width
+    # Audit coordinates are the original ATD positions in metres, before the
+    # per-half orientation transform as well as before filtering/interpolation.
+    ball_raw = ball[:, :2].copy()
     if kickoffs is None:
         kickoffs = _kickoff_frames()
     flips = []
@@ -283,9 +372,6 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
         flips.append(_orient_half(players, ball, slot_team_ids, first, last + 1, kick, pitch))
     if len(flips) >= 2 and flips[0] == flips[1]:
         raise ValueError(f"Half orientations should oppose each other, got {flips}")
-
-    # Preserve the oriented ATD ball for audit, before filtering/interpolation.
-    ball_raw = ball[:, :2].copy()
 
     t, slots = players.shape[:2]
     frame_data = {"video_frame": np.arange(t, dtype=np.int32)}
@@ -313,15 +399,20 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
         gap[sl], since[sl], until[sl] = gl, st, un
         ix, iy = _fill_short_gaps(fx, MAX_GAP_FRAMES), _fill_short_gaps(fy, MAX_GAP_FRAMES)
         filled_flag[sl] = ~obs & np.isfinite(ix) & np.isfinite(iy)
-        # Keep measured/interpolated positions as-is; smooth only inside _segment_gradient,
-        # and differentiate strictly over observed runs (masked to NaN where ball_filled == 1).
+        # Keep stored positions untouched. V1 smooths each observed run zero-phase
+        # inside _segment_gradient before differentiation; V0 preserves the legacy
+        # unsmoothed baseline. Filled positions never contribute to kinematics.
         bx[sl], by[sl] = ix, iy
-        dvx, dvy = _segment_gradient(fx, obs), _segment_gradient(fy, obs)
+        smooth = stage == "V1"
+        dvx, dvy = _ball_gradient(fx, obs, smooth=smooth), _ball_gradient(fy, obs, smooth=smooth)
         bvx[sl], bvy[sl] = dvx, dvy
         speed = np.hypot(dvx, dvy)
         bspeed[sl] = speed
         valid_vel = np.isfinite(dvx) & np.isfinite(dvy)
-        ax, ay = _segment_gradient(dvx, valid_vel), _segment_gradient(dvy, valid_vel)
+        # The observed position run was smoothed inside _ball_gradient; differentiate
+        # velocity directly to avoid applying another filter to acceleration.
+        ax, ay = (_segment_gradient(dvx, valid_vel, smooth=False),
+                  _segment_gradient(dvy, valid_vel, smooth=False))
         bacc[sl] = np.hypot(ax, ay)
         dir_change = np.full(len(dvx), np.nan, dtype=np.float32)
         if len(dvx) >= 2:
@@ -335,7 +426,7 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     frame_data["ball_dir_change"] = bdir
     frame_data["ball_observed"], frame_data["ball_jump_removed"], frame_data["ball_filled"] = observed, jump_removed, filled_flag
     frame_data["gap_length"], frame_data["since_last_obs"], frame_data["until_next_obs"] = gap, since, until
-    frame_data["ball_x_raw"], frame_data["ball_y_raw"] = ball_raw[:, 0], ball_raw[:, 1]
+    frame_data["ball_x_raw"], frame_data["ball_y_raw"] = ball_raw[:, 0].copy(), ball_raw[:, 1].copy()
     frame_data["ball_x_raw"][half_col == 0] = np.nan
     frame_data["ball_y_raw"][half_col == 0] = np.nan
 
@@ -366,8 +457,9 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
         sl = slice(first, last + 1)
         for s in range(slots):
             good = np.isfinite(px[sl, s]) & np.isfinite(py[sl, s])
-            dx = _segment_gradient(px[sl, s], good)
-            dy = _segment_gradient(py[sl, s], good)
+            # A5 documents smoothed player velocities for V1; keep V0 unsmoothed.
+            dx = _segment_gradient(px[sl, s], good, smooth=(stage == "V1"))
+            dy = _segment_gradient(py[sl, s], good, smooth=(stage == "V1"))
             vx[sl, s], vy[sl, s] = dx, dy
             invalid = breaks[sl, s]
             vx[sl, s][invalid], vy[sl, s][invalid] = np.nan, np.nan
@@ -422,7 +514,7 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
 
 
 def build(game=GAME, data_dir=None, output_dir=None):
-    """Load raw frame-aligned tracking arrays for A2/A3.
+    """Load raw frame-aligned tracking arrays for A2/A3; writing is done by ``main``.
 
     ``output_dir`` remains accepted for call compatibility; this load stage does not
     transform or persist the arrays.
@@ -438,16 +530,34 @@ def build(game=GAME, data_dir=None, output_dir=None):
 
 
 def main(argv=None):
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data-dir", help="data bundle root (defaults to MTAH_DATA_DIR or ./data)")
     parser.add_argument("--output-dir", help="processed output directory (defaults to <data-dir>/processed)")
+    parser.add_argument("--stage", choices=("V0", "V1"), default="V1",
+                        help="tracking feature stage (default: V1)")
+    parser.add_argument("--report-sensitivity", action="store_true",
+                        help="run the optional eps/K ball-filter sensitivity report")
     args = parser.parse_args(argv)
     players, ball, teams = build(data_dir=args.data_dir)
-    frame, slot_teams = prepare_tracking(players, ball, teams, kickoffs=_kickoff_frames(args.data_dir))
+    frame, slot_teams = prepare_tracking(players, ball, teams, kickoffs=_kickoff_frames(args.data_dir),
+                                         stage=args.stage)
+    _report_ball_quality(frame)
+    if args.report_sensitivity:
+        # Jump filtering is invariant to pitch reflection, so raw unoriented ball
+        # coordinates produce the same keep/remove decisions as oriented coordinates.
+        _report_filter_sensitivity(ball, half_video_blocks(GAME))
     root = args.data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
     output_dir = args.output_dir or os.path.join(root, "processed")
     os.makedirs(output_dir, exist_ok=True)
-    frame.to_parquet(os.path.join(output_dir, "tracking_clean.parquet"), index=False)
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    tracking_table = pa.Table.from_pandas(frame, preserve_index=False)
+    metadata = dict(tracking_table.schema.metadata or {})
+    metadata.update({b"schema_version": SCHEMA_VERSION.encode("ascii"),
+                     b"tracking_stage": args.stage.encode("ascii")})
+    pq.write_table(tracking_table.replace_schema_metadata(metadata),
+                   os.path.join(output_dir, "tracking_clean.parquet"))
     slot_teams.to_parquet(os.path.join(output_dir, "slot_teams.parquet"), index=False)
     print(f"players={players.shape}, ball={ball.shape}, slots={len(teams)}")
     print(f"tracking rows={len(frame):,}; flips={frame.groupby('half')['flip'].first().to_dict()}; output={output_dir}")
