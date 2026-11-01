@@ -70,7 +70,8 @@ def test_permanent_position_jump_is_cut_even_when_native_speed_is_zero():
     # The new segment starts at t=2 and has zero vector speed; no cross-break
     # derivative may leak the large coordinate jump into t=1 or t=2.
     np.testing.assert_allclose(frame.loc[[2, 3], ["s01_vx", "s01_vy"]], 0.0)
-    np.testing.assert_allclose(frame.loc[1, ["s01_vx", "s01_vy"]], 0.0)
+    np.testing.assert_allclose(
+        frame.loc[1, ["s01_vx", "s01_vy"]].to_numpy(dtype=float), 0.0)
 
 
 def test_singleton_segment_has_no_derivative():

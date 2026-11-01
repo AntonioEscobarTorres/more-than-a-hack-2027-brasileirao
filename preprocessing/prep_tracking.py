@@ -273,27 +273,31 @@ def _binomial3_smooth(seg):
 def _segment_gradient(values, valid, breaks=None, fps=FPS, smooth=True):
     """Differentiate finite contiguous runs independently; singleton runs have no speed.
 
-    When ``smooth=True``, applies a zero-phase 3-point binomial filter to each contiguous
-    run before differentiating, attenuating 25 Hz position jitter without altering stored positions.
+    A run ends at the first invalid frame or just before the next ``breaks`` frame, so
+    ``np.gradient`` never crosses a slot break. When ``smooth=True``, a zero-phase
+    3-point binomial filter is applied inside each run before differentiating.
     """
-    out = np.full(len(values), np.nan, dtype=np.float32)
     values = np.asarray(values)
+    out = np.full(len(values), np.nan, dtype=np.float32)
     valid = np.asarray(valid, dtype=bool) & np.isfinite(values)
-    starts = valid & ~np.r_[False, valid[:-1]]
-    if breaks is not None:
-        breaks = np.asarray(breaks, dtype=bool)
-        if breaks.shape != valid.shape:
+    if breaks is None:
+        cut = np.zeros(len(values), dtype=bool)
+    else:
+        cut = np.asarray(breaks, dtype=bool)
+        if cut.shape != valid.shape:
             raise ValueError("breaks and valid must have the same shape")
-        starts |= valid & breaks
-    ends = valid & (~np.r_[valid[1:], False] | np.r_[(valid & breaks)[1:], False]) if breaks is not None else valid & ~np.r_[valid[1:], False]
-    starts_at = np.flatnonzero(starts)
-    ends_at = np.flatnonzero(ends) + 1
-    for start, end in zip(starts_at, ends_at):
+
+    starts = valid & (~np.r_[False, valid[:-1]] | cut)
+    start_idx = np.flatnonzero(starts)
+    # Frames where a run cannot continue: invalid, or a new run begins (start).
+    stop = ~valid | starts
+    for start in start_idx:
+        nxt = np.flatnonzero(stop[start + 1:])
+        end = start + 1 + (nxt[0] if len(nxt) else len(values) - start - 1)
         if end - start >= 2:
             seg = _binomial3_smooth(values[start:end]) if smooth else values[start:end]
             out[start:end] = np.gradient(seg) * fps
     return out
-
 
 def _smooth_ball_segment(seg):
     """Offline Savitzky-Golay smoothing for a single finite ball segment."""
