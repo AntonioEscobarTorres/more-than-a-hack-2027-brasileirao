@@ -1,8 +1,10 @@
 """Synthetic tests for the streaming ATD load stage; no match assets are read."""
 import numpy as np
+import pandas as pd
 import pytest
 
 from preprocessing import prep_tracking as pt
+from preprocessing.schema import slot_columns
 
 
 def _write_atd(path, frames):
@@ -110,6 +112,58 @@ def test_flip_orients_coordinates_and_velocity_and_halves_oppose():
     np.testing.assert_allclose(frame.loc[3, "ball_x_raw"], 0.8 * pt.PITCH_L, rtol=1e-6)
     assert frame.loc[0:2, "centroid_home_x"].is_monotonic_increasing
     assert frame.loc[3:5, "centroid_home_x"].is_monotonic_increasing
+
+
+def test_v0_matches_frozen_column_order_dtypes_and_raw_observations():
+    n = 8
+    blocks = [(1, 1, 3), (2, 4, 6)]
+    teams = np.arange(pt.N_SLOTS) % 2
+    players = np.full((n, pt.N_SLOTS, 3), np.nan, dtype=np.float32)
+    # Home starts in its own half in both blocks; half 2 is reflected by A3.
+    players[1:4, 0, :2] = np.column_stack((.2 + .01 * np.arange(3), [.4] * 3))
+    players[4:7, 0, :2] = np.column_stack((.8 - .01 * np.arange(3), [.4] * 3))
+    players[2, 1, :2] = (.3, .3)  # isolated observation remains in V0, with no derivative
+    ball = np.full((n, 3), np.nan, dtype=np.float32)
+    ball[1:4, :2] = np.column_stack((.1 + .01 * np.arange(3), [.5] * 3))
+    ball[4:7, :2] = np.column_stack((.9 - .01 * np.arange(3), [.5] * 3))
+
+    frame, _ = pt.prepare_tracking(
+        players, ball, teams, blocks=blocks, n_frames=n,
+        kickoffs={1: 1, 2: 4}, stage="V0",
+    )
+
+    expected = ["video_frame", "half", "flip", "ball_x", "ball_y", "ball_vx", "ball_vy"]
+    expected += slot_columns()
+    assert frame.columns.tolist() == expected
+    assert frame["video_frame"].dtype == np.dtype("int32")
+    assert frame["half"].dtype == np.dtype("int8")
+    assert frame["flip"].dtype == np.dtype("int8")
+    assert all(frame[f"s{i:02d}_break"].dtype == np.dtype("int8")
+               for i in range(1, pt.N_SLOTS + 1))
+    assert all(frame[c].dtype == np.dtype("float32") for c in
+               ["ball_x", "ball_y", "ball_vx", "ball_vy"] +
+               [c for c in expected if c.endswith(("_x", "_y", "_vx", "_vy"))])
+    assert all(frame[f"s{i:02d}_break"].eq(0).all() for i in range(1, pt.N_SLOTS + 1))
+    # Coordinates preserve observations; the single-frame track has no derivative.
+    np.testing.assert_allclose(frame.loc[1:3, "s01_x"], [21.06, 22.113, 23.166], atol=1e-4)
+    np.testing.assert_allclose(frame.loc[2, "s02_x"], .3 * pt.PITCH_L, atol=1e-5)
+    assert frame.loc[2, "s02_vx"] != frame.loc[2, "s02_vx"]
+    assert frame.loc[[0, 7], ["ball_x", "ball_y", "ball_vx", "ball_vy", "s01_x", "s01_vx"]].isna().all().all()
+    # Derivatives use the reflected, metre-scaled positions and do not bridge halftime.
+    np.testing.assert_allclose(frame.loc[1:3, "s01_vx"], pt.PITCH_L * .01 * pt.FPS, atol=1e-4)
+    np.testing.assert_allclose(frame.loc[4:6, "s01_vx"], pt.PITCH_L * .01 * pt.FPS, atol=1e-4)
+
+
+def test_parquet_writer_persists_schema_and_stage_metadata(tmp_path):
+    import pyarrow.parquet as pq
+
+    path = tmp_path / "tracking.parquet"
+    pt.write_parquet_with_meta(pd.DataFrame({"video_frame": np.array([0], dtype=np.int32)}),
+                               path, tracking_stage="V0")
+
+    metadata = pq.read_schema(path).metadata
+    assert metadata[b"schema_version"].decode() == pt.SCHEMA_VERSION
+    assert metadata[b"tracking_stage"].decode() == "V0"
 
 
 def test_team_aggregates_are_invariant_to_slots_swapping_player_identity():
@@ -482,7 +536,9 @@ def test_v1_smoothing_reduces_synthetic_quantization_acceleration():
                                 kickoffs={1: 0}, n_frames=n, stage="V0")
     v1, _ = pt.prepare_tracking(players, ball, teams, blocks=blocks,
                                 kickoffs={1: 0}, n_frames=n, stage="V1")
-    a0 = v0.loc[10:69, "ball_acc"].to_numpy()
+    # V0 intentionally has no acceleration column; derive its unsmoothed
+    # acceleration from the V0 velocity to compare with the V1 output.
+    a0 = np.abs(np.gradient(v0.loc[10:69, "ball_vx"].to_numpy()) * pt.FPS)
     a1 = v1.loc[10:69, "ball_acc"].to_numpy()
     assert np.nanmax(a1) < np.nanmax(a0) / 2.0
     assert np.nanmax(a1) < 600.0

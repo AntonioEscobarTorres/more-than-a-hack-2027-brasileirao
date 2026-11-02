@@ -446,6 +446,88 @@ def _orient_half(players, ball, team_ids, start, end, kick_frame, pitch):
     return flip
 
 
+def _prepare_tracking_v0(players, ball, slot_team_ids, slot_is_field_player, flips, blocks):
+    """Build the frozen V0 deliverable without A4/A5/A6 processing.
+
+    Inputs are already scaled to metres and oriented in place. Differentiation is
+    limited to contiguous observed runs inside each half, so neither missing
+    observations nor the halftime interval can be bridged.
+    """
+    t, slots = players.shape[:2]
+    half = np.zeros(t, dtype=np.int8)
+    flip_col = np.zeros(t, dtype=np.int8)
+    frame_data = {
+        "video_frame": np.arange(t, dtype=np.int32),
+        "half": half,
+        "flip": flip_col,
+    }
+    ball_x = np.full(t, np.nan, dtype=np.float32)
+    ball_y = np.full(t, np.nan, dtype=np.float32)
+    ball_vx = np.full(t, np.nan, dtype=np.float32)
+    ball_vy = np.full(t, np.nan, dtype=np.float32)
+    slot_x = np.full((t, slots), np.nan, dtype=np.float32)
+    slot_y = np.full((t, slots), np.nan, dtype=np.float32)
+    slot_vx = np.full((t, slots), np.nan, dtype=np.float32)
+    slot_vy = np.full((t, slots), np.nan, dtype=np.float32)
+
+    for (half_id, first, last), flipped in zip(blocks, flips):
+        sl = slice(first, last + 1)
+        half[first:last + 1] = half_id
+        flip_col[first:last + 1] = int(flipped)
+        ball_x[sl], ball_y[sl] = ball[sl, 0], ball[sl, 1]
+        ball_valid = np.isfinite(ball[sl, 0]) & np.isfinite(ball[sl, 1])
+        ball_vx[sl] = _segment_gradient(ball[sl, 0], ball_valid, smooth=False)
+        ball_vy[sl] = _segment_gradient(ball[sl, 1], ball_valid, smooth=False)
+        slot_x[sl], slot_y[sl] = players[sl, :, 0], players[sl, :, 1]
+        for slot in range(slots):
+            valid = np.isfinite(players[sl, slot, 0]) & np.isfinite(players[sl, slot, 1])
+            slot_vx[sl, slot] = _segment_gradient(players[sl, slot, 0], valid, smooth=False)
+            slot_vy[sl, slot] = _segment_gradient(players[sl, slot, 1], valid, smooth=False)
+
+    frame_data.update({"ball_x": ball_x, "ball_y": ball_y,
+                       "ball_vx": ball_vx, "ball_vy": ball_vy})
+    zero_break = np.zeros(t, dtype=np.int8)
+    for slot in range(slots):
+        frame_data[f"s{slot + 1:02d}_x"] = slot_x[:, slot]
+        frame_data[f"s{slot + 1:02d}_y"] = slot_y[:, slot]
+        frame_data[f"s{slot + 1:02d}_vx"] = slot_vx[:, slot]
+        frame_data[f"s{slot + 1:02d}_vy"] = slot_vy[:, slot]
+        frame_data[f"s{slot + 1:02d}_break"] = zero_break.copy()
+    slot_teams = pd.DataFrame({
+        "slot": np.arange(1, slots + 1, dtype=np.int8),
+        "is_home": np.asarray(slot_team_ids) == 0,
+        "is_field_player": np.asarray(slot_is_field_player, dtype=bool),
+    })
+    return pd.DataFrame(frame_data), slot_teams
+
+
+def write_parquet_with_meta(df, path, **meta):
+    """Write a pandas table as Parquet with the frozen schema metadata."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    metadata = dict(table.schema.metadata or {})
+    metadata[b"schema_version"] = str(SCHEMA_VERSION).encode("utf-8")
+    for key, value in meta.items():
+        metadata[str(key).encode("utf-8")] = str(value).encode("utf-8")
+    pq.write_table(table.replace_schema_metadata(metadata), path)
+
+
+def _write_parquet_atomically(df, path, **meta):
+    """Write metadata-bearing Parquet beside the target, then atomically replace it."""
+    output_dir = os.path.dirname(path) or "."
+    fd, temp_path = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".",
+                                     suffix=".parquet", dir=output_dir)
+    os.close(fd)
+    try:
+        write_parquet_with_meta(df, temp_path, **meta)
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
 def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, PITCH_W),
                      n_frames=N_FRAMES, kickoffs=None, stage="V1", data_dir=None,
                      slot_is_field_player=None):
@@ -503,6 +585,11 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     frame_data["is_graded"] = half_col > 0
     frame_data["frame_in_half"] = np.where(half_col > 0,
         np.arange(t) - np.where(half_col == 1, blocks[0][1], blocks[-1][1]), np.nan).astype(np.float32)
+
+    if stage == "V0":
+        frame, slot_teams = _prepare_tracking_v0(
+            players, ball, slot_team_ids, slot_is_field_player, flips, blocks)
+        return frame, slot_teams
 
     # Ball filtering and confidence features are calculated independently within each half.
     bx = np.full(t, np.nan, np.float32); by = bx.copy()
@@ -642,8 +729,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data-dir", help="data bundle root (defaults to MTAH_DATA_DIR or ./data)")
     parser.add_argument("--output-dir", help="processed output directory (defaults to <data-dir>/processed)")
-    parser.add_argument("--stage", choices=("V0", "V1"), default="V1",
-                        help="tracking feature stage (default: V1)")
+    parser.add_argument("--stage", choices=("V0", "V1"), default="V0",
+                        help="tracking feature stage (default: V0)")
     parser.add_argument("--report-sensitivity", action="store_true",
                         help="run the optional eps/K ball-filter sensitivity report")
     args = parser.parse_args(argv)
@@ -654,39 +741,20 @@ def main(argv=None):
     is_field_player = np.ones(len(teams), dtype=bool)
     frame, slot_teams = prepare_tracking(players, ball, teams, kickoffs=_kickoff_frames(args.data_dir),
                                          stage=args.stage, slot_is_field_player=is_field_player)
-    _report_ball_quality(frame)
+    if args.stage == "V1":
+        _report_ball_quality(frame)
     if args.report_sensitivity:
+        if args.stage != "V1":
+            parser.error("--report-sensitivity is available only with --stage V1")
         # Jump filtering is invariant to pitch reflection, so raw unoriented ball
         # coordinates produce the same keep/remove decisions as oriented coordinates.
         _report_filter_sensitivity(ball, half_video_blocks(GAME))
     root = _data_root(args.data_dir)
     output_dir = args.output_dir or os.path.join(root, "processed")
     os.makedirs(output_dir, exist_ok=True)
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-    tracking_table = pa.Table.from_pandas(frame, preserve_index=False)
-    metadata = dict(tracking_table.schema.metadata or {})
-    metadata.update({b"schema_version": SCHEMA_VERSION.encode("ascii"),
-                     b"tracking_stage": args.stage.encode("ascii")})
-    fd, temp_path = tempfile.mkstemp(prefix=".tracking_clean.", suffix=".parquet", dir=output_dir)
-    os.close(fd)
-    try:
-        pq.write_table(tracking_table.replace_schema_metadata(metadata), temp_path)
-        os.replace(temp_path, os.path.join(output_dir, "tracking_clean.parquet"))
-    finally:
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-    fd, temp_path = tempfile.mkstemp(prefix=".slot_teams.", suffix=".parquet", dir=output_dir)
-    os.close(fd)
-    try:
-        slot_table = pa.Table.from_pandas(slot_teams, preserve_index=False)
-        slot_metadata = dict(slot_table.schema.metadata or {})
-        slot_metadata[b"schema_version"] = SCHEMA_VERSION.encode("ascii")
-        pq.write_table(slot_table.replace_schema_metadata(slot_metadata), temp_path)
-        os.replace(temp_path, os.path.join(output_dir, "slot_teams.parquet"))
-    finally:
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+    _write_parquet_atomically(frame, os.path.join(output_dir, "tracking_clean.parquet"),
+                              tracking_stage=args.stage)
+    _write_parquet_atomically(slot_teams, os.path.join(output_dir, "slot_teams.parquet"))
     LOGGER.info("Tracking prepared: rows=%d, slots=%d", len(frame), len(teams))
     LOGGER.info("Tracking and slot metadata written to %s", output_dir)
     return 0

@@ -40,6 +40,8 @@ CSV hom -> prep_homography.py ----> homography.parquet (opcional) --------------
 
 **Dependência A → B e V0.** O script de proximidades precisa das posições limpas. O Antônio libera a V0 do `tracking_clean.parquet` (metros, orientação por tempo, bola e slots sem filtros, mapeamento slot-time). Nomes e colunas ficam idênticos na V1 (com filtros); o Hugo programa contra a V0 e reexecuta sobre a V1.
 
+**Contrato executável da V0:** `--stage V0` (também o padrão da CLI) grava `video_frame`, `half`, `flip`, `ball_x/y`, `ball_vx/vy` e, para cada slot, `x`, `y`, `vx`, `vy`, `break`, nessa ordem. Posições são as observações originais do ATD em metros, após a orientação A3; não há filtro ou interpolação A4, remoção/deduplicação de A5 nem agregados A6. As derivadas são diferenças centrais simples (`numpy.gradient`, fps=25) somente em trechos contíguos observados dentro de cada bloco de `half_video_blocks`; velocidades ficam NaN em observações isoladas e fora dos tempos. `sNN_break` é `int8` zero em todas as linhas. Coordenadas e velocidades são `float32`. A V1 mantém as colunas de confiança, bola auditável, breaks e agregados descritos nas seções A4–A6.
+
 ## 3. Script A — `prep_tracking.py` (Antônio)
 
 | Tarefa | Descrição |
