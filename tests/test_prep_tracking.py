@@ -166,6 +166,49 @@ def test_parquet_writer_persists_schema_and_stage_metadata(tmp_path):
     assert metadata[b"tracking_stage"].decode() == "V0"
 
 
+def test_v1_requires_exact_kickoffs_inside_c4_tag_windows(tmp_path):
+    import json
+
+    proc_dir = tmp_path / "processed"
+    proc_dir.mkdir()
+    payload = {
+        "1": pt.KICKOFF_FALLBACK[1],
+        "2": pt.KICKOFF_FALLBACK[2],
+        "tag_windows": {
+            "1": [pt.KICKOFF_FALLBACK[1] - 3, pt.KICKOFF_FALLBACK[1] + 3],
+            "2": [pt.KICKOFF_FALLBACK[2] - 3, pt.KICKOFF_FALLBACK[2] + 3],
+        },
+    }
+    path = proc_dir / "kickoffs.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert pt._kickoff_frames(str(tmp_path), required=True) == pt.KICKOFF_FALLBACK
+
+    payload["1"] += 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="expected"):
+        pt._kickoff_frames(str(tmp_path), required=True)
+
+
+def test_v1_rejects_kickoff_outside_c4_tag_window(tmp_path):
+    import json
+
+    proc_dir = tmp_path / "processed"
+    proc_dir.mkdir()
+    payload = {
+        "1": pt.KICKOFF_FALLBACK[1],
+        "2": pt.KICKOFF_FALLBACK[2],
+        "tag_windows": {
+            "1": [pt.KICKOFF_FALLBACK[1] + 1, pt.KICKOFF_FALLBACK[1] + 3],
+            "2": [pt.KICKOFF_FALLBACK[2] - 3, pt.KICKOFF_FALLBACK[2] + 3],
+        },
+    }
+    (proc_dir / "kickoffs.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="outside tag window"):
+        pt._kickoff_frames(str(tmp_path), required=True)
+
+
 def test_team_aggregates_are_invariant_to_slots_swapping_player_identity():
     # Each frame contains the same players, positions, and velocities. Their slot
     # assignments swap in frame 2, as can happen when track slots change identity.

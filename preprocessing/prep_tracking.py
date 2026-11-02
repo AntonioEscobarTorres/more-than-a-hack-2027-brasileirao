@@ -36,8 +36,12 @@ def _data_root(data_dir=None):
         os.path.dirname(os.path.dirname(__file__)), "data")
 
 
-def _kickoff_frames(data_dir=None):
-    """Load C4 kickoff frames, or use published fallback values with a warning."""
+def _kickoff_frames(data_dir=None, required=False):
+    """Load C4 kickoff metadata and validate its exact frames against the tag windows.
+
+    V0 can run without the C4 handoff and retains the published fallback. V1 requires
+    the handoff so its orientation is tied to the validated kickoff file.
+    """
     root = _data_root(data_dir)
     path = os.path.join(root, "processed", "kickoffs.json")
     if os.path.isfile(path):
@@ -61,8 +65,30 @@ def _kickoff_frames(data_dir=None):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"Kickoff frame for half {half} in {path} must be an integer >= 0")
             result[half] = value
+        expected = KICKOFF_FALLBACK
+        if required:
+            for half, frame in expected.items():
+                if result[half] != frame:
+                    raise ValueError(
+                        f"Kickoff frame for half {half} in {path} is {result[half]}, expected {frame}"
+                    )
+        windows = payload.get("tag_windows")
+        if required and not isinstance(windows, dict):
+            raise ValueError(f"{path} must contain tag_windows for both halves")
+        if windows is not None:
+            for half, frame in result.items():
+                window = windows.get(str(half), windows.get(half)) if isinstance(windows, dict) else None
+                if (not isinstance(window, list) or len(window) != 2
+                        or any(isinstance(v, bool) or not isinstance(v, int) for v in window)):
+                    raise ValueError(f"{path} must contain a two-frame tag window for half {half}")
+                if not window[0] <= frame <= window[1]:
+                    raise ValueError(
+                        f"Kickoff frame {frame} for half {half} is outside tag window {window} in {path}"
+                    )
         LOGGER.info("Kickoffs loaded from %s", path)
         return result
+    if required:
+        raise FileNotFoundError(f"Required C4 kickoff metadata not found: {path}")
     LOGGER.warning("%s not found; using published kickoff fallback", path)
     return dict(KICKOFF_FALLBACK)
 
@@ -558,6 +584,13 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
         raise ValueError("slot_is_field_player must have one boolean value per player slot")
     if blocks is None:
         blocks = half_video_blocks(GAME)
+        if kickoffs is None:
+            kickoffs = _kickoff_frames(data_dir)
+    elif kickoffs is None:
+        # Explicitly supplied blocks are commonly short synthetic intervals.
+        # Their orientation starts at the first frame unless a test/caller gives
+        # explicit kickoff frames; the published match frames cannot apply here.
+        kickoffs = {half: first for half, first, _ in blocks}
     players = players.astype(np.float32, copy=True)
     ball = ball.astype(np.float32, copy=True)
     length, width = pitch
@@ -568,11 +601,11 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     # Audit coordinates are the original ATD positions in metres, before the
     # per-half orientation transform as well as before filtering/interpolation.
     ball_raw = ball[:, :2].copy()
-    if kickoffs is None:
-        kickoffs = _kickoff_frames(data_dir)
     flips = []
     for half, first, last in blocks:
-        kick = min(max(int(kickoffs.get(half, first)), first), last)
+        kick = int(kickoffs.get(half, first))
+        if not first <= kick <= last:
+            raise ValueError(f"Kickoff frame {kick} for half {half} is outside tracking block [{first}, {last}]")
         flips.append(_orient_half(players, ball, slot_team_ids, first, last + 1, kick, pitch))
     if len(flips) >= 2 and flips[0] == flips[1]:
         raise ValueError("Half orientations should oppose each other")
@@ -679,7 +712,7 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     for s in range(slots):
         for suffix, values in (("x", px[:, s]), ("y", py[:, s]), ("vx", vx[:, s]), ("vy", vy[:, s])):
             frame_data[f"s{s + 1:02d}_{suffix}"] = values.astype(np.float32)
-        frame_data[f"s{s + 1:02d}_break"] = breaks[:, s]
+        frame_data[f"s{s + 1:02d}_break"] = breaks[:, s].astype(np.int8)
 
     slot_teams = pd.DataFrame({"slot": np.arange(1, slots + 1, dtype=np.int8),
         "is_home": np.asarray(slot_team_ids) == 0, "is_field_player": slot_is_field_player})
@@ -709,6 +742,13 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     for (half, first, last), flipped in zip(blocks, flips):
         frame_data["flip"][first:last + 1] = int(flipped)
     frame = pd.DataFrame(frame_data)
+    # Keep the frozen 237-column V0 contract as an identical, ordered prefix.
+    # V1-only confidence, audit, and team aggregate columns follow that prefix.
+    v0_columns = ["video_frame", "half", "flip", "ball_x", "ball_y", "ball_vx", "ball_vy"]
+    for slot in range(1, slots + 1):
+        v0_columns.extend(f"s{slot:02d}_{suffix}" for suffix in ("x", "y", "vx", "vy", "break"))
+    v1_columns = [column for column in frame.columns if column not in set(v0_columns)]
+    frame = frame[v0_columns + v1_columns]
     return frame, slot_teams
 
 
@@ -739,7 +779,8 @@ def main(argv=None):
     # All 46 ATD slots belong to the two clubs. The flag means player vs
     # non-player and therefore includes goalkeepers for this match.
     is_field_player = np.ones(len(teams), dtype=bool)
-    frame, slot_teams = prepare_tracking(players, ball, teams, kickoffs=_kickoff_frames(args.data_dir),
+    frame, slot_teams = prepare_tracking(players, ball, teams,
+                                         kickoffs=_kickoff_frames(args.data_dir, required=args.stage == "V1"),
                                          stage=args.stage, slot_is_field_player=is_field_player)
     if args.stage == "V1":
         _report_ball_quality(frame)
