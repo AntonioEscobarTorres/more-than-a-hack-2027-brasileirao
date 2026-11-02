@@ -63,7 +63,7 @@ def test_permanent_position_jump_is_cut_even_when_native_speed_is_zero():
 
     frame, _ = pt.prepare_tracking(
         players, ball, teams, blocks=[(1, 0, 5)], kickoffs={1: 0},
-        n_frames=6, stage="V0")
+        n_frames=6, stage="V1")
 
     assert frame.loc[2, "s01_break"]
     assert not frame.loc[3, "s01_break"]
@@ -98,7 +98,7 @@ def test_prepare_removes_isolated_and_same_team_duplicate_before_aggregates():
     players[2, 3, :2] = [0.8, 0.5]
     teams[3] = 1
     frame, _ = pt.prepare_tracking(players, ball, teams, blocks=[(1, 0, 5)],
-                                   kickoffs={1: 0}, n_frames=6, stage="V0")
+                                   kickoffs={1: 0}, n_frames=6, stage="V1")
     assert frame.loc[0, ["s02_x", "s02_y", "s02_vx", "s02_vy"]].isna().all()
     assert frame.loc[2, ["s04_x", "s04_y", "s04_vx", "s04_vy"]].isna().all()
     assert frame.loc[0, "n_tracked_home"] == 1
@@ -119,7 +119,7 @@ def test_quality_before_dedup_is_measured_after_isolated_removal(caplog):
     with caplog.at_level("INFO", logger=pt.__name__):
         frame, _ = pt.prepare_tracking(
             players, ball, teams, blocks=[(1, 0, 4)], kickoffs={1: 0},
-            n_frames=5, stage="V0")
+            n_frames=5, stage="V1")
     # Isolated samples are removed before counting, so frame 2 has exactly 22
     # objects. The other four frames have 23; a premature snapshot would count
     # frame 2 too and report five frames above the threshold.
