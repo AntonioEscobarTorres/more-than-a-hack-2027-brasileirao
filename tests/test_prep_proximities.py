@@ -1,4 +1,4 @@
-"""Synthetic tests for B1–B3. No match parquet is read."""
+"""Synthetic tests for B1–B4. No match parquet is read."""
 import numpy as np
 import pandas as pd
 import pytest
@@ -6,7 +6,8 @@ import pytest
 from preprocessing.params import N_FRAMES, PRESSURE_TAU
 from preprocessing.prep_proximities import (
     ProximityInputs, assemble_inputs, contiguous_half_slices, load_proximity_inputs,
-    masked_nearest, player_ball_distances, radius_pressure, team_masks, team_proximity)
+    masked_nearest, player_ball_distances, radius_pressure, relative_speeds,
+    team_masks, team_proximity)
 from preprocessing.prep_tracking import write_parquet_with_meta
 from preprocessing.schema import N_SLOTS
 
@@ -313,3 +314,68 @@ def test_radius_and_pressure_are_nan_without_ball():
     for column in pressure:
         assert np.isnan(column[3])
         assert column.dtype == np.float32
+
+
+def _speed_inputs():
+    """Four frames: carry, opposite 7 m/s, approach, leave; then missing ball velocity."""
+    # slots: 0 home (nearest), 1 home far, 2 away (nearest), 3 away far
+    px = np.array([
+        [0.0, 20.0, 5.0, 25.0],
+        [0.0, 20.0, 5.0, 25.0],
+        [2.0, 20.0, 5.0, 25.0],
+        [2.0, 20.0, 5.0, 25.0],
+        [0.0, 20.0, 5.0, 25.0],
+    ], dtype=np.float32)
+    py = np.zeros_like(px)
+    pvx = np.array([
+        [3.0, 0.0, -1.0, 0.0],   # carry with ball +3
+        [-7.0, 0.0, 0.0, 0.0],   # opposite to ball +7
+        [0.0, 0.0, 0.0, 0.0],    # standing; ball approaches from left
+        [0.0, 0.0, 0.0, 0.0],    # standing; ball leaves to the right
+        [3.0, 0.0, 0.0, 0.0],    # player moving; ball velocity missing
+    ], dtype=np.float32)
+    pvy = np.zeros_like(pvx)
+    ball_x = np.array([0.0, 0.0, 0.0, 4.0, 0.0], dtype=np.float32)
+    ball_y = np.zeros(5, dtype=np.float32)
+    ball_vx = np.array([3.0, 7.0, 2.0, 2.0, np.nan], dtype=np.float32)
+    ball_vy = np.zeros(5, dtype=np.float32)
+    return ProximityInputs(
+        video_frame=np.arange(5, dtype=np.int32),
+        half=np.array([1, 1, 1, 1, 1], dtype=np.int8),
+        px=px, py=py, pvx=pvx, pvy=pvy,
+        ball_x=ball_x, ball_y=ball_y, ball_vx=ball_vx, ball_vy=ball_vy,
+        mask_home=np.array([True, True, False, False]),
+        mask_away=np.array([False, False, True, True]),
+        tracking_stage="V1",
+    )
+
+
+def test_relative_speed_carry_and_opposite_vectors():
+    speeds = relative_speeds(_speed_inputs())
+    np.testing.assert_allclose(speeds.speed_rel_home[0], 0.0, atol=1e-6)
+    np.testing.assert_allclose(speeds.speed_rel_home[1], 14.0, atol=1e-5)
+    assert speeds.speed_rel_home.dtype == np.float32
+
+
+def test_radial_speed_signs_for_approach_and_separation():
+    speeds = relative_speeds(_speed_inputs())
+    # Frame 2: player at x=2, ball at x=0 moving +2 -> closing (radial < 0)
+    assert speeds.speed_radial_home[2] < 0
+    # Frame 3: player at x=2, ball at x=4 moving +2 -> opening (radial > 0)
+    assert speeds.speed_radial_home[3] > 0
+
+
+def test_relative_speed_nan_without_ball_velocity_or_player_velocity():
+    inputs = _speed_inputs()
+    speeds = relative_speeds(inputs)
+    assert np.isnan(speeds.speed_rel_home[4])
+    assert np.isnan(speeds.speed_radial_home[4])
+
+    broken = inputs._replace(
+        pvx=inputs.pvx.copy(),
+        ball_vx=np.array([3.0, 7.0, 2.0, 2.0, 1.0], dtype=np.float32),
+    )
+    broken.pvx[0, 0] = np.nan
+    speeds = relative_speeds(broken)
+    assert np.isnan(speeds.speed_rel_home[0])
+    assert np.isfinite(speeds.speed_rel_home[1])

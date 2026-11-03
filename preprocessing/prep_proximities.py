@@ -2,8 +2,9 @@
 
 B1 loads ``tracking_clean.parquet`` into ``ProximityInputs``. B2 turns those
 arrays into nearest-player distances per team. B3 adds per-radius counts and
-continuous pressure. Later tasks (B4–B6) reuse the same inputs; features that
-look across time must iterate ``half_slices`` so nothing crosses the interval.
+continuous pressure. B4 adds relative and radial speeds of the nearest player.
+Later tasks (B5–B6) reuse the same inputs; features that look across time must
+iterate ``half_slices`` so nothing crosses the interval.
 
 Run from the repository root:
 
@@ -77,6 +78,18 @@ class TeamPressure(NamedTuple):
     n_away_r5: np.ndarray
     pressure_home: np.ndarray
     pressure_away: np.ndarray
+
+
+class RelativeSpeed(NamedTuple):
+    """Vector relative speed and radial approach/away speed (B4)."""
+
+    speed_rel_home: np.ndarray
+    speed_rel_away: np.ndarray
+    speed_radial_home: np.ndarray
+    speed_radial_away: np.ndarray
+
+
+_RADIAL_EPS = 1e-3
 
 
 def read_tracking_stage(path):
@@ -315,6 +328,47 @@ def radius_pressure(inputs, distances=None, radii=RADII, tau=PRESSURE_TAU):
     )
 
 
+def relative_speeds(inputs, proximity=None):
+    """B4: vector relative speed and radial approach/separation of the nearest player.
+
+    ``speed_rel`` is ``||v_ball - v_player||``. ``speed_radial`` is the radial
+    component of that difference: negative means closing on the ball, positive
+    means opening. NaN when the nearest distance is missing, when ball velocity
+    is missing (including V1 interpolated frames), or when the nearest player's
+    velocity is missing.
+    """
+    if proximity is None:
+        proximity = team_proximity(inputs)
+    frames = np.arange(len(inputs.ball_x))
+    out = {}
+    for name, nearest, dist in (
+        ("home", proximity.nearest_home, proximity.d_near_home),
+        ("away", proximity.nearest_away, proximity.d_near_away),
+    ):
+        px = inputs.px[frames, nearest]
+        py = inputs.py[frames, nearest]
+        pvx = inputs.pvx[frames, nearest]
+        pvy = inputs.pvy[frames, nearest]
+        rel_vx = inputs.ball_vx - pvx
+        rel_vy = inputs.ball_vy - pvy
+        rel = np.hypot(rel_vx, rel_vy)
+        dx = inputs.ball_x - px
+        dy = inputs.ball_y - py
+        safe_d = np.maximum(dist, _RADIAL_EPS)
+        radial = (dx * rel_vx + dy * rel_vy) / safe_d
+        valid = (np.isfinite(dist)
+                 & np.isfinite(inputs.ball_vx) & np.isfinite(inputs.ball_vy)
+                 & np.isfinite(pvx) & np.isfinite(pvy))
+        out[f"speed_rel_{name}"] = np.where(valid, rel, np.nan).astype(np.float32)
+        out[f"speed_radial_{name}"] = np.where(valid, radial, np.nan).astype(np.float32)
+    return RelativeSpeed(
+        speed_rel_home=out["speed_rel_home"],
+        speed_rel_away=out["speed_rel_away"],
+        speed_radial_home=out["speed_radial_home"],
+        speed_radial_away=out["speed_radial_away"],
+    )
+
+
 def _processed_dir(data_dir=None):
     root = data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "data")
@@ -332,13 +386,16 @@ def main(argv=None):
         os.path.join(folder, "slot_teams.parquet"))
     proximity = team_proximity(inputs)
     pressure = radius_pressure(inputs, distances=proximity.distances)
+    speeds = relative_speeds(inputs, proximity=proximity)
     for half_id, block in inputs.half_slices():
         ball_seen = int(np.isfinite(inputs.ball_x[block]).sum())
         home_near = int(np.isfinite(proximity.d_near_home[block]).sum())
         home_r3 = int(np.isfinite(pressure.n_home_r3[block]).sum())
+        rel_home = int(np.isfinite(speeds.speed_rel_home[block]).sum())
         LOGGER.info(
-            "half=%d frames=%d ball_finite=%d d_near_home_finite=%d n_home_r3_finite=%d",
-            half_id, block.stop - block.start, ball_seen, home_near, home_r3)
+            "half=%d frames=%d ball_finite=%d d_near_home_finite=%d "
+            "n_home_r3_finite=%d speed_rel_home_finite=%d",
+            half_id, block.stop - block.start, ball_seen, home_near, home_r3, rel_home)
     outside = int(np.count_nonzero(inputs.half == 0))
     LOGGER.info(
         "outside_play=%d d_near_home_nan_outside=%d",
