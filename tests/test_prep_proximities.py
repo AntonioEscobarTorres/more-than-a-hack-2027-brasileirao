@@ -1,13 +1,18 @@
-"""Synthetic tests for B1–B5. No match parquet is read."""
+"""Synthetic tests for B1–B6. No match parquet is read."""
+import hashlib
+
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 
-from preprocessing.params import N_FRAMES, PITCH_L, PITCH_MARGIN, PITCH_W, PRESSURE_TAU
+from preprocessing.params import (N_FRAMES, PITCH_L, PITCH_MARGIN, PITCH_W, PRESSURE_TAU,
+                                  SCHEMA_VERSION)
 from preprocessing.prep_proximities import (
-    ProximityInputs, assemble_inputs, contiguous_half_slices, load_proximity_inputs,
-    masked_nearest, pitch_features, player_ball_distances, radius_pressure,
-    relative_speeds, team_masks, team_proximity)
+    ProximityInputs, assemble_inputs, build_proximities_table, contiguous_half_slices,
+    load_proximity_inputs, masked_nearest, pitch_features, player_ball_distances,
+    proximities_column_names, radius_pressure, relative_speeds, run_proximities,
+    team_masks, team_proximity, write_proximities)
 from preprocessing.prep_tracking import write_parquet_with_meta
 from preprocessing.schema import N_SLOTS
 
@@ -417,3 +422,47 @@ def test_pitch_features_ignore_orientation_flip():
     pitch = pitch_features(x, y)
     np.testing.assert_allclose(pitch.d_goalline, [10.0, 10.0])
     np.testing.assert_allclose(pitch.d_touchline, [5.0, 5.0])
+
+
+def test_proximities_table_matches_schema_order_and_dtypes():
+    frame, half = _frame()
+    inputs = assemble_inputs(frame, _slot_teams(), "V1", n_frames=T)
+    table, *_ = build_proximities_table(inputs)
+
+    assert list(table.columns) == proximities_column_names()
+    assert len(proximities_column_names()) == 20
+    assert table["video_frame"].dtype == np.int32
+    assert table["half"].dtype == np.int8
+    for name in proximities_column_names()[2:]:
+        assert table[name].dtype == np.float32
+    np.testing.assert_array_equal(table["half"], half)
+    assert table.loc[half == 0, ["d_near_home", "pressure_home", "out_of_pitch"]].isna().all().all()
+
+
+def test_write_proximities_is_deterministic_and_stores_schema_version(tmp_path):
+    frame, _ = _frame()
+    inputs = assemble_inputs(frame, _slot_teams(), "V1", n_frames=T)
+    table, *_ = build_proximities_table(inputs)
+    path_a = tmp_path / "a.parquet"
+    path_b = tmp_path / "b.parquet"
+    write_proximities(table, path_a, n_frames=T)
+    write_proximities(table, path_b, n_frames=T)
+
+    hash_a = hashlib.sha256(path_a.read_bytes()).hexdigest()
+    hash_b = hashlib.sha256(path_b.read_bytes()).hexdigest()
+    assert hash_a == hash_b
+    meta = pq.read_schema(path_a).metadata or {}
+    assert meta.get(b"schema_version") == SCHEMA_VERSION.encode("utf-8")
+    loaded = pd.read_parquet(path_a)
+    assert list(loaded.columns) == proximities_column_names()
+    assert len(loaded) == T
+
+
+def test_run_proximities_end_to_end_from_synthetic_parquet(tmp_path):
+    tracking, slots = _write(tmp_path, _frame()[0], _slot_teams(), stage="V1")
+    output = tmp_path / "proximities.parquet"
+    inputs, table, *_ = run_proximities(tracking, slots, output, n_frames=T)
+    assert inputs.tracking_stage == "V1"
+    assert output.is_file()
+    assert len(table) == T
+    assert list(pd.read_parquet(output).columns) == proximities_column_names()
