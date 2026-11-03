@@ -1,12 +1,12 @@
-"""Synthetic tests for B1 and B2. No match parquet is read."""
+"""Synthetic tests for B1–B3. No match parquet is read."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from preprocessing.params import N_FRAMES
+from preprocessing.params import N_FRAMES, PRESSURE_TAU
 from preprocessing.prep_proximities import (
     ProximityInputs, assemble_inputs, contiguous_half_slices, load_proximity_inputs,
-    masked_nearest, player_ball_distances, team_masks, team_proximity)
+    masked_nearest, player_ball_distances, radius_pressure, team_masks, team_proximity)
 from preprocessing.prep_tracking import write_parquet_with_meta
 from preprocessing.schema import N_SLOTS
 
@@ -244,3 +244,72 @@ def test_player_ball_distances_are_metres_and_nan_safe():
     assert np.isnan(d[0, 1])
     assert np.isnan(d[1]).all()
     assert d.dtype == np.float32
+
+
+def _pressure_inputs():
+    """Distances: home 1 m and 4 m; away 2.5 m and 10 m; last frame no ball."""
+    px = np.array([
+        [1.0, 4.0, 2.5, 10.0],
+        [0.5, 2.5, 4.5, 6.0],
+        [9.0, 9.0, 9.0, 9.0],
+        [1.0, 1.0, 1.0, 1.0],
+    ], dtype=np.float32)
+    py = np.zeros_like(px)
+    ball_x = np.array([0.0, 0.0, 0.0, np.nan], dtype=np.float32)
+    ball_y = np.zeros(4, dtype=np.float32)
+    zeros = np.zeros(4, dtype=np.float32)
+    pvx = np.zeros_like(px)
+    return ProximityInputs(
+        video_frame=np.arange(4, dtype=np.int32),
+        half=np.array([1, 1, 1, 0], dtype=np.int8),
+        px=px, py=py, pvx=pvx, pvy=pvx.copy(),
+        ball_x=ball_x, ball_y=ball_y, ball_vx=zeros, ball_vy=zeros.copy(),
+        mask_home=np.array([True, True, False, False]),
+        mask_away=np.array([False, False, True, True]),
+        tracking_stage="V1",
+    )
+
+
+def test_radius_counts_are_monotonic_and_match_nearest():
+    inputs = _pressure_inputs()
+    proximity = team_proximity(inputs)
+    pressure = radius_pressure(inputs, distances=proximity.distances)
+
+    np.testing.assert_allclose(pressure.n_home_r2[0], 1.0)
+    np.testing.assert_allclose(pressure.n_home_r3[0], 1.0)
+    np.testing.assert_allclose(pressure.n_home_r5[0], 2.0)
+    np.testing.assert_allclose(pressure.n_away_r2[0], 0.0)
+    np.testing.assert_allclose(pressure.n_away_r3[0], 1.0)
+    np.testing.assert_allclose(pressure.n_away_r5[0], 1.0)
+    assert pressure.n_home_r2.dtype == np.float32
+
+    for side in ("home", "away"):
+        r2 = getattr(pressure, f"n_{side}_r2")
+        r3 = getattr(pressure, f"n_{side}_r3")
+        r5 = getattr(pressure, f"n_{side}_r5")
+        finite = np.isfinite(r2)
+        assert np.all(r2[finite] <= r3[finite])
+        assert np.all(r3[finite] <= r5[finite])
+        near = getattr(proximity, f"d_near_{side}")
+        for radius, counts in ((2.0, r2), (3.0, r3), (5.0, r5)):
+            inside = finite & np.isfinite(near) & (near < radius)
+            assert np.all(counts[inside] >= 1.0)
+
+
+def test_pressure_is_continuous_sum_of_exponentials():
+    inputs = _pressure_inputs()
+    pressure = radius_pressure(inputs)
+    expected_home = np.exp(-1.0 / PRESSURE_TAU) + np.exp(-4.0 / PRESSURE_TAU)
+    expected_away = np.exp(-2.5 / PRESSURE_TAU) + np.exp(-10.0 / PRESSURE_TAU)
+    np.testing.assert_allclose(pressure.pressure_home[0], expected_home, rtol=1e-6)
+    np.testing.assert_allclose(pressure.pressure_away[0], expected_away, rtol=1e-6)
+    # Nobody inside any useful range still has tiny pressure from distant players.
+    assert pressure.pressure_home[2] > 0
+    assert pressure.n_home_r5[2] == 0.0
+
+
+def test_radius_and_pressure_are_nan_without_ball():
+    pressure = radius_pressure(_pressure_inputs())
+    for column in pressure:
+        assert np.isnan(column[3])
+        assert column.dtype == np.float32

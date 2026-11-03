@@ -1,9 +1,9 @@
 """Proximity features from cleaned tracking (script B).
 
 B1 loads ``tracking_clean.parquet`` into ``ProximityInputs``. B2 turns those
-arrays into nearest-player distances per team. Later tasks (B3–B6) reuse the
-same inputs; features that look across time must iterate ``half_slices`` so
-nothing crosses the interval.
+arrays into nearest-player distances per team. B3 adds per-radius counts and
+continuous pressure. Later tasks (B4–B6) reuse the same inputs; features that
+look across time must iterate ``half_slices`` so nothing crosses the interval.
 
 Run from the repository root:
 
@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from games import GAME, half_video_blocks
-from .params import N_FRAMES, SCHEMA_VERSION
+from .params import N_FRAMES, PRESSURE_TAU, RADII, SCHEMA_VERSION
 from .schema import N_SLOTS
 
 LOGGER = logging.getLogger(__name__)
@@ -64,6 +64,19 @@ class TeamProximity(NamedTuple):
     nearest_home: np.ndarray
     nearest_away: np.ndarray
     distances: np.ndarray
+
+
+class TeamPressure(NamedTuple):
+    """Per-radius counts and continuous pressure (B3)."""
+
+    n_home_r2: np.ndarray
+    n_home_r3: np.ndarray
+    n_home_r5: np.ndarray
+    n_away_r2: np.ndarray
+    n_away_r3: np.ndarray
+    n_away_r5: np.ndarray
+    pressure_home: np.ndarray
+    pressure_away: np.ndarray
 
 
 def read_tracking_stage(path):
@@ -261,6 +274,47 @@ def team_proximity(inputs):
     )
 
 
+def _no_ball_mask(ball_x, ball_y):
+    return np.isnan(ball_x) | np.isnan(ball_y)
+
+
+def radius_pressure(inputs, distances=None, radii=RADII, tau=PRESSURE_TAU):
+    """B3: players inside each radius and continuous pressure per team.
+
+    Counts use ``d < r``. Pressure is ``sum(exp(-d / tau))`` over finite
+    distances of that team's field-player slots. Without a ball every column
+    is NaN, never zero. With a ball and nobody inside the radius, the count
+    is ``0.0``.
+    """
+    radii = tuple(float(r) for r in radii)
+    if radii != (2.0, 3.0, 5.0):
+        raise ValueError(f"schema expects radii (2, 3, 5); got {radii}")
+    if distances is None:
+        distances = player_ball_distances(inputs.ball_x, inputs.ball_y, inputs.px, inputs.py)
+    no_ball = _no_ball_mask(inputs.ball_x, inputs.ball_y)
+    out = {}
+    for name, mask in (("home", inputs.mask_home), ("away", inputs.mask_away)):
+        dm = np.where(mask[None, :] & np.isfinite(distances), distances, np.inf)
+        for radius in radii:
+            count = (dm < radius).sum(axis=1).astype(np.float32)
+            count[no_ball] = np.nan
+            out[f"n_{name}_r{radius:g}"] = count
+        # exp(-inf) is 0, so missing/other-team slots do not add pressure.
+        pressure = np.exp(-dm / float(tau)).sum(axis=1).astype(np.float32)
+        pressure[no_ball] = np.nan
+        out[f"pressure_{name}"] = pressure
+    return TeamPressure(
+        n_home_r2=out["n_home_r2"],
+        n_home_r3=out["n_home_r3"],
+        n_home_r5=out["n_home_r5"],
+        n_away_r2=out["n_away_r2"],
+        n_away_r3=out["n_away_r3"],
+        n_away_r5=out["n_away_r5"],
+        pressure_home=out["pressure_home"],
+        pressure_away=out["pressure_away"],
+    )
+
+
 def _processed_dir(data_dir=None):
     root = data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "data")
@@ -277,12 +331,14 @@ def main(argv=None):
         os.path.join(folder, "tracking_clean.parquet"),
         os.path.join(folder, "slot_teams.parquet"))
     proximity = team_proximity(inputs)
+    pressure = radius_pressure(inputs, distances=proximity.distances)
     for half_id, block in inputs.half_slices():
         ball_seen = int(np.isfinite(inputs.ball_x[block]).sum())
         home_near = int(np.isfinite(proximity.d_near_home[block]).sum())
+        home_r3 = int(np.isfinite(pressure.n_home_r3[block]).sum())
         LOGGER.info(
-            "half=%d frames=%d ball_finite=%d d_near_home_finite=%d",
-            half_id, block.stop - block.start, ball_seen, home_near)
+            "half=%d frames=%d ball_finite=%d d_near_home_finite=%d n_home_r3_finite=%d",
+            half_id, block.stop - block.start, ball_seen, home_near, home_r3)
     outside = int(np.count_nonzero(inputs.half == 0))
     LOGGER.info(
         "outside_play=%d d_near_home_nan_outside=%d",
