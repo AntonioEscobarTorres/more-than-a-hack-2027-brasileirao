@@ -1,11 +1,12 @@
-"""Synthetic tests for B1. No match parquet is read."""
+"""Synthetic tests for B1 and B2. No match parquet is read."""
 import numpy as np
 import pandas as pd
 import pytest
 
 from preprocessing.params import N_FRAMES
 from preprocessing.prep_proximities import (
-    assemble_inputs, contiguous_half_slices, load_proximity_inputs, team_masks)
+    ProximityInputs, assemble_inputs, contiguous_half_slices, load_proximity_inputs,
+    masked_nearest, player_ball_distances, team_masks, team_proximity)
 from preprocessing.prep_tracking import write_parquet_with_meta
 from preprocessing.schema import N_SLOTS
 
@@ -160,3 +161,86 @@ def test_half_slices_reject_a_second_half_that_starts_first():
     half[6:9] = 1
     with pytest.raises(ValueError, match="before half 1 ends"):
         contiguous_half_slices(half)
+
+
+def _tiny_inputs():
+    """Four frames, two home and two away slots. Hand-checked distances."""
+    # slots: 0 home, 1 home, 2 away, 3 away
+    px = np.array([
+        [0.0, 10.0, 3.0, 8.0],   # home nearest 0 at 0; away nearest 2 at 3
+        [5.0, 4.0, 1.0, 9.0],    # home nearest 1 at 4; away nearest 2 at 1
+        [2.0, np.nan, np.nan, 6.0],  # home only slot 0; away only slot 3
+        [1.0, 1.0, 1.0, 1.0],    # no ball
+    ], dtype=np.float32)
+    py = np.zeros_like(px)
+    ball_x = np.array([0.0, 0.0, 0.0, np.nan], dtype=np.float32)
+    ball_y = np.zeros(4, dtype=np.float32)
+    half = np.array([1, 1, 1, 0], dtype=np.int8)
+    mask_home = np.array([True, True, False, False])
+    mask_away = np.array([False, False, True, True])
+    zeros = np.zeros(4, dtype=np.float32)
+    pvx = np.zeros_like(px)
+    return ProximityInputs(
+        video_frame=np.arange(4, dtype=np.int32),
+        half=half,
+        px=px, py=py, pvx=pvx, pvy=pvx.copy(),
+        ball_x=ball_x, ball_y=ball_y, ball_vx=zeros, ball_vy=zeros.copy(),
+        mask_home=mask_home, mask_away=mask_away,
+        tracking_stage="V1",
+    )
+
+
+def test_masked_nearest_ignores_nan_slots_and_empty_mask():
+    d = np.array([[1.0, np.nan, 4.0], [np.nan, np.nan, np.nan]], dtype=np.float32)
+    mask = np.array([True, True, False])
+    idx, dist = masked_nearest(d, mask)
+    assert idx[0] == 0
+    np.testing.assert_allclose(dist[0], 1.0)
+    assert np.isnan(dist[1])
+
+
+def test_team_proximity_picks_nearest_per_side_and_signs_diff():
+    proximity = team_proximity(_tiny_inputs())
+
+    np.testing.assert_allclose(proximity.d_near_home[:3], [0.0, 4.0, 2.0])
+    np.testing.assert_allclose(proximity.d_near_away[:3], [3.0, 1.0, 6.0])
+    np.testing.assert_allclose(proximity.d_diff[:3], [-3.0, 3.0, -4.0])
+    assert proximity.d_near_home.dtype == np.float32
+    assert proximity.d_diff.dtype == np.float32
+    np.testing.assert_array_equal(proximity.nearest_home[:3], [0, 1, 0])
+    np.testing.assert_array_equal(proximity.nearest_away[:3], [2, 2, 3])
+    assert np.isnan(proximity.d_near_home[3])
+    assert np.isnan(proximity.d_near_away[3])
+    assert np.isnan(proximity.d_diff[3])
+
+
+def test_team_proximity_nan_when_side_has_no_player():
+    inputs = _tiny_inputs()
+    inputs.px[2, 0] = np.nan  # only home slot left was 0; now home empty
+    proximity = team_proximity(inputs)
+    assert np.isnan(proximity.d_near_home[2])
+    np.testing.assert_allclose(proximity.d_near_away[2], 6.0)
+    assert np.isnan(proximity.d_diff[2])
+
+
+def test_team_proximity_respects_field_player_mask():
+    inputs = _tiny_inputs()
+    # slot 0 is home and closer (0 m); drop it from the field-player mask
+    mask_home = inputs.mask_home.copy()
+    mask_home[0] = False
+    inputs = inputs._replace(mask_home=mask_home)
+    proximity = team_proximity(inputs)
+    np.testing.assert_allclose(proximity.d_near_home[0], 10.0)
+    assert proximity.nearest_home[0] == 1
+
+
+def test_player_ball_distances_are_metres_and_nan_safe():
+    bx = np.array([0.0, np.nan], dtype=np.float32)
+    by = np.array([0.0, 0.0], dtype=np.float32)
+    px = np.array([[3.0, np.nan], [1.0, 2.0]], dtype=np.float32)
+    py = np.array([[4.0, 0.0], [0.0, 0.0]], dtype=np.float32)
+    d = player_ball_distances(bx, by, px, py)
+    np.testing.assert_allclose(d[0, 0], 5.0)
+    assert np.isnan(d[0, 1])
+    assert np.isnan(d[1]).all()
+    assert d.dtype == np.float32

@@ -1,8 +1,9 @@
-"""Load tracking_clean into the (T, N) matrices the proximity features consume.
+"""Proximity features from cleaned tracking (script B).
 
-This is B1 of ``prep_proximities``. It does not compute distances. B2–B6 read
-``ProximityInputs`` and must iterate ``half_slices`` so a feature never crosses
-the interval between the two halves.
+B1 loads ``tracking_clean.parquet`` into ``ProximityInputs``. B2 turns those
+arrays into nearest-player distances per team. Later tasks (B3–B6) reuse the
+same inputs; features that look across time must iterate ``half_slices`` so
+nothing crosses the interval.
 
 Run from the repository root:
 
@@ -52,6 +53,17 @@ class ProximityInputs(NamedTuple):
     def half_slices(self):
         """``(half_id, slice)`` for each contiguous half, in play order."""
         return contiguous_half_slices(self.half)
+
+
+class TeamProximity(NamedTuple):
+    """Nearest-player distances in metres (B2). Indices feed B4 later."""
+
+    d_near_home: np.ndarray
+    d_near_away: np.ndarray
+    d_diff: np.ndarray
+    nearest_home: np.ndarray
+    nearest_away: np.ndarray
+    distances: np.ndarray
 
 
 def read_tracking_stage(path):
@@ -203,6 +215,52 @@ def load_proximity_inputs(tracking_path, slot_teams_path, n_frames=N_FRAMES, n_s
     return inputs
 
 
+def player_ball_distances(bx, by, px, py):
+    """Euclidean distances in metres: shape ``(T, N)``. Missing ball or slot -> NaN."""
+    return np.hypot(px - bx[:, None], py - by[:, None]).astype(np.float32, copy=False)
+
+
+def masked_nearest(d, mask):
+    """Nearest finite distance under a slot mask.
+
+    ``d`` is ``(T, N)``; ``mask`` is ``(N,)``. Returns slot indices and distances
+    as float32. A frame with no eligible finite distance yields NaN.
+    """
+    d = np.asarray(d)
+    mask = np.asarray(mask, dtype=bool)
+    if d.ndim != 2:
+        raise ValueError(f"distances must be 2-D (T, N); got shape {d.shape}")
+    if mask.shape != (d.shape[1],):
+        raise ValueError(f"mask length {mask.shape} does not match N={d.shape[1]}")
+
+    dm = np.where(mask[None, :] & np.isfinite(d), d, np.inf)
+    nearest = dm.argmin(axis=1).astype(np.int32)
+    dist = dm[np.arange(len(d)), nearest]
+    dist = np.where(np.isfinite(dist), dist, np.nan).astype(np.float32)
+    return nearest, dist
+
+
+def team_proximity(inputs):
+    """B2: nearest home/away distance to the ball and their difference.
+
+    ``d_diff = d_near_home - d_near_away`` (negative means home is closer).
+    Frames without a ball, or without a tracked field player on that side, are
+    NaN. Each frame is independent; ``half == 0`` is already blanked in B1.
+    """
+    distances = player_ball_distances(inputs.ball_x, inputs.ball_y, inputs.px, inputs.py)
+    nearest_home, d_home = masked_nearest(distances, inputs.mask_home)
+    nearest_away, d_away = masked_nearest(distances, inputs.mask_away)
+    d_diff = (d_home - d_away).astype(np.float32)
+    return TeamProximity(
+        d_near_home=d_home,
+        d_near_away=d_away,
+        d_diff=d_diff,
+        nearest_home=nearest_home,
+        nearest_away=nearest_away,
+        distances=distances,
+    )
+
+
 def _processed_dir(data_dir=None):
     root = data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "data")
@@ -218,11 +276,17 @@ def main(argv=None):
     inputs = load_proximity_inputs(
         os.path.join(folder, "tracking_clean.parquet"),
         os.path.join(folder, "slot_teams.parquet"))
+    proximity = team_proximity(inputs)
     for half_id, block in inputs.half_slices():
         ball_seen = int(np.isfinite(inputs.ball_x[block]).sum())
-        LOGGER.info("half=%d frames=%d ball_finite=%d", half_id, block.stop - block.start, ball_seen)
+        home_near = int(np.isfinite(proximity.d_near_home[block]).sum())
+        LOGGER.info(
+            "half=%d frames=%d ball_finite=%d d_near_home_finite=%d",
+            half_id, block.stop - block.start, ball_seen, home_near)
     outside = int(np.count_nonzero(inputs.half == 0))
-    LOGGER.info("outside_play=%d", outside)
+    LOGGER.info(
+        "outside_play=%d d_near_home_nan_outside=%d",
+        outside, int(np.isnan(proximity.d_near_home[inputs.half == 0]).sum()))
     return 0
 
 
