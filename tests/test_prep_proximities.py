@@ -1,13 +1,13 @@
-"""Synthetic tests for B1–B4. No match parquet is read."""
+"""Synthetic tests for B1–B5. No match parquet is read."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from preprocessing.params import N_FRAMES, PRESSURE_TAU
+from preprocessing.params import N_FRAMES, PITCH_L, PITCH_MARGIN, PITCH_W, PRESSURE_TAU
 from preprocessing.prep_proximities import (
     ProximityInputs, assemble_inputs, contiguous_half_slices, load_proximity_inputs,
-    masked_nearest, player_ball_distances, radius_pressure, relative_speeds,
-    team_masks, team_proximity)
+    masked_nearest, pitch_features, player_ball_distances, radius_pressure,
+    relative_speeds, team_masks, team_proximity)
 from preprocessing.prep_tracking import write_parquet_with_meta
 from preprocessing.schema import N_SLOTS
 
@@ -379,3 +379,41 @@ def test_relative_speed_nan_without_ball_velocity_or_player_velocity():
     speeds = relative_speeds(broken)
     assert np.isnan(speeds.speed_rel_home[0])
     assert np.isfinite(speeds.speed_rel_home[1])
+
+
+def test_pitch_features_distances_and_margin():
+    x = np.array([
+        PITCH_L / 2,
+        -0.5,                       # past the line, still inside margin
+        -(PITCH_MARGIN + 0.1),      # beyond margin
+        PITCH_L + PITCH_MARGIN + 0.1,
+        np.nan,
+    ], dtype=np.float32)
+    y = np.array([
+        PITCH_W / 2,
+        PITCH_W / 2,
+        PITCH_W / 2,
+        -1.5,
+        10.0,
+    ], dtype=np.float32)
+    pitch = pitch_features(x, y)
+
+    np.testing.assert_allclose(pitch.d_goalline[0], PITCH_L / 2)
+    np.testing.assert_allclose(pitch.d_touchline[0], PITCH_W / 2)
+    np.testing.assert_allclose(pitch.out_of_pitch[0], 0.0)
+    np.testing.assert_allclose(pitch.out_of_pitch[1], 0.0)
+    np.testing.assert_allclose(pitch.out_of_pitch[2], 1.0)
+    np.testing.assert_allclose(pitch.out_of_pitch[3], 1.0)
+    assert pitch.d_goalline[1] < 0
+    assert pitch.d_touchline[3] < 0
+    assert np.isnan(pitch.out_of_pitch[4])
+    assert np.isnan(pitch.d_touchline[4])
+    assert pitch.out_of_pitch.dtype == np.float32
+
+
+def test_pitch_features_ignore_orientation_flip():
+    x = np.array([10.0, PITCH_L - 10.0], dtype=np.float32)
+    y = np.array([5.0, PITCH_W - 5.0], dtype=np.float32)
+    pitch = pitch_features(x, y)
+    np.testing.assert_allclose(pitch.d_goalline, [10.0, 10.0])
+    np.testing.assert_allclose(pitch.d_touchline, [5.0, 5.0])

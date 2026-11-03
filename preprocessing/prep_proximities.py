@@ -3,8 +3,9 @@
 B1 loads ``tracking_clean.parquet`` into ``ProximityInputs``. B2 turns those
 arrays into nearest-player distances per team. B3 adds per-radius counts and
 continuous pressure. B4 adds relative and radial speeds of the nearest player.
-Later tasks (B5–B6) reuse the same inputs; features that look across time must
-iterate ``half_slices`` so nothing crosses the interval.
+B5 measures how far the ball is from the pitch boundary. B6 writes the parquet;
+features that look across time must iterate ``half_slices`` so nothing crosses
+the interval.
 
 Run from the repository root:
 
@@ -24,7 +25,8 @@ import numpy as np
 import pandas as pd
 
 from games import GAME, half_video_blocks
-from .params import N_FRAMES, PRESSURE_TAU, RADII, SCHEMA_VERSION
+from .params import (N_FRAMES, PITCH_L, PITCH_MARGIN, PITCH_W, PRESSURE_TAU, RADII,
+                     SCHEMA_VERSION)
 from .schema import N_SLOTS
 
 LOGGER = logging.getLogger(__name__)
@@ -87,6 +89,14 @@ class RelativeSpeed(NamedTuple):
     speed_rel_away: np.ndarray
     speed_radial_home: np.ndarray
     speed_radial_away: np.ndarray
+
+
+class PitchGeometry(NamedTuple):
+    """Ball vs pitch boundary (B5). Distances are negative outside the lines."""
+
+    out_of_pitch: np.ndarray
+    d_touchline: np.ndarray
+    d_goalline: np.ndarray
 
 
 _RADIAL_EPS = 1e-3
@@ -369,6 +379,27 @@ def relative_speeds(inputs, proximity=None):
     )
 
 
+def pitch_features(ball_x, ball_y, length=PITCH_L, width=PITCH_W, margin=PITCH_MARGIN):
+    """B5: out-of-pitch flag and signed distances to touchline / goalline.
+
+    ``out_of_pitch`` is 1 only past the line by ``margin`` metres, so tracker
+    noise on the line does not flip the flag. Distances are ``min(coord,
+    size - coord)`` and go negative outside the painted pitch. Orientation /
+    flip does not change these measures. Without a ball every value is NaN.
+    """
+    x = np.asarray(ball_x, dtype=np.float32)
+    y = np.asarray(ball_y, dtype=np.float32)
+    out = ((x < -margin) | (x > length + margin) | (y < -margin) | (y > width + margin))
+    out = out.astype(np.float32)
+    missing = np.isnan(x) | np.isnan(y)
+    out[missing] = np.nan
+    d_touch = np.minimum(y, width - y).astype(np.float32)
+    d_goal = np.minimum(x, length - x).astype(np.float32)
+    d_touch[missing] = np.nan
+    d_goal[missing] = np.nan
+    return PitchGeometry(out_of_pitch=out, d_touchline=d_touch, d_goalline=d_goal)
+
+
 def _processed_dir(data_dir=None):
     root = data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "data")
@@ -387,15 +418,18 @@ def main(argv=None):
     proximity = team_proximity(inputs)
     pressure = radius_pressure(inputs, distances=proximity.distances)
     speeds = relative_speeds(inputs, proximity=proximity)
+    pitch = pitch_features(inputs.ball_x, inputs.ball_y)
     for half_id, block in inputs.half_slices():
         ball_seen = int(np.isfinite(inputs.ball_x[block]).sum())
         home_near = int(np.isfinite(proximity.d_near_home[block]).sum())
         home_r3 = int(np.isfinite(pressure.n_home_r3[block]).sum())
         rel_home = int(np.isfinite(speeds.speed_rel_home[block]).sum())
+        out_count = int(np.nansum(pitch.out_of_pitch[block] == 1))
         LOGGER.info(
             "half=%d frames=%d ball_finite=%d d_near_home_finite=%d "
-            "n_home_r3_finite=%d speed_rel_home_finite=%d",
-            half_id, block.stop - block.start, ball_seen, home_near, home_r3, rel_home)
+            "n_home_r3_finite=%d speed_rel_home_finite=%d out_of_pitch=%d",
+            half_id, block.stop - block.start, ball_seen, home_near, home_r3,
+            rel_home, out_count)
     outside = int(np.count_nonzero(inputs.half == 0))
     LOGGER.info(
         "outside_play=%d d_near_home_nan_outside=%d",
