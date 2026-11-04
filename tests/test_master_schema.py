@@ -1,6 +1,6 @@
 """
-Testes de contrato e schema do master_features (M2 / D3).
-Pode validar tanto o mock sintetico (padrao) quanto qualquer Parquet via `pytest --master <caminho>`.
+Contract and schema tests for master_features (M2 / D3).
+Validates either the synthetic mock (default) or any Parquet via `pytest --master <path>`.
 """
 from __future__ import annotations
 
@@ -47,13 +47,13 @@ VALID_SP_TYPES = {
 
 @pytest.fixture(scope="module")
 def master_path(request: pytest.FixtureRequest) -> str | None:
-    """Retorna o caminho passado em --master, ou None para usar o mock sintetico em memoria."""
+    """Return the path passed via --master, or None to use the in-memory synthetic mock."""
     return request.config.getoption("--master")
 
 
 @pytest.fixture(scope="module")
 def mock_df(master_path: str | None) -> pd.DataFrame:
-    """Carrega o Parquet apontado por --master ou gera o DataFrame mock sintetico padrao."""
+    """Load the Parquet pointed by --master, or generate the default synthetic mock DataFrame."""
     if master_path is not None:
         if not os.path.isfile(master_path):
             pytest.fail(f"Arquivo especificado em --master nao encontrado: {master_path}")
@@ -62,7 +62,7 @@ def mock_df(master_path: str | None) -> pd.DataFrame:
 
 
 def test_schema_definitions_and_intermediate_files_contract():
-    """Valida a integridade interna de MASTER_GROUPS, INTERMEDIATE_FILES e slot_columns em schema.py."""
+    """Validate the internal integrity of MASTER_GROUPS, INTERMEDIATE_FILES and slot_columns in schema.py."""
     all_cols = master_columns(include_optional=True)
     req_cols = master_columns(include_optional=False)
     assert len(all_cols) == 60
@@ -80,7 +80,7 @@ def test_schema_definitions_and_intermediate_files_contract():
 
 
 def test_schema_column_names_and_order(mock_df: pd.DataFrame, master_path: str | None):
-    """Garante que as colunas estao presentes na ordem exata definida em master_columns(), sem duplicatas."""
+    """Ensure columns are present in the exact order defined by master_columns(), with no duplicates."""
     assert len(set(mock_df.columns)) == len(mock_df.columns), "Ha colunas duplicadas no DataFrame"
 
     expected_with_opt = master_column_names(include_optional=True)
@@ -94,7 +94,7 @@ def test_schema_column_names_and_order(mock_df: pd.DataFrame, master_path: str |
 
 
 def test_schema_column_dtypes(mock_df: pd.DataFrame):
-    """Garante que cada coluna presente tem o dtype exato especificado no contrato do schema.py."""
+    """Ensure every present column has the exact dtype specified by the schema.py contract."""
     expected_types = dict(master_columns(include_optional=True))
     for col in mock_df.columns:
         exp_type = expected_types[col]
@@ -108,7 +108,7 @@ def test_schema_column_dtypes(mock_df: pd.DataFrame):
 
 
 def test_master_file_metadata_when_path_given(master_path: str | None):
-    """Quando --master e informado, valida schema_version = '1.0' diretamente nos metadados do Parquet."""
+    """When --master is provided, validate schema_version = '1.0' directly in the Parquet metadata."""
     if master_path is None:
         return
     parquet_file = pq.ParquetFile(master_path)
@@ -118,7 +118,7 @@ def test_master_file_metadata_when_path_given(master_path: str | None):
 
 
 def test_no_optional_columns():
-    """Garante que include_optional=False gera exatamente as 59 colunas obrigatorias."""
+    """Ensure include_optional=False yields exactly the 59 required columns."""
     df_no_opt = generate_mock_master(game=GAME, seed=42, include_optional=False)
     expected_cols = master_column_names(include_optional=False)
     assert len(df_no_opt.columns) == 59
@@ -128,13 +128,13 @@ def test_no_optional_columns():
 
 
 def test_row_count_and_video_frame_index(mock_df: pd.DataFrame):
-    """Valida 199.319 linhas e video_frame continuo de 0 a 199.318."""
+    """Validate 199,319 rows and a contiguous video_frame from 0 to 199,318."""
     assert len(mock_df) == N_FRAMES
     assert (mock_df["video_frame"].to_numpy() == np.arange(N_FRAMES, dtype=np.int32)).all()
 
 
 def test_half_and_graded_blocks(mock_df: pd.DataFrame):
-    """Valida blocos de tempo conforme half_video_blocks('BAR-ATH') e contagens 79.467 e 79.390."""
+    """Validate half blocks from half_video_blocks('BAR-ATH') and counts 79,467 and 79,390."""
     blocks = half_video_blocks(GAME)
     # [(1, 11185, 90651), (2, 110808, 190197)]
     assert (mock_df["half"] == 1).sum() == 79_467
@@ -147,7 +147,7 @@ def test_half_and_graded_blocks(mock_df: pd.DataFrame):
         actual_fih = mock_df.loc[f0:f1, "frame_in_half"].to_numpy()
         np.testing.assert_array_equal(actual_fih, expected_fih)
 
-    # Fora dos tempos (half == 0)
+    # Outside the halves (half == 0)
     outside_mask = mock_df["half"] == 0
     assert outside_mask.sum() == N_FRAMES - (79_467 + 79_390)
     assert (mock_df.loc[outside_mask, "is_graded"] == False).all()
@@ -155,10 +155,10 @@ def test_half_and_graded_blocks(mock_df: pd.DataFrame):
 
 
 def test_outside_halves_all_tracking_and_derived_are_nan(mock_df: pd.DataFrame):
-    """Fora dos tempos (half == 0), colunas derivadas do tracking e distancias de SP devem ser NaN (flags 0)."""
+    """Outside the halves (half == 0), tracking-derived columns and SP distances must be NaN (flags 0)."""
     outside = mock_df["half"] == 0
 
-    # Flags de confianca, fases e pontape devem ser 0 / False / string vazia
+    # Confidence, phase and kickoff flags must be 0 / False / empty string
     assert (mock_df.loc[outside, "ball_observed"] == 0).all()
     assert (mock_df.loc[outside, "ball_jump_removed"] == 0).all()
     assert (mock_df.loc[outside, "ball_filled"] == 0).all()
@@ -171,7 +171,7 @@ def test_outside_halves_all_tracking_and_derived_are_nan(mock_df: pd.DataFrame):
     assert (mock_df.loc[outside, "n_tags_favor_away"] == 0).all()
     assert (mock_df.loc[outside, "pre_kickoff"] == False).all()
 
-    # Colunas float32 fora dos tempos devem ser NaN
+    # float32 columns outside the halves must be NaN
     nan_cols = [
         "frame_in_half", "ball_x", "ball_y", "ball_vx", "ball_vy", "ball_speed", "ball_acc",
         "ball_dir_change", "gap_length", "since_last_obs", "until_next_obs",
@@ -192,24 +192,24 @@ def test_outside_halves_all_tracking_and_derived_are_nan(mock_df: pd.DataFrame):
 
 
 def test_ball_missing_ratio_and_gaps(mock_df: pd.DataFrame):
-    """Valida bola ausente em ~41% dos frames avaliados e regras de gap_length."""
+    """Validate ~41% missing ball on graded frames and the gap_length rules."""
     graded = mock_df["is_graded"]
     evaluated_df = mock_df[graded]
 
     missing_ratio = (evaluated_df["ball_observed"] == 0).mean()
     assert 0.38 <= missing_ratio <= 0.45, f"Bola ausente {missing_ratio:.2%} fora da faixa esperada (~41%)"
 
-    # Quando ball_observed == 1, gap_length deve ser 0
+    # When ball_observed == 1, gap_length must be 0
     obs_mask = evaluated_df["ball_observed"] == 1
     assert (evaluated_df.loc[obs_mask, "gap_length"] == 0.0).all()
 
-    # Quando ball_observed == 0, gap_length deve ser > 0
+    # When ball_observed == 0, gap_length must be > 0
     unobs_mask = evaluated_df["ball_observed"] == 0
     assert (evaluated_df.loc[unobs_mask, "gap_length"] > 0).all()
 
 
 def test_ball_filled_coherence(mock_df: pd.DataFrame):
-    """Valida invariante fundamental: ball_filled == 1 => gap_length <= MAX_GAP_FRAMES e ball_observed == 0."""
+    """Validate the core invariant: ball_filled == 1 => gap_length <= MAX_GAP_FRAMES and ball_observed == 0."""
     graded = mock_df["is_graded"]
     evaluated_df = mock_df[graded]
 
@@ -221,7 +221,7 @@ def test_ball_filled_coherence(mock_df: pd.DataFrame):
 
 
 def test_since_and_until_last_obs(mock_df: pd.DataFrame):
-    """Valida since_last_obs e until_next_obs dentro de cada tempo."""
+    """Validate since_last_obs and until_next_obs within each half."""
     blocks = half_video_blocks(GAME)
     for _, f0, f1 in blocks:
         sub = mock_df.loc[f0:f1]
@@ -229,48 +229,48 @@ def test_since_and_until_last_obs(mock_df: pd.DataFrame):
         first_obs_idx = sub.index[obs][0]
         last_obs_idx = sub.index[obs][-1]
 
-        # since_last_obs e NaN estritamente antes da 1a observacao do tempo
+        # since_last_obs is NaN strictly before the first observation of the half
         assert sub.loc[:first_obs_idx - 1, "since_last_obs"].isna().all()
         assert sub.loc[first_obs_idx:, "since_last_obs"].notna().all()
 
-        # until_next_obs e NaN estritamente depois da ultima observacao do tempo
+        # until_next_obs is NaN strictly after the last observation of the half
         assert sub.loc[last_obs_idx + 1:, "until_next_obs"].isna().all()
         assert sub.loc[:last_obs_idx, "until_next_obs"].notna().all()
 
-        # Onde ha observacao, ambos sao 0
+        # Where there is an observation, both are 0
         assert (sub.loc[obs, "since_last_obs"] == 0.0).all()
         assert (sub.loc[obs, "until_next_obs"] == 0.0).all()
 
 
 def test_ball_coordinates_and_kinematics_contract(mock_df: pd.DataFrame):
-    """Valida que ball_x/y existem sse (ball_observed == 1 ou ball_filled == 1), e derivadas apenas em observados."""
+    """Validate ball_x/y exist iff (ball_observed == 1 or ball_filled == 1), and derivatives only on observed frames."""
     has_ball = (mock_df["ball_observed"] == 1) | (mock_df["ball_filled"] == 1)
     assert mock_df["ball_x"].notna().equals(has_ball)
     assert mock_df["ball_y"].notna().equals(has_ball)
 
-    # Onde ball_observed == 0 (inclui ball_filled == 1 e sem bola), derivadas cinematicas devem ser NaN
+    # Where ball_observed == 0 (includes ball_filled == 1 and no ball), kinematic derivatives must be NaN
     unobs = mock_df["ball_observed"] == 0
     for col in ("ball_vx", "ball_vy", "ball_speed", "ball_acc", "ball_dir_change"):
         assert mock_df.loc[unobs, col].isna().all(), f"Coluna {col} deve ser NaN onde ball_observed == 0"
 
-    # Onde ha velocidade finita, ball_speed == hypot(vx, vy)
+    # Where velocity is finite, ball_speed == hypot(vx, vy)
     valid_speed = mock_df["ball_speed"].notna()
     expected_speed = np.hypot(mock_df.loc[valid_speed, "ball_vx"], mock_df.loc[valid_speed, "ball_vy"])
     np.testing.assert_allclose(mock_df.loc[valid_speed, "ball_speed"], expected_speed, rtol=1e-5)
 
-    # Onde ha ball_dir_change finito, deve estar no intervalo [0, pi]
+    # Where ball_dir_change is finite, it must lie in [0, pi]
     valid_dc = mock_df["ball_dir_change"].notna()
     dc_vals = mock_df.loc[valid_dc, "ball_dir_change"]
     assert (dc_vals >= 0.0).all()
     assert (dc_vals <= np.pi + 1e-4).all()
 
-    # Se ball_speed < MIN_BALL_SPEED_DIR (1.0 m/s), dir_change deve ser NaN
+    # If ball_speed < MIN_BALL_SPEED_DIR (1.0 m/s), dir_change must be NaN
     slow = valid_speed & (mock_df["ball_speed"] < MIN_BALL_SPEED_DIR)
     assert mock_df.loc[slow, "ball_dir_change"].isna().all()
 
 
 def test_proximity_relative_speed_and_pitch_contract(mock_df: pd.DataFrame, master_path: str | None):
-    """Valida NaN sem bola, monotonia geometrica de n_*_r*, velocidade relativa e out_of_pitch."""
+    """Validate NaN without a ball, geometric monotonicity of n_*_r*, relative speed and out_of_pitch."""
     has_ball = (mock_df["ball_observed"] == 1) | (mock_df["ball_filled"] == 1)
 
     prox_cols = [
@@ -281,7 +281,7 @@ def test_proximity_relative_speed_and_pitch_contract(mock_df: pd.DataFrame, mast
     for col in prox_cols:
         assert mock_df.loc[~has_ball, col].isna().all(), f"Coluna {col} deveria ser NaN sem bola"
 
-    # Velocidade relativa e radial exigem velocidade observada da bola (NaN sem bola ou ball_filled == 1)
+    # Relative and radial speeds require observed ball velocity (NaN without a ball or when ball_filled == 1)
     no_ball_vel = mock_df["ball_vx"].isna() | mock_df["ball_vy"].isna()
     for col in ("speed_rel_home", "speed_rel_away", "speed_radial_home", "speed_radial_away"):
         assert mock_df.loc[no_ball_vel, col].isna().all(), f"Coluna {col} deve ser NaN sem velocidade observada da bola"
@@ -310,7 +310,7 @@ def test_proximity_relative_speed_and_pitch_contract(mock_df: pd.DataFrame, mast
         atol=1e-5,
     )
 
-    # out_of_pitch pertence a {0, 1, NaN} e bate com d_touchline / d_goalline
+    # out_of_pitch belongs to {0, 1, NaN} and matches d_touchline / d_goalline
     oop_valid = mock_df.loc[has_ball, "out_of_pitch"]
     assert set(oop_valid.unique()).issubset({0.0, 1.0})
     if master_path is None:
@@ -327,10 +327,10 @@ def test_proximity_relative_speed_and_pitch_contract(mock_df: pd.DataFrame, mast
 
 
 def test_set_pieces_contract(mock_df: pd.DataFrame, master_path: str | None):
-    """Valida contrato de set pieces, sp_team ('H', 'A', 'U') e distancias limitadas a cada tempo."""
+    """Validate the set-piece contract, sp_team ('H', 'A', 'U'), and distances scoped to each half."""
     is_sp = mock_df["is_set_piece"]
 
-    # Quando is_set_piece == True, sp_team deve ser 'H', 'A' ou 'U', e sp_type um tipo valido do XML
+    # When is_set_piece == True, sp_team must be 'H', 'A' or 'U', and sp_type a valid XML type
     assert set(mock_df.loc[is_sp, "sp_type"].unique()).issubset(VALID_SP_TYPES)
     if master_path is None:
         assert set(mock_df.loc[is_sp, "sp_type"].unique()) == VALID_SP_TYPES
@@ -338,11 +338,11 @@ def test_set_pieces_contract(mock_df: pd.DataFrame, master_path: str | None):
             assert mock_df.loc[kick_f, "sp_type"] == "kick off (start)", f"Kickoff do {h}o tempo fora da janela da tag"
     assert set(mock_df.loc[is_sp, "sp_team"].unique()).issubset({"H", "A", "U"})
 
-    # Quando is_set_piece == False, sp_team e sp_type devem ser vazios
+    # When is_set_piece == False, sp_team and sp_type must be empty
     assert (mock_df.loc[~is_sp, "sp_type"] == "").all()
     assert (mock_df.loc[~is_sp, "sp_team"] == "").all()
 
-    # Valida next_sp_type / prev_sp_type em relacao a frames_to_next_sp / frames_since_sp_end
+    # Validate next_sp_type / prev_sp_type against frames_to_next_sp / frames_since_sp_end
     has_next = mock_df["frames_to_next_sp"].notna()
     assert set(mock_df.loc[has_next, "next_sp_type"].unique()).issubset(VALID_SP_TYPES)
     assert (mock_df.loc[~has_next, "next_sp_type"] == "").all()
@@ -353,7 +353,7 @@ def test_set_pieces_contract(mock_df: pd.DataFrame, master_path: str | None):
     assert (mock_df.loc[~has_prev, "prev_sp_type"] == "").all()
     assert (mock_df.loc[has_prev, "frames_since_sp_end"] >= 0.0).all()
 
-    # Isolamento por tempo e sem off-by-one no fim de cada set piece
+    # Per-half isolation and no off-by-one at the end of each set piece
     for _, f0, f1 in half_video_blocks(GAME):
         sub = mock_df.loc[f0:f1]
         sp_mask = sub["is_set_piece"].to_numpy()
@@ -380,28 +380,28 @@ def test_set_pieces_contract(mock_df: pd.DataFrame, master_path: str | None):
 
 
 def test_pre_kickoff_segment(mock_df: pd.DataFrame):
-    """Valida segmento pre_kickoff (2.934 frames antes do kickoff do 2o tempo: 110808..113741)."""
+    """Validate the pre_kickoff segment (2,934 frames before the 2nd-half kickoff: 110808..113741)."""
     blocks = half_video_blocks(GAME)
     f0_2 = blocks[1][1]  # 110808
     kickoff_2 = KICKOFF_FALLBACK[2]  # 113742
 
-    # 110808..113741 deve ser True
+    # 110808..113741 must be True
     pre_sub = mock_df.loc[f0_2:kickoff_2 - 1, "pre_kickoff"]
     assert len(pre_sub) == 2934
     assert pre_sub.all()
 
-    # Durante pre_kickoff nao deve haver set pieces alem da abertura da janela de kick off (start)
+    # During pre_kickoff there must be no set pieces beyond the kick-off (start) window opening
     assert set(mock_df.loc[f0_2:kickoff_2 - 1, "sp_type"].unique()).issubset({"", "kick off (start)"})
 
-    # Apos o pontape inicial no 2o tempo deve ser False
+    # After the 2nd-half kickoff it must be False
     assert (mock_df.loc[kickoff_2:blocks[1][2], "pre_kickoff"] == False).all()
 
-    # No 1o tempo deve ser False (kickoff coincide com f0 = 11185)
+    # In the 1st half it must be False (kickoff coincides with f0 = 11185)
     assert (mock_df.loc[blocks[0][1]:blocks[0][2], "pre_kickoff"] == False).all()
 
 
 def test_determinism_and_parquet_hash(tmp_path):
-    """Valida que duas execucoes com a mesma seed produzem DataFrames e Parquets com hash SHA-256 identico."""
+    """Validate that two runs with the same seed produce DataFrames and Parquets with identical SHA-256 hashes."""
     p1 = str(tmp_path / "run1.parquet")
     p2 = str(tmp_path / "run2.parquet")
 
@@ -423,14 +423,14 @@ def test_determinism_and_parquet_hash(tmp_path):
 
 
 def test_parquet_metadata_roundtrip(tmp_path):
-    """Valida salvamento em Parquet com metadata schema_version = '1.0' e recarga integra."""
+    """Validate Parquet save with schema_version = '1.0' metadata and a faithful reload."""
     out_file = str(tmp_path / "mock_test.parquet")
     df = generate_mock_master(game=GAME, seed=42, include_optional=True)
 
     save_mock_master(df, out_file, schema_version=SCHEMA_VERSION)
     assert os.path.exists(out_file)
 
-    # Le metadados pyarrow
+    # Read pyarrow metadata
     parquet_file = pq.ParquetFile(out_file)
     meta = parquet_file.schema_arrow.metadata or {}
     assert b"schema_version" in meta

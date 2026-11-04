@@ -1,4 +1,4 @@
-"""Compara o time por slot do kloppy com team_of_each_track (só agregados)."""
+"""Compare kloppy per-slot team with team_of_each_track (aggregates only)."""
 import re
 import sys
 from pathlib import Path
@@ -17,7 +17,7 @@ ds = metrica.load_tracking_epts(meta_data=str(paths["atd_meta"]),
 
 ours = np.asarray(team_of_each_track(paths["atd_meta"]))  # 0 = Home, 1 = Away
 
-# kloppy: id numérico do jogador -> 0 (home) ou 1 (away)
+# kloppy: numeric player id -> 0 (home) or 1 (away)
 kloppy_team = {}
 for team in ds.metadata.teams:
     code = 0 if "home" in str(team.ground).lower() else 1

@@ -1,8 +1,8 @@
-"""Concordância slot a slot entre o time do XML e a metade ocupada no saque inicial.
+"""Slot-by-slot agreement between the XML team and the half occupied at kickoff.
 
-Usa o tracking já orientado (Home atacando em x crescente), então no saque o Home
-deve estar em x < metade do campo e o Away em x > metade, nos dois tempos.
-Saída: só contagens e proporções.
+Uses already-oriented tracking (Home attacking toward increasing x), so at kickoff Home
+should be at x < midfield and Away at x > midfield, in both halves.
+Output: counts and proportions only.
 """
 import sys
 from pathlib import Path
@@ -15,13 +15,13 @@ import pandas as pd
 from preprocessing.params import PITCH_L
 from preprocessing.prep_tracking import _kickoff_frames
 
-WINDOW = 25        # frames de cada lado do saque (~1 s de cada lado)
-MARGIN = 3.0       # ignora slots a menos de 3 m da linha do meio
+WINDOW = 25        # frames on each side of kickoff (~1 s each side)
+MARGIN = 3.0       # ignore slots within 3 m of the halfway line
 MID = PITCH_L / 2
 
 data = pd.read_parquet("data/processed/tracking_clean.parquet")
 home = pd.read_parquet("data/processed/slot_teams.parquet").is_home.to_numpy()
-kickoffs = _kickoff_frames()  # kickoffs.json se existir; senão o fallback publicado
+kickoffs = _kickoff_frames()  # kickoffs.json if present; otherwise the published fallback
 
 print("slots Home no XML:", int(home.sum()), "| Away:", int((~home).sum()))
 
@@ -32,8 +32,8 @@ for half in (1, 2):
 
     observed = np.isfinite(x)
     usable = observed & (np.abs(x - MID) > MARGIN)
-    in_low_half = x < MID                      # metade de x menor
-    agree = in_low_half == home                # Home deve estar em x menor
+    in_low_half = x < MID                      # lower-x half
+    agree = in_low_half == home                # Home should be on the lower-x side
 
     n = int(usable.sum())
     print(f"\ntempo {half}")

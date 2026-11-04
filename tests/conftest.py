@@ -1,4 +1,4 @@
-"""Configuracao compartilhada do pytest para a suite de testes de pre-processamento."""
+"""Shared pytest configuration for the preprocessing test suite."""
 from __future__ import annotations
 
 import os
@@ -12,7 +12,7 @@ if ROOT_DIR not in sys.path:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Registra a opcao --master para validar tanto o mock quanto o master_features.parquet real."""
+    """Register the --master option to validate either the mock or a real master_features.parquet."""
     parser.addoption(
         "--master",
         action="store",

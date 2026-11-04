@@ -1,17 +1,17 @@
-"""A4: checagem de formato do ATD + calibração sintética do preditor de reaquisição.
+"""A4: ATD format check + synthetic calibration of the reacquisition predictor.
 
-Rodar da raiz do repositório:  python analysis/slot_team_format_check.py
+Run from the repository root:  python analysis/slot_team_format_check.py
 
-REGRAS: saída apenas agregada (estrutura, contagens, proporções). Nenhum valor
-do TXT, nenhum ID de jogador, nenhuma coordenada é impresso. Não altera o repositório.
-Seeds fixas.
+RULES: aggregated output only (structure, counts, proportions). No raw
+TXT values, player IDs, or coordinates are printed. Does not modify the repository.
+Fixed seeds.
 
-Partes
-  A. TXT: nº de campos por grupo (slots e bola), grupos por linha, grupos vazios.
-  B. XML: estrutura de canais, atributos de <Player>, ordem de canais vs <Player>.
-  C. kloppy vs team_of_each_track: quantos slots divergem.
-  D. Sintético: acerto esperado do preditor de reaquisição com rótulos CORRETOS
-     sob marcação individual e cobertura ~45% (referência para os 66,4% reais).
+Parts
+  A. TXT: field count per group (slots and ball), groups per line, empty groups.
+  B. XML: channel structure, <Player> attributes, channel order vs <Player>.
+  C. kloppy vs team_of_each_track: how many slots diverge.
+  D. Synthetic: expected accuracy of the reacquisition predictor with CORRECT labels
+     under individual marking and ~45% coverage (reference for the real 66.4%).
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _strip(tag: str) -> str:
 
 
 def _shape(text: str) -> str:
-    """Generaliza um identificador (dígitos -> #) para não expor IDs."""
+    """Generalize an identifier (digits -> #) so IDs are not exposed."""
     return re.sub(r"\d+", "#", str(text))
 
 
@@ -46,7 +46,7 @@ def check_txt(raw_path) -> dict:
         lines = [ln for ln in fh if ln.strip()]
     rng = np.random.default_rng(SEED)
     idx = np.sort(rng.choice(len(lines), size=min(N_SAMPLE_LINES, len(lines)), replace=False))
-    # garante início, meio e fim na amostra
+    # ensure start, middle and end are in the sample
     idx = np.unique(np.r_[0, len(lines) // 2, len(lines) - 1, idx])
 
     top_fields = Counter()
@@ -100,7 +100,7 @@ def check_xml(meta_path) -> dict:
     player_attr_names = sorted({a for p in players for a in p.attrib})
     teams = [e for e in root.iter() if _strip(e.tag) == "Team"]
 
-    # canais declarados (estrutura apenas)
+    # declared channels (structure only)
     channel_elems = [e for e in root.iter() if "Channel" in _strip(e.tag)]
     channel_tag_counts = Counter(_strip(e.tag) for e in channel_elems)
     channel_attr_names = sorted({a for e in channel_elems for a in e.attrib})
@@ -109,7 +109,7 @@ def check_xml(meta_path) -> dict:
         for e in channel_elems
     )
 
-    # ordem de aparição dos números de jogador nos canais (ex.: player12_x)
+    # appearance order of player numbers in the channels (e.g. player12_x)
     order_in_channels, seen = [], set()
     for e in channel_elems:
         for v in e.attrib.values():
@@ -158,7 +158,7 @@ def check_xml(meta_path) -> dict:
             sum(1 for a, b in zip(order_in_channels[:n], numeric_ids[:n]) if a != b)
         )
     else:
-        result["channel_order_matches_player_order"] = None  # não determinável por este parser
+        result["channel_order_matches_player_order"] = None  # not determinable by this parser
     return result
 
 
@@ -180,7 +180,7 @@ def check_kloppy(meta_path, raw_path) -> dict:
             for pl in team.players:
                 pid_to_team[str(pl.player_id)] = t_idx
 
-        # ordem dos slots como o kloppy expõe no DataFrame
+        # slot order as kloppy exposes it in the DataFrame
         cols = [c for c in ds.to_df().columns if c.endswith("_x") and c != "ball_x"]
         slot_ids = [c[:-2] for c in cols]
         kl = np.array([pid_to_team.get(s, -1) for s in slot_ids])
@@ -197,17 +197,17 @@ def check_kloppy(meta_path, raw_path) -> dict:
              if c not in ("frame_id", "timestamp", "period_id", "ball_state", "ball_owning_team")}
             - {"x", "y", "s", "z", "d"}
         )[:10]
-    except Exception as exc:  # diagnóstico: reportar tipo, não conteúdo
+    except Exception as exc:  # diagnostics: report type, not content
         out["error"] = type(exc).__name__
         out["error_msg_head"] = str(exc)[:120]
     return out
 
 
 # ----------------------------------------------------------------------------
-# D. Calibração sintética do preditor de reaquisição
+# D. Synthetic calibration of the reacquisition predictor
 # ----------------------------------------------------------------------------
 def _simulate_frame(rng, coverage=0.45, mark_dist=(1.5, 4.0)):
-    """Dois times de 11 (22 slots), marcação individual, cobertura parcial."""
+    """Two teams of 11 (22 slots), individual marking, partial coverage."""
     # time A (0) e B (1); cada B marca um A a 1.5-4 m
     ax = rng.uniform(15, 80, 11)
     ay = rng.uniform(5, 63, 11)
@@ -217,7 +217,7 @@ def _simulate_frame(rng, coverage=0.45, mark_dist=(1.5, 4.0)):
     x = np.r_[ax, bx]
     y = np.r_[ay, by]
     team = np.r_[np.zeros(11, int), np.ones(11, int)]
-    obs = rng.random(22) < coverage * 22 / 20.5  # ~20 objetos observados por frame em 46 slots
+    obs = rng.random(22) < coverage * 22 / 20.5  # ~20 observed objects per frame in 46 slots
     return x, y, team, obs
 
 
@@ -263,10 +263,10 @@ def main():
         "B_xml": check_xml(paths["atd_meta"]),
         "C_kloppy": check_kloppy(paths["atd_meta"], paths["atd_raw"]),
         "D_synthetic_reacquisition_calibration": synthetic_calibration(),
-        "note": ("Compare o acerto real (66,4%) com 'labels=correct' (mesma configuração do "
-                 "script real: exclude_self=False). Se o acerto sintético com rótulos corretos "
-                 "ficar perto do real, o XML é compatível com estar certo. exclude_self=False "
-                 "infla o acerto (o próprio slot entra na mediana do seu time)."),
+        "note": ("Compare the real accuracy (66.4%) with 'labels=correct' (same setup as the "
+                 "real script: exclude_self=False). If synthetic accuracy with correct labels "
+                 "is close to the real one, the XML is consistent with being correct. exclude_self=False "
+                 "inflates accuracy (the slot itself enters its team median)."),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
 

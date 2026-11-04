@@ -1,10 +1,10 @@
-"""Gerador do master_features_mock.parquet (100% sintetico).
+"""Generator for master_features_mock.parquet (100% synthetic).
 
-Gera um DataFrame deterministico respeitando integralmente o contrato congelado
-v1.0 (SCHEMA.md e preprocessing/schema.py: master_columns()), para permitir
-desenvolvimento, validacao e testes dos modelos antes da entrega do master real.
+Builds a deterministic DataFrame that fully respects the frozen v1.0 contract
+(SCHEMA.md and preprocessing/schema.py: master_columns()), so models can be
+developed, validated, and tested before the real master is available.
 
-Saida padrao: data/processed/master_features_mock.parquet
+Default output: data/processed/master_features_mock.parquet
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ except ImportError:
 
 
 def _gap_features(obs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Calcula gap_length, since_last_obs e until_next_obs para um vetor booleano de observacoes."""
+    """Compute gap_length, since_last_obs and until_next_obs for a boolean observation mask."""
     n = len(obs)
     idx = np.arange(n)
     last = np.maximum.accumulate(np.where(obs, idx, -1))
@@ -69,7 +69,7 @@ def _gap_features(obs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def _generate_ball_mask(half_len: int, rng: np.random.Generator) -> np.ndarray:
-    """Gera mascara booleana de bola observada (~41% ausente em lacunas realistas)."""
+    """Build a boolean ball-observed mask (~41% missing in realistic gaps)."""
     obs = np.ones(half_len, dtype=bool)
     pos = int(rng.integers(15, 45))
     while pos < half_len - 50:
@@ -77,7 +77,7 @@ def _generate_ball_mask(half_len: int, rng: np.random.Generator) -> np.ndarray:
         pos += obs_len
         if pos >= half_len - 50:
             break
-        # 60% lacunas curtas (1..12 frames), 40% lacunas longas (13..84 frames)
+        # 60% short gaps (1..12 frames), 40% long gaps (13..84 frames)
         if rng.random() < 0.60:
             gap_len = int(rng.integers(1, 13))
         else:
@@ -90,11 +90,11 @@ def _generate_ball_mask(half_len: int, rng: np.random.Generator) -> np.ndarray:
 
 def _smooth_trajectory(n: int, rng: np.random.Generator, x_bounds: tuple[float, float],
                        y_bounds: tuple[float, float]) -> tuple[np.ndarray, np.ndarray]:
-    """Gera trajetoria suave em 2D contida nos limites informados."""
+    """Generate a smooth 2D trajectory inside the given bounds."""
     steps_x = rng.normal(0.0, 0.35, size=n)
     steps_y = rng.normal(0.0, 0.30, size=n)
 
-    # Adiciona tendencia leve para o centro do campo
+    # Add a light drift toward the centre of the pitch
     cx = (x_bounds[0] + x_bounds[1]) / 2.0
     cy = (y_bounds[0] + y_bounds[1]) / 2.0
 
@@ -118,7 +118,7 @@ def generate_mock_master(
     seed: int = 42,
     include_optional: bool = True,
 ) -> pd.DataFrame:
-    """Gera o master_features 100% sintetico e deterministico conforme contrato do schema.py."""
+    """Generate a fully synthetic, deterministic master_features table per schema.py."""
     rng = np.random.default_rng(seed)
 
     game_cfg = GAMES.get(game, {})
@@ -127,7 +127,7 @@ def generate_mock_master(
     pitch_l, pitch_w = game_cfg.get("pitch", (PITCH_L, PITCH_W))
     blocks = half_video_blocks(game) if game in GAMES else [(1, 11185, 90651), (2, 110808, 190197)]
 
-    # Colunas de indice
+    # Index columns
     video_frame = np.arange(n_frames, dtype=np.int32)
     half = np.zeros(n_frames, dtype=np.int8)
     frame_in_half = np.full(n_frames, np.nan, dtype=np.float32)
@@ -138,7 +138,7 @@ def generate_mock_master(
 
     is_graded = half != 0
 
-    # Inicializa arrays da bola e confianca
+    # Initialise ball and confidence arrays
     ball_observed = np.zeros(n_frames, dtype=np.int8)
     ball_jump_removed = np.zeros(n_frames, dtype=np.int8)
     ball_filled = np.zeros(n_frames, dtype=np.int8)
@@ -154,7 +154,7 @@ def generate_mock_master(
     ball_acc = np.full(n_frames, np.nan, dtype=np.float32)
     ball_dir_change = np.full(n_frames, np.nan, dtype=np.float32)
 
-    # Inicializa arrays de times
+    # Initialise team arrays
     centroid_home_x = np.full(n_frames, np.nan, dtype=np.float32)
     centroid_home_y = np.full(n_frames, np.nan, dtype=np.float32)
     centroid_away_x = np.full(n_frames, np.nan, dtype=np.float32)
@@ -170,7 +170,7 @@ def generate_mock_master(
     n_tracked_home = np.full(n_frames, np.nan, dtype=np.float32)
     n_tracked_away = np.full(n_frames, np.nan, dtype=np.float32)
 
-    # Proximidade
+    # Proximity
     d_near_home = np.full(n_frames, np.nan, dtype=np.float32)
     d_near_away = np.full(n_frames, np.nan, dtype=np.float32)
     d_diff = np.full(n_frames, np.nan, dtype=np.float32)
@@ -183,18 +183,18 @@ def generate_mock_master(
     pressure_home = np.full(n_frames, np.nan, dtype=np.float32)
     pressure_away = np.full(n_frames, np.nan, dtype=np.float32)
 
-    # Velocidade relativa
+    # Relative velocity
     speed_rel_home = np.full(n_frames, np.nan, dtype=np.float32)
     speed_rel_away = np.full(n_frames, np.nan, dtype=np.float32)
     speed_radial_home = np.full(n_frames, np.nan, dtype=np.float32)
     speed_radial_away = np.full(n_frames, np.nan, dtype=np.float32)
 
-    # Campo
+    # Pitch
     out_of_pitch = np.full(n_frames, np.nan, dtype=np.float32)
     d_touchline = np.full(n_frames, np.nan, dtype=np.float32)
     d_goalline = np.full(n_frames, np.nan, dtype=np.float32)
 
-    # Set pieces e fases
+    # Set pieces and phases
     is_set_piece = np.zeros(n_frames, dtype=bool)
     sp_type = np.full(n_frames, "", dtype=object)
     sp_team = np.full(n_frames, "", dtype=object)
@@ -209,19 +209,19 @@ def generate_mock_master(
     pre_kickoff = np.zeros(n_frames, dtype=bool)
     reproj_error = np.full(n_frames, np.nan, dtype=np.float32)
 
-    # Set piece types pool
+    # Set-piece type pool
     sp_pool = [
         "throw-in", "corner kick", "goal kick", "free kick",
         "kick off (after goal)", "throw-in", "corner kick", "goal kick"
     ]
     sp_team_pool = ["H", "A", "U", "H", "A"]
 
-    # Processa cada tempo independentemente
+    # Process each half independently
     for h, f0, f1 in blocks:
         half_len = f1 - f0 + 1
         sl = slice(f0, f1 + 1)
 
-        # 1. Bola e confianca
+        # 1. Ball and confidence
         obs = _generate_ball_mask(half_len, rng)
         gl, st, un = _gap_features(obs)
 
@@ -230,19 +230,19 @@ def generate_mock_master(
         until_next_obs[sl] = un
         ball_observed[sl] = obs.astype(np.int8)
 
-        # Lacunas curtas interpoladas (MAX_GAP_FRAMES = 12)
+        # Short gaps interpolated (MAX_GAP_FRAMES = 12)
         filled = np.zeros(half_len, dtype=np.int8)
-        # Interpola apenas lacunas internas com gap <= MAX_GAP_FRAMES
+        # Interpolate only interior gaps with length <= MAX_GAP_FRAMES
         changes = np.flatnonzero(np.diff(np.r_[True, obs, True].astype(np.int8)))
         for a, b in zip(changes[::2], changes[1::2]):
             g_len = b - a
-            # Verifica se esta entre observacoes validas (nao no inicio nem no fim do tempo)
+            # Require valid observations on both sides (not at the start or end of the half)
             if g_len <= MAX_GAP_FRAMES and a > 0 and b < half_len:
                 filled[a:b] = 1
 
         ball_filled[sl] = filled
 
-        # Pequena fracao de jump outliers removidos em lacunas nao preenchidas
+        # Small fraction of jump outliers removed in unfilled gaps
         unfilled_gaps = np.flatnonzero(~obs & (filled == 0))
         if len(unfilled_gaps) > 0:
             jump_cnt = max(1, int(len(unfilled_gaps) * 0.003))
@@ -251,7 +251,7 @@ def generate_mock_master(
             jump_arr[jump_idx] = 1
             ball_jump_removed[sl] = jump_arr
 
-        # Trajetoria da bola (com breves excursoes fora das linhas para exercitar out_of_pitch == 1)
+        # Ball trajectory (with brief excursions outside the lines to exercise out_of_pitch == 1)
         has_ball = obs | (filled == 1)
         raw_bx, raw_by = _smooth_trajectory(half_len, rng, (3.0, pitch_l - 3.0), (3.0, pitch_w - 3.0))
         for frac, bx_out, by_out in (
@@ -272,7 +272,7 @@ def generate_mock_master(
         ball_x[sl] = cur_bx
         ball_y[sl] = cur_by
 
-        # Derivadas: estritamente sobre segmentos observados (ball_filled == 0 e obs == 1)
+        # Derivatives: strictly on observed segments (ball_filled == 0 and obs == 1)
         cur_bvx = np.full(half_len, np.nan, dtype=np.float32)
         cur_bvy = np.full(half_len, np.nan, dtype=np.float32)
         cur_bspeed = np.full(half_len, np.nan, dtype=np.float32)
@@ -310,7 +310,7 @@ def generate_mock_master(
         ball_acc[sl] = cur_bacc
         ball_dir_change[sl] = cur_bdir
 
-        # 2. Times (centroides e dispersoes)
+        # 2. Teams (centroids and spreads)
         c_hx, c_hy = _smooth_trajectory(half_len, rng, (25.0, 65.0), (25.0, 43.0))
         c_ax, c_ay = _smooth_trajectory(half_len, rng, (40.0, 80.0), (25.0, 43.0))
 
@@ -331,14 +331,14 @@ def generate_mock_master(
         n_tracked_home[sl] = rng.integers(10, 12, size=half_len).astype(np.float32)
         n_tracked_away[sl] = rng.integers(10, 12, size=half_len).astype(np.float32)
 
-        # 3. Proximidade (definidas apenas onde has_ball e True)
+        # 3. Proximity (defined only where has_ball is True)
         d_h = rng.uniform(0.5, 7.5, size=half_len).astype(np.float32)
         d_a = rng.uniform(0.5, 7.5, size=half_len).astype(np.float32)
         d_near_home[sl] = np.where(has_ball, d_h, np.nan)
         d_near_away[sl] = np.where(has_ball, d_a, np.nan)
         d_diff[sl] = np.where(has_ball, d_h - d_a, np.nan)
 
-        # Contagens de jogadores ao redor da bola (coerentes com d_near_*; NaN sem bola)
+        # Player counts around the ball (consistent with d_near_*; NaN without a ball)
         r2_h = np.where(d_h < 2.0, 1.0 + rng.integers(0, 2, half_len), 0.0).astype(np.float32)
         r3_h = np.where(d_h < 3.0, np.maximum(r2_h, 1.0) + rng.integers(0, 2, half_len), 0.0).astype(np.float32)
         r5_h = np.where(d_h < 5.0, np.maximum(r3_h, 1.0) + rng.integers(0, 3, half_len), 0.0).astype(np.float32)
@@ -359,7 +359,7 @@ def generate_mock_master(
         pressure_home[sl] = np.where(has_ball, press_h, np.nan).astype(np.float32)
         pressure_away[sl] = np.where(has_ball, press_a, np.nan).astype(np.float32)
 
-        # 4. Velocidade relativa (apenas onde velocidade observada da bola existe)
+        # 4. Relative velocity (only where observed ball velocity exists)
         valid_bvel = np.isfinite(cur_bvx)
         v_rel_h = rng.uniform(0.5, 12.0, size=half_len).astype(np.float32)
         v_rel_a = rng.uniform(0.5, 12.0, size=half_len).astype(np.float32)
@@ -368,7 +368,7 @@ def generate_mock_master(
         speed_radial_home[sl] = np.where(valid_bvel, rng.uniform(-10.0, 10.0, size=half_len), np.nan)
         speed_radial_away[sl] = np.where(valid_bvel, rng.uniform(-10.0, 10.0, size=half_len), np.nan)
 
-        # 5. Campo
+        # 5. Pitch
         oop = ((cur_bx < -PITCH_MARGIN) | (cur_bx > pitch_l + PITCH_MARGIN) |
                (cur_by < -PITCH_MARGIN) | (cur_by > pitch_w + PITCH_MARGIN)).astype(np.float32)
         out_of_pitch[sl] = np.where(has_ball, oop, np.nan)
@@ -377,10 +377,10 @@ def generate_mock_master(
         d_touchline[sl] = np.where(has_ball, d_touch, np.nan)
         d_goalline[sl] = np.where(has_ball, d_goal, np.nan)
 
-        # 6. Set pieces (calculados estritamente por tempo; apos o pontape inicial de cada tempo)
+        # 6. Set pieces (computed strictly per half; after each half kickoff)
         events_half: list[tuple[int, int, str, str]] = []
         kick_frame = min(max(int(KICKOFF_FALLBACK.get(h, f0)), f0), f1)
-        # Janela da tag Kick Off (Start) contem kick_frame (start_frame <= kick_frame < end_frame)
+        # Kick Off (Start) tag window contains kick_frame (start_frame <= kick_frame < end_frame)
         kick_start = max(f0, kick_frame - int(rng.integers(50, 85)))
         kick_end = min(kick_frame + int(rng.integers(40, 75)), f1)
         events_half.append((kick_start, kick_end, "kick off (start)", "H" if h == 1 else "A"))
@@ -400,7 +400,7 @@ def generate_mock_master(
             sp_team[ev_start:ev_end] = tm_name
 
         sp_starts = np.array([ev[0] for ev in events_half], dtype=int)
-        # ev[1] e exclusivo na fatia [ev_start, ev_end); ultimo frame ativo e ev[1] - 1
+        # ev[1] is exclusive in the [ev_start, ev_end) slice; last active frame is ev[1] - 1
         sp_ends = np.array([ev[1] - 1 for ev in events_half], dtype=int)
 
         frames_half = np.arange(f0, f1 + 1)
@@ -420,22 +420,22 @@ def generate_mock_master(
             if ok:
                 prev_sp_type[f0 + i_local] = events_half[idx_prev[i_local]][2]
 
-        # 7. Fases (0..3 fases ativas)
+        # 7. Phases (0..3 active phases)
         n_tags_favor_home[sl] = rng.integers(0, 3, size=half_len, dtype=np.int16)
         n_tags_favor_away[sl] = rng.integers(0, 3, size=half_len, dtype=np.int16)
 
-        # 8. Homografia opcional
+        # 8. Optional homography
         reproj_error[sl] = rng.normal(1.2, 0.25, size=half_len).clip(0.3, 4.0).astype(np.float32)
 
-    # 9. Pontape inicial: frames avaliados antes do kickoff do 2o tempo (2.934 frames)
-    # No 2o tempo: f0 = 110808 ate kickoff 113742
+    # 9. Kickoff: graded frames before the 2nd-half kickoff (2,934 frames)
+    # In the 2nd half: f0 = 110808 until kickoff 113742
     kickoff_2 = KICKOFF_FALLBACK.get(2, 113742)
     if len(blocks) >= 2:
         f0_2 = blocks[1][1]
         if kickoff_2 > f0_2:
             pre_kickoff[f0_2:kickoff_2] = True
 
-    # Monta DataFrame na ordem exata de master_columns()
+    # Build DataFrame in the exact master_columns() order
     cols_order = master_columns(include_optional=include_optional)
     data = {}
 
@@ -519,7 +519,7 @@ def save_mock_master(
     output_path: str,
     schema_version: str = SCHEMA_VERSION,
 ) -> None:
-    """Salva o DataFrame mock em formato Parquet com os metadados do schema."""
+    """Save the mock DataFrame as Parquet with schema metadata."""
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     table = pa.Table.from_pandas(df, preserve_index=False)
     existing_meta = table.schema.metadata or {}
@@ -529,7 +529,7 @@ def save_mock_master(
 
 
 def default_mock_path(data_dir: str | None = None) -> str:
-    """Retorna o caminho padrao do mock: data/processed/master_features_mock.parquet."""
+    """Return the default mock path: data/processed/master_features_mock.parquet."""
     root = data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"
     )
