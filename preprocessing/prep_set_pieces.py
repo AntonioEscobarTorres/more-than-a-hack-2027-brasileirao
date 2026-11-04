@@ -31,14 +31,18 @@ def build_set_piece_features(
         is_sp: boolean array of set piece phases.
         sp_type: object array (lowercase string, empty if none).
         sp_team: object array ('H', 'A', 'U' if SP; empty if none).
-        starts: array of start frames for each SP block.
-        ends: array of last active frames (end_frame - 1) for each SP block.
+        starts: array of start frames for each SP (one per event, not merged).
+        ends: array of last active frames (end_frame - 1) for each SP.
         sp_types: array of SP types corresponding to starts/ends.
     """
     is_sp = np.zeros(n_frames, dtype=bool)
     sp_type = np.full(n_frames, "", dtype=object)
     sp_team = np.full(n_frames, "", dtype=object)
     
+    # One entry per set piece slice (ca, cb) = [ca, cb). Set pieces are NOT merged: SCHEMA.md
+    # defines next/prev_sp_type per set piece, so a nested or back-to-back set piece keeps its
+    # own start, end and type (merging would hide e.g. a corner right after a throw-in).
+    sp_events = []
     for _, r in ev.iterrows():
         code = str(r["code"]).strip().upper()
         if code == "SET PIECES":
@@ -56,24 +60,26 @@ def build_set_piece_features(
             else:
                 slices = [(a, b)] if b > a else []
 
-            for ca, cb in slices:
-                is_sp[ca:cb] = True
-                sp_type[ca:cb] = typ
-                sp_team[ca:cb] = valid_team
+            sp_events.extend((ca, cb, typ, valid_team) for ca, cb in slices)
 
-    # Extract starts and ends directly from the boundaries of the consolidated boolean mask
-    edges = np.flatnonzero(np.diff(np.r_[False, is_sp, False].astype(np.int8)))
-    
-    if len(edges) > 0:
-        starts = edges[::2]
-        ends = edges[1::2] - 1
-        types = sp_type[starts]  # Predominant type at the start frame of the block
+    # Paint in a fixed order (start asc, end desc) so that where set pieces overlap the innermost
+    # one wins, independently of the order of the events in the XML.
+    sp_events.sort(key=lambda e: (e[0], -e[1], e[2], e[3]))
+    for ca, cb, typ, team in sp_events:
+        is_sp[ca:cb] = True
+        sp_type[ca:cb] = typ
+        sp_team[ca:cb] = team
+
+    if sp_events:
+        starts = np.asarray([ca for ca, _, _, _ in sp_events], dtype=int)
+        ends = np.asarray([cb - 1 for _, cb, _, _ in sp_events], dtype=int)  # last active frame
+        types = np.asarray([t for _, _, t, _ in sp_events], dtype=object)
     else:
         starts = np.array([], dtype=int)
         ends = np.array([], dtype=int)
         types = np.array([], dtype=object)
         
-    return is_sp, sp_type, sp_team, starts, ends, types 
+    return is_sp, sp_type, sp_team, starts, ends, types
 
 
 def distance_to_set_pieces(starts: np.ndarray, ends: np.ndarray, sp_types: np.ndarray,
