@@ -1,4 +1,4 @@
-"""Testes de slot_teams (A7 / issue #14). Somente dados sintéticos, seed fixa."""
+"""slot_teams tests (A7 / issue #14). Synthetic data only, fixed seed."""
 import numpy as np
 import pytest
 
@@ -16,7 +16,7 @@ def _team_ids(n_home=24):
 
 
 def _synthetic(team_ids, seed=0):
-    """Times em metades opostas; lados trocam no 2º tempo; bola ausente."""
+    """Teams on opposite halves; sides swap in the 2nd half; ball missing."""
     rng = np.random.default_rng(seed)
     players = np.full((T, N_SLOTS, 3), np.nan, dtype=np.float32)
     for s in range(N_SLOTS):
@@ -57,7 +57,7 @@ def test_is_home_matches_team_ids():
 
 
 def test_is_home_follows_non_contiguous_ids():
-    """O mapeamento deve seguir os ids, não assumir blocos contíguos."""
+    """Mapping must follow the ids; do not assume contiguous blocks."""
     rng = np.random.default_rng(1)
     ids = rng.permutation(_team_ids(23))
     _, st = _run(ids)
@@ -129,7 +129,7 @@ def test_read_atd_ignores_blank_lines_and_keeps_three_fields(tmp_path, monkeypat
 
 
 def test_team_of_each_track_reads_teamid_from_xml(tmp_path):
-    """XML sintético: 1º <Team> = Home (0), 2º = Away (1)."""
+    """Synthetic XML: 1st <Team> = Home (0), 2nd = Away (1)."""
     players = []
     for i in range(1, N_SLOTS + 1):
         team = "T1" if i <= 24 else "T2"

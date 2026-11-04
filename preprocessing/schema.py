@@ -1,14 +1,14 @@
-"""Contrato legivel por maquina do master_features.parquet. Espelha SCHEMA.md (versao 1.0).
+"""Machine-readable contract for master_features.parquet. Mirrors SCHEMA.md (version 1.0).
 
-Use este modulo no mock (make_mock_master.py), nos testes (tests/test_master_schema.py) e no
-build_master_table.py. Mudou o contrato? Atualize SCHEMA.md e este arquivo no mesmo PR.
-Somente biblioteca padrao (sem numpy/pandas).
+Use this module in the mock (make_mock_master.py), the tests (tests/test_master_schema.py), and
+build_master_table.py. Changed the contract? Update SCHEMA.md and this file in the same PR.
+Standard library only (no numpy/pandas).
 """
 from collections import OrderedDict
 
 from .params import N_FRAMES, SCHEMA_VERSION
 
-# grupo -> (dono, [(coluna, dtype)])   dtype = nome de dtype numpy/pandas
+# group -> (owner, [(column, dtype)])   dtype = numpy/pandas dtype name
 MASTER_GROUPS = OrderedDict([
     ("indice", ("D", [("video_frame", "int32"), ("half", "int8"), ("is_graded", "bool"),
                       ("frame_in_half", "float32")])),
@@ -36,12 +36,12 @@ MASTER_GROUPS = OrderedDict([
                           ("next_sp_type", "string"), ("prev_sp_type", "string")])),
     ("fases", ("C", [("n_tags_favor_home", "int16"), ("n_tags_favor_away", "int16")])),
     ("pontape", ("C", [("pre_kickoff", "bool")])),
-    ("homografia", ("C", [("reproj_error", "float32")])),   # opcional
+    ("homografia", ("C", [("reproj_error", "float32")])),   # optional
 ])
 
 OPTIONAL_COLUMNS = ("reproj_error",)
 
-# colunas que cada arquivo intermediario entrega (alem de video_frame e half)
+# columns each intermediate file delivers (besides video_frame and half)
 INTERMEDIATE_FILES = OrderedDict([
     ("proximities.parquet", ["proximidade", "velocidade_relativa", "campo"]),
     ("tagging.parquet", ["set_pieces", "fases", "pontape"]),
@@ -53,7 +53,7 @@ N_SLOTS = 46
 
 
 def master_columns(include_optional=True):
-    """Lista ordenada de (coluna, dtype) do master."""
+    """Ordered list of (column, dtype) for the master table."""
     cols = [c for _, (_, cs) in MASTER_GROUPS.items() for c in cs]
     if not include_optional:
         cols = [c for c in cols if c[0] not in OPTIONAL_COLUMNS]
@@ -65,7 +65,7 @@ def master_column_names(include_optional=True):
 
 
 def slot_columns(n_slots=N_SLOTS):
-    """Colunas por slot do tracking_clean.parquet: s01_x, s01_y, s01_vx, s01_vy, s01_break ..."""
+    """Per-slot columns of tracking_clean.parquet: s01_x, s01_y, s01_vx, s01_vy, s01_break ..."""
     return ["s%02d_%s" % (i, k) for i in range(1, n_slots + 1) for k in ("x", "y", "vx", "vy", "break")]
 
 
