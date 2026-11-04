@@ -118,8 +118,9 @@ def test_run_pipeline_homography_failure_is_optional(monkeypatch, tmp_path):
     assert calls == ["C", "C5", "A", "B", "D"]
 
 
-def test_two_full_runs_same_master_sha256(monkeypatch, tmp_path):
-    """Two complete pipeline runs must produce an identical master SHA-256."""
+def _stub_pipeline(monkeypatch, d_payload=lambda folder: _SYNTH_MASTER, homography=True):
+    """Stub every step with file-writing fakes; returns the list of folders D was run in."""
+    d_runs = []
 
     def stub_c(output_dir, blocks, exact_kickoff_frames=None, data_dir=None):
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -127,12 +128,14 @@ def test_two_full_runs_same_master_sha256(monkeypatch, tmp_path):
         (Path(output_dir) / "kickoffs.json").write_text("{}", encoding="utf-8")
 
     def stub_c5(output_dir, blocks, data_dir=None, n_frames=None):
+        if not homography:
+            raise FileNotFoundError("no homography.csv")
         (Path(output_dir) / "homography.parquet").write_bytes(b"hom")
 
     def stub_a(argv=None):
         argv = list(argv or [])
         out = Path(argv[argv.index("--output-dir") + 1])
-        out.mkdir(parents=True, exist_ok=True)
+        assert (out / "kickoffs.json").exists()          # C wrote it in the same folder A reads
         (out / "tracking_clean.parquet").write_bytes(b"trk")
         (out / "slot_teams.parquet").write_bytes(b"slt")
         return 0
@@ -146,12 +149,8 @@ def test_two_full_runs_same_master_sha256(monkeypatch, tmp_path):
     def stub_d(argv=None):
         argv = list(argv or [])
         folder = Path(argv[argv.index("--processed-dir") + 1])
-        master = folder / "master_features.parquet"
-        master.write_bytes(_SYNTH_MASTER)
-        if "--check-determinism" in argv:
-            second = folder / "master_features_second.parquet"
-            second.write_bytes(_SYNTH_MASTER)
-            assert file_sha256(master) == file_sha256(second)
+        d_runs.append(folder)
+        (folder / "master_features.parquet").write_bytes(d_payload(folder))
         return 0
 
     monkeypatch.setattr(
@@ -161,19 +160,45 @@ def test_two_full_runs_same_master_sha256(monkeypatch, tmp_path):
     monkeypatch.setattr("preprocessing.prep_tracking.main", stub_a)
     monkeypatch.setattr("preprocessing.prep_proximities.main", stub_b)
     monkeypatch.setattr("preprocessing.build_master_table.main", stub_d)
+    return d_runs
 
-    run1 = tmp_path / "run1"
-    run2 = tmp_path / "run2"
-    assert run_all.run_pipeline(
-        data_dir=str(tmp_path / "data"), processed_dir=str(run1)) == 0
-    assert run_all.run_pipeline(
-        data_dir=str(tmp_path / "data"), processed_dir=str(run2),
-        check_determinism=True) == 0
 
-    h1 = file_sha256(run1 / "master_features.parquet")
-    h2 = file_sha256(run2 / "master_features.parquet")
-    assert h1 == h2
-    assert len(h1) == 64
+def test_check_determinism_runs_the_whole_pipeline_twice(monkeypatch, tmp_path):
+    """--check-determinism re-runs C → D from scratch in another folder and compares SHA-256."""
+    d_runs = _stub_pipeline(monkeypatch)
+    out = tmp_path / "processed"
+    assert run_all.run_pipeline(
+        data_dir=str(tmp_path / "data"), processed_dir=str(out), check_determinism=True) == 0
+    assert len(d_runs) == 2 and d_runs[0] == out and d_runs[1] != out
+    assert file_sha256(out / "master_features.parquet") == hashlib.sha256(_SYNTH_MASTER).hexdigest()
+
+
+def test_check_determinism_fails_when_the_two_masters_differ(monkeypatch, tmp_path):
+    counter = iter(range(10))
+    _stub_pipeline(monkeypatch, d_payload=lambda folder: b"run-%d" % next(counter))
+    assert run_all.run_pipeline(
+        data_dir=str(tmp_path / "data"), processed_dir=str(tmp_path / "p"),
+        check_determinism=True) == 1
+
+
+def test_stale_homography_is_removed_when_c5_is_skipped(monkeypatch, tmp_path):
+    _stub_pipeline(monkeypatch)
+    out = tmp_path / "processed"
+    out.mkdir()
+    (out / "homography.parquet").write_bytes(b"old run")
+    assert run_all.run_pipeline(
+        data_dir=str(tmp_path / "data"), processed_dir=str(out), skip_homography=True) == 0
+    assert not (out / "homography.parquet").exists()
+
+
+def test_stale_homography_is_removed_when_c5_fails(monkeypatch, tmp_path):
+    _stub_pipeline(monkeypatch, homography=False)
+    out = tmp_path / "processed"
+    out.mkdir()
+    (out / "homography.parquet").write_bytes(b"old run")
+    assert run_all.run_pipeline(
+        data_dir=str(tmp_path / "data"), processed_dir=str(out)) == 0
+    assert not (out / "homography.parquet").exists()
 
 
 def test_main_cli_wires_flags(monkeypatch, tmp_path):

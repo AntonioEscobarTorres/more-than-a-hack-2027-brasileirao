@@ -114,7 +114,7 @@ Exact dependency pins live in `requirements-preprocessing.txt` so the repository
 the same file ([RULES.md](RULES.md)).
 
 ```bash
-# 1. Install (exact pins)
+# 1. Install (exact pins; Python 3.9–3.12)
 pip install -r requirements-preprocessing.txt
 
 # 2. Unpack the match assets into ./data (or export MTAH_DATA_DIR)
@@ -122,7 +122,7 @@ pip install -r requirements-preprocessing.txt
 # 3. Run the full pipeline: C → C5 → A(--stage V1) → B → D
 python -m preprocessing.run_all
 
-# Optional: rebuild the master twice and compare SHA-256
+# Optional: run the whole pipeline twice and compare the master SHA-256
 python -m preprocessing.run_all --check-determinism
 
 # 4. Validate the master against the frozen schema contract
