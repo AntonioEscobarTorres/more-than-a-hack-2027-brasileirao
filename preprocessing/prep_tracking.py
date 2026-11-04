@@ -36,14 +36,15 @@ def _data_root(data_dir=None):
         os.path.dirname(os.path.dirname(__file__)), "data")
 
 
-def _kickoff_frames(data_dir=None, required=False):
+def _kickoff_frames(data_dir=None, required=False, processed_dir=None):
     """Load C4 kickoff metadata and validate its exact frames against the tag windows.
 
     V0 can run without the C4 handoff and retains the published fallback. V1 requires
     the handoff so its orientation is tied to the validated kickoff file.
+    ``processed_dir`` is where export_tagging wrote kickoffs.json (default <data-dir>/processed).
     """
-    root = _data_root(data_dir)
-    path = os.path.join(root, "processed", "kickoffs.json")
+    folder = processed_dir or os.path.join(_data_root(data_dir), "processed")
+    path = os.path.join(folder, "kickoffs.json")
     if os.path.isfile(path):
         with open(path, encoding="utf-8") as stream:
             try:
@@ -774,13 +775,16 @@ def main(argv=None):
     parser.add_argument("--report-sensitivity", action="store_true",
                         help="run the optional eps/K ball-filter sensitivity report")
     args = parser.parse_args(argv)
+    root = _data_root(args.data_dir)
+    output_dir = args.output_dir or os.path.join(root, "processed")
     players, ball, teams = build(data_dir=args.data_dir)
     paths = asset_paths(game=GAME, data_dir=args.data_dir, source="tactical")
     # All 46 ATD slots belong to the two clubs. The flag means player vs
     # non-player and therefore includes goalkeepers for this match.
     is_field_player = np.ones(len(teams), dtype=bool)
     frame, slot_teams = prepare_tracking(players, ball, teams,
-                                         kickoffs=_kickoff_frames(args.data_dir, required=args.stage == "V1"),
+                                         kickoffs=_kickoff_frames(args.data_dir, required=args.stage == "V1",
+                                                                  processed_dir=output_dir),
                                          stage=args.stage, slot_is_field_player=is_field_player)
     if args.stage == "V1":
         _report_ball_quality(frame)
@@ -790,8 +794,6 @@ def main(argv=None):
         # Jump filtering is invariant to pitch reflection, so raw unoriented ball
         # coordinates produce the same keep/remove decisions as oriented coordinates.
         _report_filter_sensitivity(ball, half_video_blocks(GAME))
-    root = _data_root(args.data_dir)
-    output_dir = args.output_dir or os.path.join(root, "processed")
     os.makedirs(output_dir, exist_ok=True)
     _write_parquet_atomically(frame, os.path.join(output_dir, "tracking_clean.parquet"),
                               tracking_stage=args.stage)

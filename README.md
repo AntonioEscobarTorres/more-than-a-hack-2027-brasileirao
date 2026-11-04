@@ -107,6 +107,40 @@ Full description of every asset and how the frames line up: **[DATA.md](DATA.md)
 
 ---
 
+## How to run (preprocessing)
+
+Build `data/processed/master_features.parquet` from a fresh data bundle with one command.
+Exact dependency pins live in `requirements-preprocessing.txt` so the repository regenerates
+the same file ([RULES.md](RULES.md)).
+
+```bash
+# 1. Install (exact pins; Python 3.9–3.12)
+pip install -r requirements-preprocessing.txt
+
+# 2. Unpack the match assets into ./data (or export MTAH_DATA_DIR)
+
+# 3. Run the full pipeline: C → C5 → A(--stage V1) → B → D
+python -m preprocessing.run_all
+
+# Optional: run the whole pipeline twice and compare the master SHA-256
+python -m preprocessing.run_all --check-determinism
+
+# 4. Validate the master against the frozen schema contract
+pytest tests/test_master_schema.py --master data/processed/master_features.parquet
+```
+
+Without match data you can still exercise the contract with the synthetic mock:
+
+```bash
+python -m preprocessing.make_mock_master
+pytest tests/test_master_schema.py
+```
+
+Pipeline steps and algorithms: **[docs/preprocessamento_v2.md](docs/preprocessamento_v2.md)**.
+Column contract: **[SCHEMA.md](SCHEMA.md)**.
+
+---
+
 ## Read these, in this order
 
 | | |

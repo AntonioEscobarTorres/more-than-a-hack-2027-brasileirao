@@ -190,6 +190,26 @@ def test_v1_requires_exact_kickoffs_inside_c4_tag_windows(tmp_path):
         pt._kickoff_frames(str(tmp_path), required=True)
 
 
+def test_kickoffs_are_read_from_a_custom_processed_dir(tmp_path):
+    """run_all --processed-dir: export_tagging writes kickoffs.json there, so A must read it there."""
+    import json
+
+    custom = tmp_path / "custom_out"
+    custom.mkdir()
+    payload = {
+        "1": pt.KICKOFF_FALLBACK[1],
+        "2": pt.KICKOFF_FALLBACK[2],
+        "tag_windows": {str(h): [f - 3, f + 3] for h, f in pt.KICKOFF_FALLBACK.items()},
+    }
+    (custom / "kickoffs.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    data_dir = tmp_path / "data"                     # <data-dir>/processed has no kickoffs.json
+    with pytest.raises(FileNotFoundError):
+        pt._kickoff_frames(str(data_dir), required=True)
+    assert pt._kickoff_frames(str(data_dir), required=True,
+                              processed_dir=str(custom)) == pt.KICKOFF_FALLBACK
+
+
 def test_v1_rejects_kickoff_outside_c4_tag_window(tmp_path):
     import json
 
