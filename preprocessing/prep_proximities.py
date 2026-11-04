@@ -1,8 +1,11 @@
-"""Load tracking_clean into the (T, N) matrices the proximity features consume.
+"""Proximity features from cleaned tracking (script B).
 
-This is B1 of ``prep_proximities``. It does not compute distances. B2–B6 read
-``ProximityInputs`` and must iterate ``half_slices`` so a feature never crosses
-the interval between the two halves.
+B1 loads ``tracking_clean.parquet`` into ``ProximityInputs``. B2 turns those
+arrays into nearest-player distances per team. B3 adds per-radius counts and
+continuous pressure. B4 adds relative and radial speeds of the nearest player.
+B5 measures how far the ball is from the pitch boundary. B6 writes the parquet;
+features that look across time must iterate ``half_slices`` so nothing crosses
+the interval.
 
 Run from the repository root:
 
@@ -22,8 +25,10 @@ import numpy as np
 import pandas as pd
 
 from games import GAME, half_video_blocks
-from .params import N_FRAMES, SCHEMA_VERSION
-from .schema import N_SLOTS
+from .params import (N_FRAMES, PITCH_L, PITCH_MARGIN, PITCH_W, PRESSURE_TAU, RADII,
+                     SCHEMA_VERSION)
+from .prep_tracking import write_parquet_with_meta
+from .schema import INTERMEDIATE_FILES, MASTER_GROUPS, N_SLOTS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +57,50 @@ class ProximityInputs(NamedTuple):
     def half_slices(self):
         """``(half_id, slice)`` for each contiguous half, in play order."""
         return contiguous_half_slices(self.half)
+
+
+class TeamProximity(NamedTuple):
+    """Nearest-player distances in metres (B2). Indices feed B4 later."""
+
+    d_near_home: np.ndarray
+    d_near_away: np.ndarray
+    d_diff: np.ndarray
+    nearest_home: np.ndarray
+    nearest_away: np.ndarray
+    distances: np.ndarray
+
+
+class TeamPressure(NamedTuple):
+    """Per-radius counts and continuous pressure (B3)."""
+
+    n_home_r2: np.ndarray
+    n_home_r3: np.ndarray
+    n_home_r5: np.ndarray
+    n_away_r2: np.ndarray
+    n_away_r3: np.ndarray
+    n_away_r5: np.ndarray
+    pressure_home: np.ndarray
+    pressure_away: np.ndarray
+
+
+class RelativeSpeed(NamedTuple):
+    """Vector relative speed and radial approach/away speed (B4)."""
+
+    speed_rel_home: np.ndarray
+    speed_rel_away: np.ndarray
+    speed_radial_home: np.ndarray
+    speed_radial_away: np.ndarray
+
+
+class PitchGeometry(NamedTuple):
+    """Ball vs pitch boundary (B5). Distances are negative outside the lines."""
+
+    out_of_pitch: np.ndarray
+    d_touchline: np.ndarray
+    d_goalline: np.ndarray
+
+
+_RADIAL_EPS = 1e-3
 
 
 def read_tracking_stage(path):
@@ -203,6 +252,234 @@ def load_proximity_inputs(tracking_path, slot_teams_path, n_frames=N_FRAMES, n_s
     return inputs
 
 
+def player_ball_distances(bx, by, px, py):
+    """Euclidean distances in metres: shape ``(T, N)``. Missing ball or slot -> NaN."""
+    return np.hypot(px - bx[:, None], py - by[:, None]).astype(np.float32, copy=False)
+
+
+def masked_nearest(d, mask):
+    """Nearest finite distance under a slot mask.
+
+    ``d`` is ``(T, N)``; ``mask`` is ``(N,)``. Returns slot indices and distances
+    as float32. A frame with no eligible finite distance yields NaN.
+    """
+    d = np.asarray(d)
+    mask = np.asarray(mask, dtype=bool)
+    if d.ndim != 2:
+        raise ValueError(f"distances must be 2-D (T, N); got shape {d.shape}")
+    if mask.shape != (d.shape[1],):
+        raise ValueError(f"mask length {mask.shape} does not match N={d.shape[1]}")
+
+    dm = np.where(mask[None, :] & np.isfinite(d), d, np.inf)
+    nearest = dm.argmin(axis=1).astype(np.int32)
+    dist = dm[np.arange(len(d)), nearest]
+    dist = np.where(np.isfinite(dist), dist, np.nan).astype(np.float32)
+    return nearest, dist
+
+
+def team_proximity(inputs):
+    """B2: nearest home/away distance to the ball and their difference.
+
+    ``d_diff = d_near_home - d_near_away`` (negative means home is closer).
+    Frames without a ball, or without a tracked field player on that side, are
+    NaN. Each frame is independent; ``half == 0`` is already blanked in B1.
+    """
+    distances = player_ball_distances(inputs.ball_x, inputs.ball_y, inputs.px, inputs.py)
+    nearest_home, d_home = masked_nearest(distances, inputs.mask_home)
+    nearest_away, d_away = masked_nearest(distances, inputs.mask_away)
+    d_diff = (d_home - d_away).astype(np.float32)
+    return TeamProximity(
+        d_near_home=d_home,
+        d_near_away=d_away,
+        d_diff=d_diff,
+        nearest_home=nearest_home,
+        nearest_away=nearest_away,
+        distances=distances,
+    )
+
+
+def _no_ball_mask(ball_x, ball_y):
+    return np.isnan(ball_x) | np.isnan(ball_y)
+
+
+def radius_pressure(inputs, distances=None, radii=RADII, tau=PRESSURE_TAU):
+    """B3: players inside each radius and continuous pressure per team.
+
+    Counts use ``d < r``. Pressure is ``sum(exp(-d / tau))`` over finite
+    distances of that team's field-player slots. Without a ball every column
+    is NaN, never zero. With a ball and nobody inside the radius, the count
+    is ``0.0``.
+    """
+    radii = tuple(float(r) for r in radii)
+    if radii != (2.0, 3.0, 5.0):
+        raise ValueError(f"schema expects radii (2, 3, 5); got {radii}")
+    if distances is None:
+        distances = player_ball_distances(inputs.ball_x, inputs.ball_y, inputs.px, inputs.py)
+    no_ball = _no_ball_mask(inputs.ball_x, inputs.ball_y)
+    out = {}
+    for name, mask in (("home", inputs.mask_home), ("away", inputs.mask_away)):
+        dm = np.where(mask[None, :] & np.isfinite(distances), distances, np.inf)
+        for radius in radii:
+            count = (dm < radius).sum(axis=1).astype(np.float32)
+            count[no_ball] = np.nan
+            out[f"n_{name}_r{radius:g}"] = count
+        # exp(-inf) is 0, so missing/other-team slots do not add pressure.
+        pressure = np.exp(-dm / float(tau)).sum(axis=1).astype(np.float32)
+        pressure[no_ball] = np.nan
+        out[f"pressure_{name}"] = pressure
+    return TeamPressure(
+        n_home_r2=out["n_home_r2"],
+        n_home_r3=out["n_home_r3"],
+        n_home_r5=out["n_home_r5"],
+        n_away_r2=out["n_away_r2"],
+        n_away_r3=out["n_away_r3"],
+        n_away_r5=out["n_away_r5"],
+        pressure_home=out["pressure_home"],
+        pressure_away=out["pressure_away"],
+    )
+
+
+def relative_speeds(inputs, proximity=None):
+    """B4: vector relative speed and radial approach/separation of the nearest player.
+
+    ``speed_rel`` is ``||v_ball - v_player||``. ``speed_radial`` is the radial
+    component of that difference: negative means closing on the ball, positive
+    means opening. NaN when the nearest distance is missing, when ball velocity
+    is missing (including V1 interpolated frames), or when the nearest player's
+    velocity is missing.
+    """
+    if proximity is None:
+        proximity = team_proximity(inputs)
+    frames = np.arange(len(inputs.ball_x))
+    out = {}
+    for name, nearest, dist in (
+        ("home", proximity.nearest_home, proximity.d_near_home),
+        ("away", proximity.nearest_away, proximity.d_near_away),
+    ):
+        px = inputs.px[frames, nearest]
+        py = inputs.py[frames, nearest]
+        pvx = inputs.pvx[frames, nearest]
+        pvy = inputs.pvy[frames, nearest]
+        rel_vx = inputs.ball_vx - pvx
+        rel_vy = inputs.ball_vy - pvy
+        rel = np.hypot(rel_vx, rel_vy)
+        dx = inputs.ball_x - px
+        dy = inputs.ball_y - py
+        safe_d = np.maximum(dist, _RADIAL_EPS)
+        radial = (dx * rel_vx + dy * rel_vy) / safe_d
+        valid = (np.isfinite(dist)
+                 & np.isfinite(inputs.ball_vx) & np.isfinite(inputs.ball_vy)
+                 & np.isfinite(pvx) & np.isfinite(pvy))
+        out[f"speed_rel_{name}"] = np.where(valid, rel, np.nan).astype(np.float32)
+        out[f"speed_radial_{name}"] = np.where(valid, radial, np.nan).astype(np.float32)
+    return RelativeSpeed(
+        speed_rel_home=out["speed_rel_home"],
+        speed_rel_away=out["speed_rel_away"],
+        speed_radial_home=out["speed_radial_home"],
+        speed_radial_away=out["speed_radial_away"],
+    )
+
+
+def pitch_features(ball_x, ball_y, length=PITCH_L, width=PITCH_W, margin=PITCH_MARGIN):
+    """B5: out-of-pitch flag and signed distances to touchline / goalline.
+
+    ``out_of_pitch`` is 1 only past the line by ``margin`` metres, so tracker
+    noise on the line does not flip the flag. Distances are ``min(coord,
+    size - coord)`` and go negative outside the painted pitch. Orientation /
+    flip does not change these measures. Without a ball every value is NaN.
+    """
+    x = np.asarray(ball_x, dtype=np.float32)
+    y = np.asarray(ball_y, dtype=np.float32)
+    out = ((x < -margin) | (x > length + margin) | (y < -margin) | (y > width + margin))
+    out = out.astype(np.float32)
+    missing = np.isnan(x) | np.isnan(y)
+    out[missing] = np.nan
+    d_touch = np.minimum(y, width - y).astype(np.float32)
+    d_goal = np.minimum(x, length - x).astype(np.float32)
+    d_touch[missing] = np.nan
+    d_goal[missing] = np.nan
+    return PitchGeometry(out_of_pitch=out, d_touchline=d_touch, d_goalline=d_goal)
+
+
+def proximities_column_specs():
+    """``(name, dtype)`` for ``proximities.parquet``: index + B feature groups."""
+    columns = [("video_frame", "int32"), ("half", "int8")]
+    for group in INTERMEDIATE_FILES["proximities.parquet"]:
+        columns.extend(MASTER_GROUPS[group][1])
+    return columns
+
+
+def proximities_column_names():
+    return [name for name, _ in proximities_column_specs()]
+
+
+def build_proximities_table(inputs):
+    """Run B2–B5 and assemble the intermediate parquet table (B6)."""
+    proximity = team_proximity(inputs)
+    pressure = radius_pressure(inputs, distances=proximity.distances)
+    speeds = relative_speeds(inputs, proximity=proximity)
+    pitch = pitch_features(inputs.ball_x, inputs.ball_y)
+    values = {
+        "video_frame": np.asarray(inputs.video_frame, dtype=np.int32),
+        "half": np.asarray(inputs.half, dtype=np.int8),
+        "d_near_home": proximity.d_near_home,
+        "d_near_away": proximity.d_near_away,
+        "d_diff": proximity.d_diff,
+        "n_home_r2": pressure.n_home_r2,
+        "n_home_r3": pressure.n_home_r3,
+        "n_home_r5": pressure.n_home_r5,
+        "n_away_r2": pressure.n_away_r2,
+        "n_away_r3": pressure.n_away_r3,
+        "n_away_r5": pressure.n_away_r5,
+        "pressure_home": pressure.pressure_home,
+        "pressure_away": pressure.pressure_away,
+        "speed_rel_home": speeds.speed_rel_home,
+        "speed_rel_away": speeds.speed_rel_away,
+        "speed_radial_home": speeds.speed_radial_home,
+        "speed_radial_away": speeds.speed_radial_away,
+        "out_of_pitch": pitch.out_of_pitch,
+        "d_touchline": pitch.d_touchline,
+        "d_goalline": pitch.d_goalline,
+    }
+    frame = pd.DataFrame({name: values[name] for name, _ in proximities_column_specs()})
+    _assert_proximities_contract(frame, n_frames=len(inputs.video_frame))
+    return frame, proximity, pressure, speeds, pitch
+
+
+def _assert_proximities_contract(frame, n_frames=N_FRAMES):
+    expected = proximities_column_names()
+    if list(frame.columns) != expected:
+        raise ValueError(
+            f"proximities columns {list(frame.columns)} do not match schema {expected}")
+    if len(frame) != n_frames:
+        raise ValueError(f"proximities has {len(frame)} rows; expected {n_frames}")
+    if frame["video_frame"].dtype != np.int32 or frame["half"].dtype != np.int8:
+        raise ValueError("video_frame must be int32 and half must be int8")
+    for name, dtype in proximities_column_specs()[2:]:
+        if dtype != "float32":
+            raise ValueError(f"unexpected dtype contract for {name}: {dtype}")
+        if frame[name].dtype != np.float32:
+            raise ValueError(f"{name} must be float32; got {frame[name].dtype}")
+
+
+def write_proximities(frame, path, n_frames=N_FRAMES):
+    """Write ``proximities.parquet`` with ``schema_version`` metadata."""
+    _assert_proximities_contract(frame, n_frames=n_frames)
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    write_parquet_with_meta(frame, path)
+    return path
+
+
+def run_proximities(tracking_path, slot_teams_path, output_path, n_frames=N_FRAMES, n_slots=N_SLOTS):
+    """Load tracking, compute B2–B5, write ``proximities.parquet``."""
+    inputs = load_proximity_inputs(tracking_path, slot_teams_path, n_frames=n_frames, n_slots=n_slots)
+    frame, proximity, pressure, speeds, pitch = build_proximities_table(inputs)
+    write_proximities(frame, output_path, n_frames=n_frames)
+    return inputs, frame, proximity, pressure, speeds, pitch
+
+
 def _processed_dir(data_dir=None):
     root = data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "data")
@@ -213,16 +490,32 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--processed-dir", help="directory with tracking_clean.parquet")
+    parser.add_argument("--output", help="path for proximities.parquet")
     args = parser.parse_args(argv)
     folder = args.processed_dir or _processed_dir()
-    inputs = load_proximity_inputs(
+    output = args.output or os.path.join(folder, "proximities.parquet")
+    inputs, frame, proximity, pressure, speeds, pitch = run_proximities(
         os.path.join(folder, "tracking_clean.parquet"),
-        os.path.join(folder, "slot_teams.parquet"))
+        os.path.join(folder, "slot_teams.parquet"),
+        output)
+    LOGGER.info(
+        "wrote %s rows=%d cols=%d tracking_stage=%s schema_version=%s",
+        output, len(frame), frame.shape[1], inputs.tracking_stage, SCHEMA_VERSION)
     for half_id, block in inputs.half_slices():
         ball_seen = int(np.isfinite(inputs.ball_x[block]).sum())
-        LOGGER.info("half=%d frames=%d ball_finite=%d", half_id, block.stop - block.start, ball_seen)
+        home_near = int(np.isfinite(proximity.d_near_home[block]).sum())
+        home_r3 = int(np.isfinite(pressure.n_home_r3[block]).sum())
+        rel_home = int(np.isfinite(speeds.speed_rel_home[block]).sum())
+        out_count = int(np.nansum(pitch.out_of_pitch[block] == 1))
+        LOGGER.info(
+            "half=%d frames=%d ball_finite=%d d_near_home_finite=%d "
+            "n_home_r3_finite=%d speed_rel_home_finite=%d out_of_pitch=%d",
+            half_id, block.stop - block.start, ball_seen, home_near, home_r3,
+            rel_home, out_count)
     outside = int(np.count_nonzero(inputs.half == 0))
-    LOGGER.info("outside_play=%d", outside)
+    LOGGER.info(
+        "outside_play=%d d_near_home_nan_outside=%d",
+        outside, int(np.isnan(proximity.d_near_home[inputs.half == 0]).sum()))
     return 0
 
 
