@@ -27,7 +27,8 @@ import pandas as pd
 from games import GAME, half_video_blocks
 from .params import (N_FRAMES, PITCH_L, PITCH_MARGIN, PITCH_W, PRESSURE_TAU, RADII,
                      SCHEMA_VERSION)
-from .schema import N_SLOTS
+from .prep_tracking import write_parquet_with_meta
+from .schema import INTERMEDIATE_FILES, MASTER_GROUPS, N_SLOTS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -400,6 +401,85 @@ def pitch_features(ball_x, ball_y, length=PITCH_L, width=PITCH_W, margin=PITCH_M
     return PitchGeometry(out_of_pitch=out, d_touchline=d_touch, d_goalline=d_goal)
 
 
+def proximities_column_specs():
+    """``(name, dtype)`` for ``proximities.parquet``: index + B feature groups."""
+    columns = [("video_frame", "int32"), ("half", "int8")]
+    for group in INTERMEDIATE_FILES["proximities.parquet"]:
+        columns.extend(MASTER_GROUPS[group][1])
+    return columns
+
+
+def proximities_column_names():
+    return [name for name, _ in proximities_column_specs()]
+
+
+def build_proximities_table(inputs):
+    """Run B2–B5 and assemble the intermediate parquet table (B6)."""
+    proximity = team_proximity(inputs)
+    pressure = radius_pressure(inputs, distances=proximity.distances)
+    speeds = relative_speeds(inputs, proximity=proximity)
+    pitch = pitch_features(inputs.ball_x, inputs.ball_y)
+    values = {
+        "video_frame": np.asarray(inputs.video_frame, dtype=np.int32),
+        "half": np.asarray(inputs.half, dtype=np.int8),
+        "d_near_home": proximity.d_near_home,
+        "d_near_away": proximity.d_near_away,
+        "d_diff": proximity.d_diff,
+        "n_home_r2": pressure.n_home_r2,
+        "n_home_r3": pressure.n_home_r3,
+        "n_home_r5": pressure.n_home_r5,
+        "n_away_r2": pressure.n_away_r2,
+        "n_away_r3": pressure.n_away_r3,
+        "n_away_r5": pressure.n_away_r5,
+        "pressure_home": pressure.pressure_home,
+        "pressure_away": pressure.pressure_away,
+        "speed_rel_home": speeds.speed_rel_home,
+        "speed_rel_away": speeds.speed_rel_away,
+        "speed_radial_home": speeds.speed_radial_home,
+        "speed_radial_away": speeds.speed_radial_away,
+        "out_of_pitch": pitch.out_of_pitch,
+        "d_touchline": pitch.d_touchline,
+        "d_goalline": pitch.d_goalline,
+    }
+    frame = pd.DataFrame({name: values[name] for name, _ in proximities_column_specs()})
+    _assert_proximities_contract(frame, n_frames=len(inputs.video_frame))
+    return frame, proximity, pressure, speeds, pitch
+
+
+def _assert_proximities_contract(frame, n_frames=N_FRAMES):
+    expected = proximities_column_names()
+    if list(frame.columns) != expected:
+        raise ValueError(
+            f"proximities columns {list(frame.columns)} do not match schema {expected}")
+    if len(frame) != n_frames:
+        raise ValueError(f"proximities has {len(frame)} rows; expected {n_frames}")
+    if frame["video_frame"].dtype != np.int32 or frame["half"].dtype != np.int8:
+        raise ValueError("video_frame must be int32 and half must be int8")
+    for name, dtype in proximities_column_specs()[2:]:
+        if dtype != "float32":
+            raise ValueError(f"unexpected dtype contract for {name}: {dtype}")
+        if frame[name].dtype != np.float32:
+            raise ValueError(f"{name} must be float32; got {frame[name].dtype}")
+
+
+def write_proximities(frame, path, n_frames=N_FRAMES):
+    """Write ``proximities.parquet`` with ``schema_version`` metadata."""
+    _assert_proximities_contract(frame, n_frames=n_frames)
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    write_parquet_with_meta(frame, path)
+    return path
+
+
+def run_proximities(tracking_path, slot_teams_path, output_path, n_frames=N_FRAMES, n_slots=N_SLOTS):
+    """Load tracking, compute B2–B5, write ``proximities.parquet``."""
+    inputs = load_proximity_inputs(tracking_path, slot_teams_path, n_frames=n_frames, n_slots=n_slots)
+    frame, proximity, pressure, speeds, pitch = build_proximities_table(inputs)
+    write_proximities(frame, output_path, n_frames=n_frames)
+    return inputs, frame, proximity, pressure, speeds, pitch
+
+
 def _processed_dir(data_dir=None):
     root = data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "data")
@@ -410,15 +490,17 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--processed-dir", help="directory with tracking_clean.parquet")
+    parser.add_argument("--output", help="path for proximities.parquet")
     args = parser.parse_args(argv)
     folder = args.processed_dir or _processed_dir()
-    inputs = load_proximity_inputs(
+    output = args.output or os.path.join(folder, "proximities.parquet")
+    inputs, frame, proximity, pressure, speeds, pitch = run_proximities(
         os.path.join(folder, "tracking_clean.parquet"),
-        os.path.join(folder, "slot_teams.parquet"))
-    proximity = team_proximity(inputs)
-    pressure = radius_pressure(inputs, distances=proximity.distances)
-    speeds = relative_speeds(inputs, proximity=proximity)
-    pitch = pitch_features(inputs.ball_x, inputs.ball_y)
+        os.path.join(folder, "slot_teams.parquet"),
+        output)
+    LOGGER.info(
+        "wrote %s rows=%d cols=%d tracking_stage=%s schema_version=%s",
+        output, len(frame), frame.shape[1], inputs.tracking_stage, SCHEMA_VERSION)
     for half_id, block in inputs.half_slices():
         ball_seen = int(np.isfinite(inputs.ball_x[block]).sum())
         home_near = int(np.isfinite(proximity.d_near_home[block]).sum())
