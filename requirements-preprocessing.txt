@@ -1,8 +1,9 @@
-# Pre-processamento (docs/preprocessamento_v2.md). Versoes minimas; a task [E1] fixa (pin) as versoes
-# exatas para que o repositorio regenere o mesmo arquivo (RULES.md).
--r requirements-starter.txt
-# Pandas' Parquet reader/writer backend, used by prep_tracking and the test notebook.
-pyarrow>=14.0.0
-scipy
-pytest
-matplotlib
+# Preprocessing pipeline (docs/preprocessamento_v2.md). Exact pins for E1 so the
+# repository regenerates the same master_features.parquet (RULES.md).
+numpy==2.0.2
+pandas==2.3.3
+pyarrow==21.0.0
+scipy==1.13.1
+kloppy==3.18.0
+matplotlib==3.9.4
+pytest==8.4.2
