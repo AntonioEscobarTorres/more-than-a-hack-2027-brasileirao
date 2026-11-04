@@ -34,3 +34,22 @@ def test_distances_never_cross_halftime():
     assert np.isnan(out.loc[150, "frames_since_sp_end"])      
     assert np.isnan(out.loc[120, "frames_to_next_sp"])       
     assert np.isnan(out.loc[99, "frames_to_next_sp"])         
+
+def test_back_to_back_set_pieces_are_not_merged():
+    out = process_set_pieces(_events([(20, 30, "throw-in"), (30, 40, "corner kick")]), BLOCKS, n_frames=N)
+    # the corner kick starting right after the throw-in is still the next set piece
+    assert out.loc[25, "frames_to_next_sp"] == 5
+    assert out.loc[25, "next_sp_type"] == "corner kick"
+    assert out.loc[45, "frames_since_sp_end"] == 6
+    assert out.loc[45, "prev_sp_type"] == "corner kick"
+    assert out.loc[35, "sp_type"] == "corner kick"
+
+
+def test_overlapping_set_pieces_do_not_depend_on_event_order():
+    rows = [(20, 60, "free kick"), (20, 40, "throw-in"), (30, 50, "corner kick")]
+    a = process_set_pieces(_events(rows), BLOCKS, n_frames=N)
+    b = process_set_pieces(_events(rows[::-1]), BLOCKS, n_frames=N)
+    pd.testing.assert_frame_equal(a, b)
+    # innermost (latest start, then shortest) wins where they overlap
+    assert a.loc[25, "sp_type"] == "throw-in" and a.loc[35, "sp_type"] == "corner kick"
+    assert a.loc[55, "sp_type"] == "free kick"
