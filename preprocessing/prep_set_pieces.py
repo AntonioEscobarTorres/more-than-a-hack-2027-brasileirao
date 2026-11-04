@@ -31,15 +31,13 @@ def build_set_piece_features(
         is_sp: boolean array of set piece phases.
         sp_type: object array (lowercase string, empty if none).
         sp_team: object array ('H', 'A', 'U' if SP; empty if none).
-        starts: array of start frames for each SP.
-        ends: array of last active frames (end_frame - 1) for each SP.
+        starts: array of start frames for each SP block.
+        ends: array of last active frames (end_frame - 1) for each SP block.
         sp_types: array of SP types corresponding to starts/ends.
     """
     is_sp = np.zeros(n_frames, dtype=bool)
     sp_type = np.full(n_frames, "", dtype=object)
     sp_team = np.full(n_frames, "", dtype=object)
-    
-    sp_events = []
     
     for _, r in ev.iterrows():
         code = str(r["code"]).strip().upper()
@@ -62,21 +60,20 @@ def build_set_piece_features(
                 is_sp[ca:cb] = True
                 sp_type[ca:cb] = typ
                 sp_team[ca:cb] = valid_team
-                # cb - 1 ensures we capture the last active frame of the set piece
-                sp_events.append((ca, cb - 1, typ))
-                
-    sp_events.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    # Extract starts and ends directly from the boundaries of the consolidated boolean mask
+    edges = np.flatnonzero(np.diff(np.r_[False, is_sp, False].astype(np.int8)))
     
-    if sp_events:
-        starts = np.asarray([s for s, _, _ in sp_events], dtype=int)
-        ends = np.asarray([e for _, e, _ in sp_events], dtype=int)
-        types = np.asarray([t for _, _, t in sp_events], dtype=object)
+    if len(edges) > 0:
+        starts = edges[::2]
+        ends = edges[1::2] - 1
+        types = sp_type[starts]  # Predominant type at the start frame of the block
     else:
         starts = np.array([], dtype=int)
         ends = np.array([], dtype=int)
         types = np.array([], dtype=object)
         
-    return is_sp, sp_type, sp_team, starts, ends, types
+    return is_sp, sp_type, sp_team, starts, ends, types 
 
 
 def distance_to_set_pieces(starts: np.ndarray, ends: np.ndarray, sp_types: np.ndarray,
