@@ -89,6 +89,6 @@ def export_homography_data(
 
 
 if __name__ == "__main__":
-    from games import GAME, half_video_blocks
+    from games import DATA_DIR, GAME, half_video_blocks   # DATA_DIR honours MTAH_DATA_DIR
 
-    export_homography_data("data/processed", half_video_blocks(GAME))
+    export_homography_data(Path(DATA_DIR) / "processed", half_video_blocks(GAME), data_dir=DATA_DIR)

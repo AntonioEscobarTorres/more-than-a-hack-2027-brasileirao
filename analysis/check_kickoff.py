@@ -19,8 +19,11 @@ WINDOW = 25        # frames on each side of kickoff (~1 s each side)
 MARGIN = 3.0       # ignore slots within 3 m of the halfway line
 MID = PITCH_L / 2
 
-data = pd.read_parquet("data/processed/tracking_clean.parquet")
-home = pd.read_parquet("data/processed/slot_teams.parquet").is_home.to_numpy()
+from games import DATA_DIR  # noqa: E402  (honours MTAH_DATA_DIR, else ./data)
+
+PROCESSED = Path(DATA_DIR) / "processed"
+data = pd.read_parquet(PROCESSED / "tracking_clean.parquet")
+home = pd.read_parquet(PROCESSED / "slot_teams.parquet").is_home.to_numpy()
 kickoffs = _kickoff_frames()  # kickoffs.json if present; otherwise the published fallback
 
 print("slots Home no XML:", int(home.sum()), "| Away:", int((~home).sum()))

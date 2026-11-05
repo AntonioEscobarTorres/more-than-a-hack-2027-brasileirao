@@ -200,7 +200,9 @@ def file_sha256(path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Build master_features.parquet (task D1).")
-    parser.add_argument("--processed-dir", default="data/processed")
+    from games import DATA_DIR                     # honours MTAH_DATA_DIR, else ./data
+    parser.add_argument("--processed-dir", default=str(Path(DATA_DIR) / "processed"),
+                        help="default: <MTAH_DATA_DIR or ./data>/processed")
     parser.add_argument("--output", default=None, help="default: <processed-dir>/master_features.parquet")
     parser.add_argument("--check-determinism", action="store_true",
                         help="build a second time and compare the sha256 of both files")

@@ -109,15 +109,24 @@ Full description of every asset and how the frames line up: **[DATA.md](DATA.md)
 
 ## How to run (preprocessing)
 
-Build `data/processed/master_features.parquet` from a fresh data bundle with one command.
+Build `<data dir>/processed/master_features.parquet` from a fresh data bundle with one command.
 Exact dependency pins live in `requirements-preprocessing.txt` so the repository regenerates
 the same file ([RULES.md](RULES.md)).
+
+**Where the data lives.** Every script reads the match assets from `$MTAH_DATA_DIR` when it is
+set, and from `./data` otherwise; intermediate files go to `<data dir>/processed`. Either works:
+
+- **Default:** unpack the bundle into `./data` (as in [DATA.md](DATA.md)). Nothing else to set.
+- **Outside the repository (what the team uses):** unpack it anywhere, e.g. `~/mtah-data`, and
+  `export MTAH_DATA_DIR=~/mtah-data` (add it to `~/.bashrc`). This keeps the match data out of the
+  working tree opened by AI coding agents: the competition terms forbid sharing the data, or any
+  extract of it, with cloud-hosted LLMs.
 
 ```bash
 # 1. Install (exact pins; Python 3.9–3.12)
 pip install -r requirements-preprocessing.txt
 
-# 2. Unpack the match assets into ./data (or export MTAH_DATA_DIR)
+# 2. Unpack the match assets into ./data, or elsewhere with MTAH_DATA_DIR pointing at it
 
 # 3. Run the full pipeline: C → C5 → A(--stage V1) → B → D
 python -m preprocessing.run_all
@@ -126,7 +135,7 @@ python -m preprocessing.run_all
 python -m preprocessing.run_all --check-determinism
 
 # 4. Validate the master against the frozen schema contract
-pytest tests/test_master_schema.py --master data/processed/master_features.parquet
+pytest tests/test_master_schema.py --master "${MTAH_DATA_DIR:-data}/processed/master_features.parquet"
 ```
 
 Without match data you can still exercise the contract with the synthetic mock:

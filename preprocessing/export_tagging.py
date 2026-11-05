@@ -86,6 +86,6 @@ def export_tagging_data(
     pq.write_table(table, out_path / "tagging.parquet")
 
 if __name__ == "__main__":
-    from games import half_video_blocks, GAME
+    from games import half_video_blocks, GAME, DATA_DIR   # DATA_DIR honours MTAH_DATA_DIR
     blocks = half_video_blocks(GAME)
-    export_tagging_data("data/processed", blocks)
+    export_tagging_data(Path(DATA_DIR) / "processed", blocks, data_dir=DATA_DIR)
