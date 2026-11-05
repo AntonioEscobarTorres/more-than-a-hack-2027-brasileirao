@@ -360,14 +360,19 @@ def test_set_pieces_contract(mock_df: pd.DataFrame, master_path: str | None):
         edges = np.flatnonzero(np.diff(np.r_[False, sp_mask, False].astype(np.int8)))
         starts = f0 + edges[::2]
         ends = f0 + edges[1::2] - 1  # ultimo frame ativo (inclusivo)
+        # Overlapping/back-to-back set pieces keep their own start (frames_to_next_sp == 0.0)
+        # even when is_set_piece is already True at the boundary.
+        event_starts = sub.index[sub["frames_to_next_sp"] == 0.0].to_numpy()
 
         if len(starts) > 0:
-            first_start = int(starts[0])
-            last_start = int(starts[-1])
+            assert set(starts).issubset(set(event_starts))
+            assert sub.loc[event_starts, "is_set_piece"].all()
+            first_start = int(event_starts[0])
+            last_start = int(event_starts[-1])
             if first_start > f0:
                 assert sub.loc[f0:first_start - 1, "frames_since_sp_end"].isna().all()
                 assert (sub.loc[f0:first_start - 1, "prev_sp_type"] == "").all()
-            assert sub.loc[first_start, "frames_to_next_sp"] == 0.0
+            assert (sub.loc[starts, "frames_to_next_sp"] == 0.0).all()
             if last_start < f1:
                 assert sub.loc[last_start + 1:f1, "frames_to_next_sp"].isna().all()
                 assert (sub.loc[last_start + 1:f1, "next_sp_type"] == "").all()
