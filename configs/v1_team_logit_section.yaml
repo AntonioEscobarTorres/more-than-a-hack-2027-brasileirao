@@ -1,0 +1,9 @@
+team_logit:
+  kappa: 3.0
+  sigma_d: 2.0
+  r_ctrl: 2.0
+  l_prox: 3.0
+  v_rel: 6.0
+  ball_conf_filled: 0.6
+  contest_factor: 0.5
+  rel_w_missing: 0.5
