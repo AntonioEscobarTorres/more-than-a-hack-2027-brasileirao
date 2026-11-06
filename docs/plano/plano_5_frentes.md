@@ -22,7 +22,7 @@ Este arquivo é a **fonte única** para criar as issues do GitHub. Ele é autoco
 
 ## 0. Instruções para o agente que vai criar as issues
 
-> **Executado em 06/11/2026:** labels, 6 milestones, 37 issues (#56 a #92) com responsáveis e as 58 dependências nativas foram criados. O mapeamento está em [`issues.md`](issues.md). O project board ficou pendente: o token usado não tinha o escopo `project`.
+> **Executado em 06/11/2026:** labels, 6 milestones, 37 issues (#56 a #92) com responsáveis e as 58 dependências nativas foram criados. O mapeamento está em [`issues.md`](issues.md). O project board está em https://github.com/users/HachemAhmed/projects/2, com as visões "Tabela" e "Quadro" e os quatro colegas como colaboradores. O GitHub não permite ligá-lo à aba "Projects" do repositório, porque o projeto é de outra conta.
 
 Você **não implementa nada**. Você só organiza o trabalho no GitHub a partir deste arquivo.
 

@@ -2,6 +2,8 @@
 
 37 issues (36 tarefas + o gate G1) e 58 dependências nativas do GitHub ("blocked by"), criadas em 06/11/2026 a partir do [plano completo](plano_5_frentes.md).
 
+Quadro do projeto (colunas Bloqueada → Pronta → Em andamento → Em revisão → Concluída): https://github.com/users/HachemAhmed/projects/2
+
 | Issue | ID | Título | Responsável | Marco | Prazo | Prioridade | Bloqueada por |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | [#56](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/56) | [F5-01](../tasks/F5-01.md) | Esqueleto `modeling/`, contratos e configuração | Ahmed | M0 | sex 06/11 | P0 | — |
