@@ -1,0 +1,8 @@
+# Baseline pipeline (F5-02). Schema: docs/plano/plano_5_frentes.md, Appendix A.7.
+name: baseline
+pipeline: baseline
+ball_source: tactical
+baseline:
+  d_gap_frames: 100
+  slow_speed_mps: 1.5
+  min_spell_frames: 25

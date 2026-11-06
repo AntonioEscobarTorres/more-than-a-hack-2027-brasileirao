@@ -1,0 +1,4 @@
+# Modelling pipeline (modeling/). Tested with Python 3.12 and numpy 2.0.2.
+-r requirements-preprocessing.txt
+pyyaml==6.0.2
+scikit-learn==1.5.2
