@@ -21,19 +21,35 @@ import pandas as pd
 
 from .control import build_control_features
 from .team_logit_params import TeamLogitParams
-
+from .collective import build_collective_score
 
 def team_logit_v1(master: pd.DataFrame, params: TeamLogitParams) -> np.ndarray:
     if "d_diff" not in master.columns:
         raise ValueError("master is missing column 'd_diff'")
+    
     ev = build_control_features(master, params)
     d_diff = master["d_diff"].to_numpy(dtype="float64")
-
     contest = np.where(ev["ev_contest"].to_numpy(), params.contest_factor, 1.0)
-    with np.errstate(invalid="ignore"):                  # NaN inputs are handled explicitly below
+    
+    with np.errstate(invalid="ignore"):
         t = (-params.kappa * np.tanh(d_diff / params.sigma_d) * ev["ev_prox_w"].to_numpy()
              * ev["ev_rel_w"].to_numpy() * ev["ev_ball_conf"].to_numpy() * contest)
+             
     t = np.clip(t, -params.kappa, params.kappa)
     t = np.where(np.isfinite(t) & (ev["ev_ball_conf"].to_numpy() > 0), t, 0.0)
-    t = t + 0.0                                          # -0.0 -> +0.0
+    
+    # Uso de .get() para não estourar KeyError nos testes da F1-02
+    gap_len = master.get("gap_length", pd.Series(0, index=master.index)).fillna(0).to_numpy()
+    half = master.get("half", pd.Series(1, index=master.index)).to_numpy()
+    
+    coll_active = (ev["ev_ball_conf"].to_numpy() == 0) | (gap_len > 12)
+    coll_score = build_collective_score(master).to_numpy()
+    
+    collective_term = np.where(coll_active, params.w_coll * coll_score, 0.0)
+    t = t + collective_term
+    
+    t = np.clip(t, -params.kappa, params.kappa)
+    t = np.where(half == 0, 0.0, t)
+    
+    t = t + 0.0
     return t.astype(np.float32)
