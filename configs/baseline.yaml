@@ -1,4 +1,4 @@
-# Baseline pipeline (F5-02). Schema: docs/plano/plano_5_frentes.md, Appendix A.7.
+# Baseline pipeline. Schema: docs/plano/plano_5_frentes.md, Appendix A.7.
 name: baseline
 pipeline: baseline
 ball_source: tactical
