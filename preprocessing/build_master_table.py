@@ -127,8 +127,62 @@ def _cast(series, dtype, column):
     return series.astype(dtype)                    
 
 
+def assemble_master(tracking, proximities, tagging, homography, blocks, n_frames):
+    """Join in-memory preprocessing frames into the schema-ordered master table."""
+    include_optional = homography is not None
+    sources = column_sources(include_optional)
+    frames = {
+        TRACKING_FILE: tracking,
+        "proximities.parquet": proximities,
+        "tagging.parquet": tagging,
+    }
+    if include_optional:
+        frames[HOMOGRAPHY_FILE] = homography
+
+    expected = index_columns(blocks, n_frames)
+    columns = {}
+    for name, df in frames.items():
+        if len(df) != n_frames:
+            raise ValueError("{}: {} rows, expected {}".format(name, len(df), n_frames))
+        wanted = [column for column, source in sources.items() if source == name]
+        missing = [column for column in list(KEY_COLUMNS) + wanted if column not in df.columns]
+        if missing:
+            raise ValueError("{}: missing columns {}".format(name, missing))
+        _check_keys(name, df, expected)
+        if name == TRACKING_FILE:
+            extra = [column for column in INDEX_COLUMNS
+                     if column in df.columns and column not in KEY_COLUMNS]
+            for column in extra:
+                if not np.array_equal(df[column].to_numpy(dtype="float64"),
+                                      expected[column].astype("float64"), equal_nan=True):
+                    raise ValueError("{}: {} differs from the one computed from half_video_blocks".format(
+                        name, column))
+        for column in wanted:
+            columns[column] = df[column]
+
+    dtypes = dict(schema.master_columns(include_optional))
+    out = {}
+    for column in dtypes:
+        out[column] = pd.Series(expected[column]) if column in expected else columns[column]
+    master = pd.DataFrame({
+        column: _cast(out[column].reset_index(drop=True), dtypes[column], column)
+        for column in dtypes
+    })
+
+    names = schema.master_column_names(include_optional)
+    if list(master.columns) != names or master.columns.has_duplicates or len(master) != n_frames:
+        raise ValueError("master does not match the schema (columns, order or row count)")
+
+    outside = master["half"].to_numpy() == 0
+    leaking = [column for column, dtype in dtypes.items()
+               if dtype == "float32" and master[column][outside].notna().any()]
+    if leaking:
+        raise ValueError("columns with values outside the half blocks (half == 0): {}".format(leaking))
+    return master
+
+
 def build_master(processed_dir, blocks=None, n_frames=params.N_FRAMES):
-    """Join the intermediate files into the master DataFrame (schema order, schema dtypes)."""
+    """Load intermediate files, validate metadata, and assemble the master table."""
     processed_dir = Path(processed_dir)
     if blocks is None:
         from games import GAME, half_video_blocks
@@ -144,39 +198,20 @@ def build_master(processed_dir, blocks=None, n_frames=params.N_FRAMES):
     for name in files:
         check_metadata(processed_dir / name, REQUIRED_STAGE if name == TRACKING_FILE else None)
 
-    expected = index_columns(blocks, n_frames)
-    columns = {}
+    frames = {}
     for name in files:
-        wanted = [c for c, src in sources.items() if src == name]
+        wanted = [column for column, source in sources.items() if source == name]
         extra = []
-        if name == TRACKING_FILE:                      # index columns A already wrote: cross-check them
+        if name == TRACKING_FILE:
             present = set(pq.read_schema(processed_dir / name).names)
-            extra = [c for c in INDEX_COLUMNS if c in present and c not in KEY_COLUMNS]
-        df = _read(processed_dir / name, list(KEY_COLUMNS) + wanted + extra, n_frames)
-        _check_keys(name, df, expected)
-        for c in extra:
-            if not np.array_equal(df[c].to_numpy(dtype="float64"),
-                                  expected[c].astype("float64"), equal_nan=True):
-                raise ValueError("{}: {} differs from the one computed from half_video_blocks".format(name, c))
-        for c in wanted:
-            columns[c] = df[c]
+            extra = [column for column in INDEX_COLUMNS
+                     if column in present and column not in KEY_COLUMNS]
+        frames[name] = _read(
+            processed_dir / name, list(KEY_COLUMNS) + wanted + extra, n_frames)
 
-    dtypes = dict(schema.master_columns(include_optional))
-    out = {}
-    for column, dtype in dtypes.items():
-        out[column] = pd.Series(expected[column]) if column in expected else columns[column]
-    master = pd.DataFrame({c: _cast(out[c].reset_index(drop=True), dtypes[c], c) for c in dtypes})
-
-    names = schema.master_column_names(include_optional)
-    if list(master.columns) != names or master.columns.has_duplicates or len(master) != n_frames:
-        raise ValueError("master does not match the schema (columns, order or row count)")
-
-    # Contract: outside the half blocks every float column is NaN (nothing crosses halftime).
-    outside = master["half"].to_numpy() == 0
-    leaking = [c for c, d in dtypes.items() if d == "float32" and master[c][outside].notna().any()]
-    if leaking:
-        raise ValueError("columns with values outside the half blocks (half == 0): {}".format(leaking))
-    return master
+    return assemble_master(
+        frames[TRACKING_FILE], frames["proximities.parquet"], frames["tagging.parquet"],
+        frames.get(HOMOGRAPHY_FILE), blocks, n_frames)
 
 
 def write_master(master, path):
