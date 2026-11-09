@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Game>
+  <FrameSet TeamId="BALL" GameSection="firstHalf">
+    <Frame N="10" BallStatus="1" BallPossession="1"/>
+    <Frame N="11" BallStatus="1" BallPossession="0"/>
+    <Frame N="12" BallStatus="0" BallPossession="2"/>
+    <Frame N="13" BallStatus="1" BallPossession="2"/>
+    <Frame N="14" BallStatus="1"/>
+    <Frame N="15" BallStatus="0"/>
+    <Frame N="16" BallStatus="1" BallPossession="1"/>
+    <Frame N="17" BallStatus="1" BallPossession="2"/>
+    <Frame N="18" BallStatus="0" BallPossession="0"/>
+    <Frame N="19" BallStatus="1" BallPossession="0"/>
+  </FrameSet>
+  <FrameSet TeamId="BALL" GameSection="secondHalf">
+    <Frame N="20" BallStatus="1" BallPossession="2"/>
+    <Frame N="21" BallStatus="1" BallPossession="1"/>
+    <Frame N="22" BallStatus="0" BallPossession="1"/>
+    <Frame N="23" BallStatus="1" BallPossession="0"/>
+    <Frame N="24" BallStatus="1" BallPossession="2"/>
+    <Frame N="25" BallStatus="0"/>
+    <Frame N="26" BallStatus="1" BallPossession="1"/>
+    <Frame N="27" BallStatus="1" BallPossession="2"/>
+    <Frame N="28" BallStatus="0" BallPossession="2"/>
+    <Frame N="29" BallStatus="1" BallPossession="1"/>
+  </FrameSet>
+</Game>

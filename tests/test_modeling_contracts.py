@@ -554,8 +554,8 @@ def test_external_match_validation():
     with pytest.raises(ValueError, match="halftime gap|1s, then"):
         build(half=np.roll(good.half, 1))
     labels = good.labels.copy()
-    labels[0] = 3
-    with pytest.raises(ValueError, match="X"):
+    labels[0] = 4
+    with pytest.raises(ValueError, match="C0"):
         build(labels=labels)
     players = good.players.copy()
     players[good.half == 0] = 0.5
