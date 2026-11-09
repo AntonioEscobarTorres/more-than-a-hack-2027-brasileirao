@@ -19,6 +19,32 @@ from preprocessing.prep_set_pieces import process_set_pieces
 from preprocessing.prep_phases import build_phase_features
 from preprocessing.prep_kickoffs import get_kickoff_metadata, save_kickoffs_json, pre_kickoff_mask
 
+
+def empty_tagging_dataframe(
+    blocks: list[tuple[int, int, int]], n_frames: int
+) -> pd.DataFrame:
+    """Build an empty tagging table with the frozen tagging schema and dtypes."""
+    video_frame = np.arange(n_frames, dtype=np.int32)
+    half = np.zeros(n_frames, dtype=np.int8)
+    for half_id, first, last in blocks:
+        half[first:last + 1] = half_id
+
+    return pd.DataFrame({
+        "video_frame": video_frame,
+        "half": half,
+        "is_set_piece": np.zeros(n_frames, dtype=bool),
+        "sp_type": pd.Series([""] * n_frames, dtype="string"),
+        "sp_team": pd.Series([""] * n_frames, dtype="string"),
+        "frames_to_next_sp": np.full(n_frames, np.nan, dtype=np.float32),
+        "frames_since_sp_end": np.full(n_frames, np.nan, dtype=np.float32),
+        "next_sp_type": pd.Series([""] * n_frames, dtype="string"),
+        "prev_sp_type": pd.Series([""] * n_frames, dtype="string"),
+        "n_tags_favor_home": np.zeros(n_frames, dtype=np.int16),
+        "n_tags_favor_away": np.zeros(n_frames, dtype=np.int16),
+        "pre_kickoff": np.zeros(n_frames, dtype=bool),
+    })
+
+
 def build_tagging_dataframe(
     ev: pd.DataFrame, 
     blocks: list[tuple[int, int, int]], 

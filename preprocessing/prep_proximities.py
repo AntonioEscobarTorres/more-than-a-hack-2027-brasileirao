@@ -413,12 +413,13 @@ def proximities_column_names():
     return [name for name, _ in proximities_column_specs()]
 
 
-def build_proximities_table(inputs):
+def build_proximities_table(inputs, pitch=(PITCH_L, PITCH_W)):
     """Run B2–B5 and assemble the intermediate parquet table (B6)."""
     proximity = team_proximity(inputs)
     pressure = radius_pressure(inputs, distances=proximity.distances)
     speeds = relative_speeds(inputs, proximity=proximity)
-    pitch = pitch_features(inputs.ball_x, inputs.ball_y)
+    pitch_geometry = pitch_features(
+        inputs.ball_x, inputs.ball_y, length=pitch[0], width=pitch[1])
     values = {
         "video_frame": np.asarray(inputs.video_frame, dtype=np.int32),
         "half": np.asarray(inputs.half, dtype=np.int8),
@@ -437,13 +438,13 @@ def build_proximities_table(inputs):
         "speed_rel_away": speeds.speed_rel_away,
         "speed_radial_home": speeds.speed_radial_home,
         "speed_radial_away": speeds.speed_radial_away,
-        "out_of_pitch": pitch.out_of_pitch,
-        "d_touchline": pitch.d_touchline,
-        "d_goalline": pitch.d_goalline,
+        "out_of_pitch": pitch_geometry.out_of_pitch,
+        "d_touchline": pitch_geometry.d_touchline,
+        "d_goalline": pitch_geometry.d_goalline,
     }
     frame = pd.DataFrame({name: values[name] for name, _ in proximities_column_specs()})
     _assert_proximities_contract(frame, n_frames=len(inputs.video_frame))
-    return frame, proximity, pressure, speeds, pitch
+    return frame, proximity, pressure, speeds, pitch_geometry
 
 
 def _assert_proximities_contract(frame, n_frames=N_FRAMES):
