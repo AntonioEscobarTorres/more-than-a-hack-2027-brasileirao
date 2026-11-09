@@ -111,8 +111,8 @@ class ExternalMatch:
         if not np.isin(self.labels, list(LABEL_CODES.values())).all():
             raise ValueError("labels must be C0 codes {}".format(sorted(LABEL_CODES.values())))
         gap = self.half == 0
-        if not np.array_equal(self.labels == X_CODE, gap):
-            raise ValueError("labels must be X ({}) exactly on the halftime gap".format(X_CODE))
+        if not (self.labels[gap] == X_CODE).all():
+            raise ValueError("labels must be X ({}) on the halftime gap".format(X_CODE))
         for field in ("players", "ball", "ball_z"):
             if not np.isnan(getattr(self, field)[gap]).all():
                 raise ValueError("{} must be NaN on the halftime gap".format(field))
@@ -187,8 +187,8 @@ def load_external(match: str, degrade: str) -> tuple[pd.DataFrame, np.ndarray]:
     if not np.isin(labels, list(LABEL_CODES.values())).all():
         raise ValueError("{}: labels must be C0 codes".format(lpath))
     gap = master["half"].to_numpy() == 0
-    if not np.array_equal(labels == X_CODE, gap):
-        raise ValueError("{}: labels must be X exactly where half == 0".format(lpath))
+    if not (labels[gap] == X_CODE).all():
+        raise ValueError("{}: labels must be X where half == 0".format(lpath))
     return master, labels
 
 

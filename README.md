@@ -105,6 +105,16 @@ The match assets are released to enrolled participants who have accepted the ter
 
 Full description of every asset and how the frames line up: **[DATA.md](DATA.md)**.
 
+## External data
+
+The IDSSE matches used for external model development are distributed under the Creative Commons
+Attribution 4.0 International license (CC BY 4.0). Source file names, checksums and processing
+details are documented in [docs/external_data.md](docs/external_data.md).
+
+Citation: Bassek, M., Rein, R., Weber, H., Memmert, D. (2025). *An integrated dataset of
+spatiotemporal and event data in elite soccer.* Scientific Data 12, 195.
+[https://doi.org/10.1038/s41597-025-04505-y](https://doi.org/10.1038/s41597-025-04505-y).
+
 ---
 
 ## How to run (preprocessing)

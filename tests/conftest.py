@@ -19,3 +19,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         help="Caminho para um arquivo Parquet master (mock ou real) a ser validado pelos testes de schema.",
     )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "network: requires explicit external network access")
