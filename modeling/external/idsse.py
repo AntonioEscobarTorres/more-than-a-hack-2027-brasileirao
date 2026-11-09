@@ -22,6 +22,12 @@ REVISION = "a715a38dfbaf5f58e431727c2b78d174101a703c"
 DATASET_URL = "https://huggingface.co/datasets/pysport/idsse-data/resolve/{}"
 _COMPETITION_BY_MATCH = {"J03WMX": "000001", "J03WN1": "000001"}
 _ALIVE_STATUS = "1"
+_SOURCE_BYTES = {
+    "J03WMX": (11930, 418524833), "J03WN1": (11722, 391722803),
+    "J03WOH": (11745, 348945715), "J03WOY": (11952, 362567859),
+    "J03WPY": (11922, 371688499), "J03WQQ": (11932, 356219423),
+    "J03WR9": (11823, 372934140),
+}
 
 
 def _file_names(match_id: str) -> tuple[str, str]:
@@ -226,8 +232,8 @@ def _records_from_dataset(ds, xml_labels):
         else:
             owning = frame.ball_owning_team
             kloppy_label = LABEL_CODES["H"] if owning == teams[0] else LABEL_CODES["A"]
-            if xml_label in (LABEL_CODES["H"], LABEL_CODES["A"]):
-                assert kloppy_label == xml_label, "Kloppy/XML possession mismatch at {}".format((half, frame_id))
+        if xml_label != LABEL_CODES["X"]:
+            assert kloppy_label == xml_label, "Kloppy/XML label mismatch at {}".format((half, frame_id))
         records.append({"half": half, "frame_id": frame_id, "players": players,
                         "ball": ball, "label": xml_label})
     return records
@@ -251,18 +257,30 @@ def _write_reports(match_summaries):
     reports_dir = paths.repo_root() / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     rows = ["# IDSSE overview", "", "Generated from the public IDSSE matches.", "",
-            "| Match | Half 1 frames | Half 2 frames | Alive | Dead | H | A | D | X (invalid possession) | Pitch (m) |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+            "| Match | Half 1 frames | Half 2 frames | Missing frames | Alive | Dead | H | A | D | X (invalid possession) | Pitch (m) |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
     for item in match_summaries:
-        rows.append("| {match} | {h1} | {h2} | {alive:.2%} | {dead:.2%} | {home:.2%} | {away:.2%} | {d:.2%} | {x} | {length:g} × {width:g} |".format(**item))
+        rows.append("| {match} | {h1} | {h2} | {missing} | {alive:.2%} | {dead:.2%} | {home:.2%} | {away:.2%} | {d:.2%} | {x} | {length:g} × {width:g} |".format(**item))
     (reports_dir / "idsse_overview.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
-def process_match(match_id: str, *, delete_raw: bool = False, limit: int | None = None):
-    meta_path, tracking_path = download(match_id)
-    required = meta_path.stat().st_size + tracking_path.stat().st_size
+def _check_disk_space(match_id: str) -> None:
+    if match_id not in IDSSE_MATCHES:
+        raise ValueError("unknown IDSSE match {!r}".format(match_id))
+    raw_dir = paths.ext_dir() / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    filenames = _file_names(match_id)
+    required = sum(size for filename, size in zip(filenames, _SOURCE_BYTES[match_id])
+                   if not (raw_dir / filename).exists())
     if shutil.disk_usage(paths.ext_dir()).free < required:
-        raise OSError("insufficient free disk space to process {}".format(match_id))
+        raise OSError("insufficient free disk space to download and convert {}".format(match_id))
+
+
+def process_match(match_id: str, *, delete_raw: bool = False, limit: int | None = None):
+    _check_disk_space(match_id)
+    output_path = arrays_path(match_id)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path, tracking_path = download(match_id)
     match = load_match(match_id, limit=limit)
     output = match.save(arrays_path(match_id))
     if delete_raw:
@@ -279,6 +297,7 @@ def main(argv=None):
     matches = IDSSE_MATCHES if args.matches == "all" else tuple(x.strip() for x in args.matches.split(",") if x.strip())
     summaries = []
     for match_id in matches:
+        _check_disk_space(match_id)
         _, tracking_path = download(match_id)
         xml_labels = parse_ball_labels(tracking_path)
         output, match = process_match(match_id, delete_raw=args.delete_raw)
@@ -288,7 +307,10 @@ def main(argv=None):
         denom = int(observed.sum())
         n1 = int(np.count_nonzero(match.half == 1))
         n2 = int(np.count_nonzero(match.half == 2))
+        xml_h1 = sum(half == 1 for half, _ in xml_labels)
+        xml_h2 = sum(half == 2 for half, _ in xml_labels)
         summaries.append({"match": match_id, "h1": n1, "h2": n2,
+                          "missing": (n1 - xml_h1) + (n2 - xml_h2),
                           "alive": float(alive.sum() / denom), "dead": float(dead.sum() / denom),
                           "home": float(np.count_nonzero(match.labels[observed] == LABEL_CODES["H"]) / denom),
                           "away": float(np.count_nonzero(match.labels[observed] == LABEL_CODES["A"]) / denom),
