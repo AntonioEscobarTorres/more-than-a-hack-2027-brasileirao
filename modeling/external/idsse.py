@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 from lxml import etree
 
+from kloppy.domain import Origin, Unit
 from kloppy.domain.models.common import BallState
 from kloppy.sportec import load_tracking
 
@@ -22,6 +23,12 @@ REVISION = "a715a38dfbaf5f58e431727c2b78d174101a703c"
 DATASET_URL = "https://huggingface.co/datasets/pysport/idsse-data/resolve/{}"
 _COMPETITION_BY_MATCH = {"J03WMX": "000001", "J03WN1": "000001"}
 _ALIVE_STATUS = "1"
+# kloppy must return the provider's own system (metres, origin at the centre spot). Its default
+# ("kloppy") is already normalised to [0, 1] from the top-left corner, and normalising that again
+# collapses every position into a ~1 m square at the centre spot.
+KLOPPY_COORDINATES = "sportec"
+# DFL/IDSSE position files store speed ``S`` in km/h; C9 stores m/s.
+KMH_TO_MS = 1.0 / 3.6
 _SOURCE_BYTES = {
     "J03WMX": (11930, 418524833), "J03WN1": (11722, 391722803),
     "J03WOH": (11745, 348945715), "J03WOY": (11952, 362567859),
@@ -204,7 +211,21 @@ def frames_to_arrays(records, *, match_id: str, pitch, slot_ids=None) -> Externa
     return arrays
 
 
+def check_coordinate_system(coordinate_system) -> None:
+    """Fail unless the dataset is in centred metric coordinates (what frames_to_arrays expects)."""
+    dims = coordinate_system.pitch_dimensions
+    if coordinate_system.origin != Origin.CENTER or dims.unit != Unit.METERS:
+        raise ValueError("IDSSE tracking must be loaded in centred metres (coordinates={!r}), "
+                         "got origin={} unit={}".format(KLOPPY_COORDINATES,
+                                                        coordinate_system.origin, dims.unit))
+
+
+def _kmh_to_ms(value):
+    return None if value is None else float(value) * KMH_TO_MS
+
+
 def _records_from_dataset(ds, xml_labels):
+    check_coordinate_system(ds.metadata.coordinate_system)
     teams = ds.metadata.teams
     player_team = {}
     for team_index, team in enumerate(teams):
@@ -215,7 +236,7 @@ def _records_from_dataset(ds, xml_labels):
         half = int(frame.period.id)
         frame_id = int(frame.frame_id)
         ball = {"x": frame.ball_coordinates.x, "y": frame.ball_coordinates.y,
-                "z": frame.ball_coordinates.z, "speed": frame.ball_speed}
+                "z": frame.ball_coordinates.z, "speed": _kmh_to_ms(frame.ball_speed)}
         players = {}
         for player, pdata in frame.players_data.items():
             if player not in player_team:
@@ -223,7 +244,7 @@ def _records_from_dataset(ds, xml_labels):
             players[player.player_id] = {"team_id": player_team[player],
                                          "x": pdata.coordinates.x,
                                          "y": pdata.coordinates.y,
-                                         "speed": pdata.speed}
+                                         "speed": _kmh_to_ms(pdata.speed)}
         xml_label = xml_labels.get((half, frame_id))
         if xml_label is None:
             raise ValueError("Kloppy frame missing from XML labels: {}".format((half, frame_id)))
@@ -232,35 +253,45 @@ def _records_from_dataset(ds, xml_labels):
         else:
             owning = frame.ball_owning_team
             kloppy_label = LABEL_CODES["H"] if owning == teams[0] else LABEL_CODES["A"]
-        if xml_label != LABEL_CODES["X"]:
-            assert kloppy_label == xml_label, "Kloppy/XML label mismatch at {}".format((half, frame_id))
+        if xml_label != LABEL_CODES["X"] and kloppy_label != xml_label:
+            raise ValueError("kloppy/XML label mismatch at {}".format((half, frame_id)))
         records.append({"half": half, "frame_id": frame_id, "players": players,
                         "ball": ball, "label": xml_label})
     return records
 
 
-def load_match(match_id: str, *, limit: int | None = None) -> ExternalMatch:
-    """Load one IDSSE match, validate labels against XML, and convert to C9."""
+def load_dataset(meta_path, tracking_path, *, limit: int | None = None):
+    """kloppy TrackingDataset with every frame (dead ball too) in centred metres."""
+    return load_tracking(meta_data=meta_path, raw_data=tracking_path,
+                         only_alive=False, limit=limit, coordinates=KLOPPY_COORDINATES)
+
+
+def _load_match_and_labels(match_id: str, *, limit: int | None = None):
     meta_path, tracking_path = download(match_id)
     xml_labels = parse_ball_labels(tracking_path)
-    dataset = load_tracking(meta_data=meta_path, raw_data=tracking_path,
-                            only_alive=False, limit=limit)
+    dataset = load_dataset(meta_path, tracking_path, limit=limit)
     records = _records_from_dataset(dataset, xml_labels)
     dimensions = dataset.metadata.pitch_dimensions
     match = frames_to_arrays(
         records, match_id=match_id,
         pitch=(dimensions.pitch_length, dimensions.pitch_width))
-    return match
+    return match, xml_labels
+
+
+def load_match(match_id: str, *, limit: int | None = None) -> ExternalMatch:
+    """Load one IDSSE match, validate labels against XML, and convert to C9."""
+    return _load_match_and_labels(match_id, limit=limit)[0]
 
 
 def _write_reports(match_summaries):
     reports_dir = paths.repo_root() / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     rows = ["# IDSSE overview", "", "Generated from the public IDSSE matches.", "",
-            "| Match | Half 1 frames | Half 2 frames | Missing frames | Alive | Dead | H | A | D | X (invalid possession) | Pitch (m) |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+            "Percentages are over the frames present in the source (missing frames excluded).", "",
+            "| Match | Half 1 frames | Half 2 frames | Missing frames | Alive | H | A | D | X (invalid possession) | Pitch (m) |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
     for item in match_summaries:
-        rows.append("| {match} | {h1} | {h2} | {missing} | {alive:.2%} | {dead:.2%} | {home:.2%} | {away:.2%} | {d:.2%} | {x} | {length:g} × {width:g} |".format(**item))
+        rows.append("| {match} | {h1} | {h2} | {missing} | {alive:.2%} | {home:.2%} | {away:.2%} | {d:.2%} | {x} | {length:g} × {width:g} |".format(**item))
     (reports_dir / "idsse_overview.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
@@ -276,17 +307,38 @@ def _check_disk_space(match_id: str) -> None:
         raise OSError("insufficient free disk space to download and convert {}".format(match_id))
 
 
+def _summary(match_id: str, match: ExternalMatch, xml_labels) -> dict:
+    """Overview row; percentages over the frames present in the XML (missing frames excluded)."""
+    codes = np.fromiter(xml_labels.values(), dtype=np.int8, count=len(xml_labels))
+    present = codes.size
+    n1 = int(np.count_nonzero(match.half == 1))
+    n2 = int(np.count_nonzero(match.half == 2))
+    xml_h1 = sum(half == 1 for half, _ in xml_labels)
+    xml_h2 = sum(half == 2 for half, _ in xml_labels)
+
+    def share(code):
+        return float(np.count_nonzero(codes == LABEL_CODES[code]) / present)
+
+    return {"match": match_id, "h1": n1, "h2": n2,
+            "missing": (n1 - xml_h1) + (n2 - xml_h2),
+            "alive": 1.0 - share("D"), "home": share("H"), "away": share("A"), "d": share("D"),
+            "x": int(np.count_nonzero(codes == LABEL_CODES["X"])),
+            "length": match.pitch[0], "width": match.pitch[1]}
+
+
 def process_match(match_id: str, *, delete_raw: bool = False, limit: int | None = None):
+    """Download, convert and save one match; return (output path, match, overview row)."""
     _check_disk_space(match_id)
     output_path = arrays_path(match_id)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path, tracking_path = download(match_id)
-    match = load_match(match_id, limit=limit)
-    output = match.save(arrays_path(match_id))
+    match, xml_labels = _load_match_and_labels(match_id, limit=limit)
+    output = match.save(output_path)
+    summary = _summary(match_id, match, xml_labels)
     if delete_raw:
         meta_path.unlink(missing_ok=True)
         tracking_path.unlink(missing_ok=True)
-    return output, match
+    return output, match, summary
 
 
 def main(argv=None):
@@ -297,26 +349,8 @@ def main(argv=None):
     matches = IDSSE_MATCHES if args.matches == "all" else tuple(x.strip() for x in args.matches.split(",") if x.strip())
     summaries = []
     for match_id in matches:
-        _check_disk_space(match_id)
-        _, tracking_path = download(match_id)
-        xml_labels = parse_ball_labels(tracking_path)
-        output, match = process_match(match_id, delete_raw=args.delete_raw)
-        observed = match.half != 0
-        dead = match.labels[observed] == LABEL_CODES["D"]
-        alive = ~dead
-        denom = int(observed.sum())
-        n1 = int(np.count_nonzero(match.half == 1))
-        n2 = int(np.count_nonzero(match.half == 2))
-        xml_h1 = sum(half == 1 for half, _ in xml_labels)
-        xml_h2 = sum(half == 2 for half, _ in xml_labels)
-        summaries.append({"match": match_id, "h1": n1, "h2": n2,
-                          "missing": (n1 - xml_h1) + (n2 - xml_h2),
-                          "alive": float(alive.sum() / denom), "dead": float(dead.sum() / denom),
-                          "home": float(np.count_nonzero(match.labels[observed] == LABEL_CODES["H"]) / denom),
-                          "away": float(np.count_nonzero(match.labels[observed] == LABEL_CODES["A"]) / denom),
-                          "d": float(dead.sum() / denom),
-                          "x": sum(label == LABEL_CODES["X"] for label in xml_labels.values()),
-                          "length": match.pitch[0], "width": match.pitch[1]})
+        output, _, summary = process_match(match_id, delete_raw=args.delete_raw)
+        summaries.append(summary)
         print("{}: {}".format(match_id, output))
     _write_reports(summaries)
 

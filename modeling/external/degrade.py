@@ -256,38 +256,13 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     visible_after_crowd = _clear_bursts(ball_visible, crowd_starts, lengths, blocks)
     bg_random = rng.random(match.n_frames)
     bg_lengths = _sample_gap_lengths(rng, match.n_frames, cfg, profile)
-    calibrated_target = max(0.0, cfg["target_ball_visible"] - cfg["phantom_frac"])
-    if visible_after_crowd.sum() / playable.sum() < calibrated_target:
-        raise ValueError("air and crowd gaps exceed the target ball visibility")
 
-    def bg_visible(hazard):
-        starts = playable & visible_after_crowd & (bg_random < hazard)
-        return _clear_bursts(visible_after_crowd, starts, bg_lengths, blocks)
-
-    low, high = 0.0, min(cfg["bg_hazard_init"], cfg["hazard_max"])
-    while high < cfg["hazard_max"] and bg_visible(high).sum() / playable.sum() > calibrated_target:
-        low, high = high, min(cfg["hazard_max"], high * 2.0)
-    if bg_visible(high).sum() / playable.sum() > calibrated_target:
-        raise ValueError("hazard_max cannot reach target_ball_visible")
-    for _ in range(cfg["bisection_iterations"]):
-        mid = (low + high) / 2.0
-        fraction = bg_visible(mid).sum() / playable.sum()
-        if fraction > calibrated_target:
-            low = mid
-        else:
-            high = mid
-    ball_visible = bg_visible((low + high) / 2.0)
-    ball[~ball_visible, :2] = np.nan
-    ball[~ball_visible, 2] = np.nan
-
-    noise = rng.normal(0.0, cfg["ball_noise_m"], size=(match.n_frames, 2))
-    ball[:, 0] += (noise[:, 0] / length_m).astype(np.float32)
-    ball[:, 1] += (noise[:, 1] / width_m).astype(np.float32)
-    ball[~playable] = np.nan
-
-    # Phantom bursts are clipped at each half boundary and counted by covered frames.
+    # Phantom bursts (step 5) are drawn here so the background-gap calibration can target the
+    # visibility the output really has: a phantom on a frame that is already visible adds
+    # nothing, one on a gap makes it visible. They are applied after the noise (step 4).
     target_phantom_frames = int(np.ceil(cfg["phantom_frac"] * playable.sum()))
     phantom_mask = np.zeros(match.n_frames, dtype=bool)
+    phantom_bursts = []
     phantom_min, phantom_max = cfg["phantom_len_frames"]
     while np.count_nonzero(phantom_mask) < target_phantom_frames:
         _, first, last = blocks[int(rng.integers(0, len(blocks)))]
@@ -297,8 +272,49 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
         phantom_mask[start:end] = True
         ghost_x = rng.uniform(-cfg["phantom_margin_m"], length_m + cfg["phantom_margin_m"])
         ghost_y = rng.uniform(-cfg["phantom_margin_m"], width_m + cfg["phantom_margin_m"])
-        ball[start:end, :2] = (ghost_x / length_m, ghost_y / width_m)
+        phantom_bursts.append((start, end, ghost_x / length_m, ghost_y / width_m))
+
+    target_visible = cfg["target_ball_visible"]
+
+    def bg_visible(hazard):
+        starts = playable & visible_after_crowd & (bg_random < hazard)
+        return _clear_bursts(visible_after_crowd, starts, bg_lengths, blocks)
+
+    def final_fraction(hazard):
+        return float((bg_visible(hazard) | phantom_mask)[playable].mean())
+
+    if final_fraction(0.0) < target_visible - cfg["target_ball_visible_tolerance"]:
+        raise ValueError("air and crowd gaps exceed the target ball visibility")
+    low, high = 0.0, min(cfg["bg_hazard_init"], cfg["hazard_max"])
+    while high < cfg["hazard_max"] and final_fraction(high) > target_visible:
+        low, high = high, min(cfg["hazard_max"], high * 2.0)
+    if final_fraction(high) > target_visible + cfg["target_ball_visible_tolerance"]:
+        raise ValueError("hazard_max cannot reach target_ball_visible")
+    for _ in range(cfg["bisection_iterations"]):
+        mid = (low + high) / 2.0
+        if final_fraction(mid) > target_visible:
+            low = mid
+        else:
+            high = mid
+    # The visible fraction is a step function of the hazard: keep the closer bracket end.
+    hazard = min((low, high), key=lambda h: abs(final_fraction(h) - target_visible))
+    ball_visible = bg_visible(hazard)
+    ball[~ball_visible, :2] = np.nan
+    ball[~ball_visible, 2] = np.nan
+
+    noise = rng.normal(0.0, cfg["ball_noise_m"], size=(match.n_frames, 2))
+    ball[:, 0] += (noise[:, 0] / length_m).astype(np.float32)
+    ball[:, 1] += (noise[:, 1] / width_m).astype(np.float32)
+    ball[~playable] = np.nan
+
+    # Phantom bursts (drawn above) are clipped at each half boundary.
+    for start, end, ghost_x, ghost_y in phantom_bursts:
+        ball[start:end, :2] = (ghost_x, ghost_y)
     ball[playable, 2] = np.nan
+    visible_fraction = float((np.isfinite(ball[playable, 0]) & np.isfinite(ball[playable, 1])).mean())
+    if abs(visible_fraction - cfg["target_ball_visible"]) > cfg["target_ball_visible_tolerance"]:
+        raise ValueError("ball visibility {:.4f} misses target_ball_visible {} +/- {}".format(
+            visible_fraction, cfg["target_ball_visible"], cfg["target_ball_visible_tolerance"]))
 
     # Calibrate per-player alternating exponential renewals with common random numbers.
     roster = players.shape[1]
@@ -332,15 +348,23 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     visibility = _player_visibility(uniforms, blocks, roster, visible_mean,
                                     ((lo + hi) / 2.0) * cfg["fps"], match.n_frames, rng)
     players = _assign_slots(players, visibility, match.slot_team_ids, blocks)
+    tracked_mean = _count_players(players, blocks)
+    if abs(tracked_mean - cfg["target_tracked_mean"]) > cfg["target_tracked_mean_tolerance"]:
+        raise ValueError("tracked mean {:.3f} misses target_tracked_mean {} +/- {}".format(
+            tracked_mean, cfg["target_tracked_mean"], cfg["target_tracked_mean_tolerance"]))
 
     player_noise = rng.normal(0.0, cfg["player_noise_m"], size=players[:, :, :2].shape)
     players[:, :, 0] += (player_noise[:, :, 0] / length_m).astype(np.float32)
     players[:, :, 1] += (player_noise[:, :, 1] / width_m).astype(np.float32)
 
-    # Duplicate tracks use spare same-team slots and never cross half boundaries.
-    frames_with_duplicates = set()
+    # Duplicate tracks: one copy of one player per burst, in the lowest free same-team slot, never
+    # crossing a half boundary and never more than one duplicate per frame. Bursts are added until
+    # dup_frac of the half frames carry more than overtracked_threshold objects.
+    threshold = cfg["overtracked_threshold"]
+    tracked = np.isfinite(players[:, :, 0]).sum(axis=1)
     target_dup_frames = int(np.ceil(cfg["dup_frac"] * playable.sum()))
-    duplicate_covered = 0
+    duplicate_covered = int(np.count_nonzero(playable & (tracked > threshold)))
+    has_duplicate = np.zeros(match.n_frames, dtype=bool)
     duplicate_attempts = 0
     min_len = max(1, int(np.ceil(cfg["dup_len_s"][0] * cfg["fps"])))
     max_len = max(min_len, int(np.floor(cfg["dup_len_s"][1] * cfg["fps"])))
@@ -350,8 +374,7 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
         start = int(rng.integers(first, last + 1))
         duration = int(rng.integers(min_len, max_len + 1))
         end = min(last + 1, start + duration)
-        burst_frames = [frame for frame in range(start, end)
-                        if frame not in frames_with_duplicates]
+        burst_frames = [frame for frame in range(start, end) if not has_duplicate[frame]]
         if not burst_frames:
             continue
         first_frame = burst_frames[0]
@@ -367,24 +390,18 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
         normalized_offset = (offset / np.array([length_m, width_m], dtype=np.float64)).astype(
             np.float32)
         for frame in burst_frames:
-            counts = np.isfinite(players[frame, :, 0]).sum()
-            if counts > cfg["overtracked_threshold"]:
-                frames_with_duplicates.add(frame)
-                duplicate_covered += 1
-                continue
             if not np.isfinite(players[frame, source, :2]).all():
                 continue
-            while counts <= cfg["overtracked_threshold"]:
-                team_free = np.flatnonzero((match.slot_team_ids == team) &
-                                           np.isnan(players[frame, :, 0]))
-                if team_free.size == 0:
-                    break
-                target = int(team_free[0])
-                players[frame, target, :2] = players[frame, source, :2] + normalized_offset
-                players[frame, target, 2] = players[frame, source, 2]
-                counts += 1
-            if counts > cfg["overtracked_threshold"]:
-                frames_with_duplicates.add(frame)
+            team_free = np.flatnonzero((match.slot_team_ids == team) &
+                                       np.isnan(players[frame, :, 0]))
+            if team_free.size == 0:
+                continue
+            target = int(team_free[0])
+            players[frame, target, :2] = players[frame, source, :2] + normalized_offset
+            players[frame, target, 2] = players[frame, source, 2]
+            has_duplicate[frame] = True
+            tracked[frame] += 1
+            if tracked[frame] == threshold + 1:
                 duplicate_covered += 1
     if duplicate_covered < target_dup_frames:
         raise ValueError("dup_max_attempts cannot reach dup_frac")

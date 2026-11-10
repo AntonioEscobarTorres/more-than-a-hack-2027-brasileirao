@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from modeling.contracts import LABEL_CODES
 from modeling.external.files import ExternalMatch, GAP_FRAMES
-from kloppy.sportec import load_tracking
+from kloppy.domain import DatasetType, Provider, build_coordinate_system
+from kloppy.domain.models.common import BallState
 
-from modeling.external.idsse import download, frames_to_arrays, parse_ball_labels
+from modeling.external import idsse
+from modeling.external.idsse import frames_to_arrays, load_match, parse_ball_labels
 
 
 def test_parse_ball_labels_keeps_invalid_live_possession_as_x():
@@ -79,7 +82,112 @@ def test_frames_to_arrays_rejects_roster_overflow():
 @pytest.mark.skipif(os.environ.get("IDSSE_NETWORK_TESTS") != "1",
                     reason="set IDSSE_NETWORK_TESTS=1 to run the public IDSSE smoke test")
 def test_real_idsse_smoke_loads_500_frames():
-    meta_path, tracking_path = download("J03WMX")
-    dataset = load_tracking(meta_data=meta_path, raw_data=tracking_path,
-                            only_alive=False, limit=500)
+    meta_path, tracking_path = idsse.download("J03WMX")
+    dataset = idsse.load_dataset(meta_path, tracking_path, limit=500)
     assert len(dataset.frames) == 500
+    records = idsse._records_from_dataset(dataset, parse_ball_labels(tracking_path))
+    # limit=500 only reaches the first half; mirror it as half 2 to run the C9 conversion.
+    records = records + [dict(record, half=2) for record in records]
+    dims = dataset.metadata.pitch_dimensions
+    match = frames_to_arrays(records, match_id="J03WMX",
+                             pitch=(dims.pitch_length, dims.pitch_width))
+    observed = match.half != 0
+    x = match.players[observed, :, 0]
+    y = match.players[observed, :, 1]
+    # Players spread over the pitch: a collapsed (double-normalised) layout fails this.
+    assert np.nanmax(x) - np.nanmin(x) > 0.3
+    assert np.nanmax(y) - np.nanmin(y) > 0.3
+    assert np.nanmin(x) > -0.1 and np.nanmax(x) < 1.1
+    # Speeds are m/s: nobody runs faster than ~12 m/s.
+    assert np.nanmax(match.players[observed, :, 2]) < 12.5
+
+
+# -- coordinate system, units and labels of the kloppy adapter ------------------------------------
+
+def _coordinate_system(provider):
+    return build_coordinate_system(provider, dataset_type=DatasetType.TRACKING,
+                                   pitch_length=105.0, pitch_width=68.0)
+
+
+def test_check_coordinate_system_accepts_sportec_and_rejects_kloppy_default():
+    idsse.check_coordinate_system(_coordinate_system(Provider.SPORTEC))
+    with pytest.raises(ValueError, match="centred metres"):
+        idsse.check_coordinate_system(_coordinate_system(Provider.KLOPPY))
+
+
+def test_load_match_requests_sportec_coordinates(monkeypatch, tmp_path):
+    calls = {}
+
+    class Stop(Exception):
+        pass
+
+    def fake_load_tracking(**kwargs):
+        calls.update(kwargs)
+        raise Stop
+
+    monkeypatch.setattr(idsse, "download", lambda match_id: (tmp_path / "m.xml", tmp_path / "t.xml"))
+    monkeypatch.setattr(idsse, "parse_ball_labels", lambda path: {})
+    monkeypatch.setattr(idsse, "load_tracking", fake_load_tracking)  # used by load_dataset
+    with pytest.raises(Stop):
+        load_match("J03WMX", limit=10)
+    assert calls["coordinates"] == "sportec"
+    assert calls["only_alive"] is False
+
+
+class _Player:
+    """Hashable stand-in for kloppy's Player (only player_id is used)."""
+
+    def __init__(self, player_id):
+        self.player_id = player_id
+
+
+def _fake_dataset(coordinate_system):
+    p_home, p_away = _Player("p_home"), _Player("p_away")
+    home, away = SimpleNamespace(players=[p_home]), SimpleNamespace(players=[p_away])
+
+    def frame(frame_id, state, owner):
+        return SimpleNamespace(
+            period=SimpleNamespace(id=1), frame_id=frame_id, ball_state=state,
+            ball_owning_team=owner, ball_speed=36.0,
+            ball_coordinates=SimpleNamespace(x=0.0, y=0.0, z=0.1),
+            players_data={
+                p_home: SimpleNamespace(coordinates=SimpleNamespace(x=-10.0, y=5.0), speed=18.0),
+                p_away: SimpleNamespace(coordinates=SimpleNamespace(x=10.0, y=-5.0), speed=7.2),
+            })
+
+    metadata = SimpleNamespace(teams=[home, away], coordinate_system=coordinate_system)
+    frames = [frame(1, BallState.ALIVE, home), frame(2, BallState.DEAD, away)]
+    return SimpleNamespace(metadata=metadata, frames=frames)
+
+
+def test_records_convert_speed_to_mps_and_keep_labels():
+    ds = _fake_dataset(_coordinate_system(Provider.SPORTEC))
+    xml = {(1, 1): LABEL_CODES["H"], (1, 2): LABEL_CODES["D"]}
+    records = idsse._records_from_dataset(ds, xml)
+    assert [r["label"] for r in records] == [LABEL_CODES["H"], LABEL_CODES["D"]]
+    assert records[0]["ball"]["speed"] == pytest.approx(10.0)
+    assert records[0]["players"]["p_home"]["speed"] == pytest.approx(5.0)
+    assert records[0]["players"]["p_away"]["speed"] == pytest.approx(2.0)
+
+
+def test_records_reject_kloppy_coordinates_and_label_mismatch():
+    with pytest.raises(ValueError, match="centred metres"):
+        idsse._records_from_dataset(_fake_dataset(_coordinate_system(Provider.KLOPPY)),
+                                    {(1, 1): LABEL_CODES["H"], (1, 2): LABEL_CODES["D"]})
+    with pytest.raises(ValueError, match="label mismatch"):
+        idsse._records_from_dataset(_fake_dataset(_coordinate_system(Provider.SPORTEC)),
+                                    {(1, 1): LABEL_CODES["A"], (1, 2): LABEL_CODES["D"]})
+
+
+def test_summary_excludes_missing_frames_from_percentages():
+    half = np.r_[np.ones(4, np.int8), np.zeros(GAP_FRAMES, np.int8), np.full(2, 2, np.int8)]
+    match = SimpleNamespace(half=half, pitch=np.array([105.0, 68.0]))
+    # Half 1 has frames 10..13 in the arrays but frame 12 is missing from the XML.
+    xml = {(1, 10): LABEL_CODES["H"], (1, 11): LABEL_CODES["D"], (1, 13): LABEL_CODES["X"],
+           (2, 5): LABEL_CODES["A"], (2, 6): LABEL_CODES["A"]}
+    row = idsse._summary("J03WMX", match, xml)
+    assert row["missing"] == 1
+    assert row["alive"] == pytest.approx(4 / 5)
+    assert row["d"] == pytest.approx(1 / 5)
+    assert row["home"] == pytest.approx(1 / 5) and row["away"] == pytest.approx(2 / 5)
+    assert row["x"] == 1
