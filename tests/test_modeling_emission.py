@@ -115,3 +115,25 @@ def test_p_stay_monte_carlo_mean_duration():
     extra = rng.geometric(1.0 - p, size=n_trials)
     lengths = (min_dwell - 1) + extra
     np.testing.assert_allclose(lengths.mean(), mean_frames, rtol=0.02, atol=0.0)
+
+
+def _decoder_cfg(**exit_rows):
+    rows = {"H": {"A": 0.5, "D": 0.5}, "A": {"H": 0.5, "D": 0.5}, "D": {"H": 0.5, "A": 0.5}}
+    rows.update(exit_rows)
+    return {"lam_team": 0.2, "lam_dead": 0.2,
+            "mean_duration_s": {"H": 15.0, "A": 15.0, "D": 20.0},
+            "exit_split": rows,
+            "min_dwell_frames": {"H": 12, "A": 12, "D": 25}}
+
+
+def test_decoder_params_arrays_are_read_only():
+    params = DecoderParams.from_config(_decoder_cfg())
+    for name in ("mean_duration_frames", "exit_split", "min_dwell", "p_stay",
+                 "log_p_stay", "log_exit"):
+        with pytest.raises(ValueError):
+            getattr(params, name)[0] = 0
+
+
+def test_decoder_params_reject_exit_split_outside_unit_interval():
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        DecoderParams.from_config(_decoder_cfg(H={"A": 1.2, "D": -0.2}))

@@ -9,6 +9,7 @@ import pytest
 
 from modeling.contracts import STATES
 from modeling.decode.params import DecoderParams
+from modeling.decode import viterbi
 from modeling.decode.viterbi import decode_match
 
 
@@ -257,3 +258,77 @@ def test_runtime_under_ten_seconds_for_80k_frames():
     elapsed = time.perf_counter() - t0
     assert labels.shape == (n,)
     assert elapsed < 10.0, "decode took {:.2f}s (limit 10s)".format(elapsed)
+
+
+# -- vectorised recursion == original per-sub-state loop ------------------------------------------
+
+def _reference_block(scores, params):
+    """The original (F2-02) pure-Python recursion, kept as a reference for the vectorised one."""
+    t_len = scores.shape[0]
+    k_total, state_of, _dwell, _term, terminal_idx, offsets, preds = viterbi._expand_topology(
+        params.min_dwell)
+    viterbi._attach_transition_logs(preds, params.min_dwell, offsets, terminal_idx,
+                                    params.log_p_stay, params.log_exit)
+    delta = np.full(k_total, -np.inf)
+    for s in range(3):
+        delta[int(terminal_idx[s])] = np.log(1.0 / 3.0) + scores[0, s]
+    ptr = np.zeros((t_len, k_total), dtype=np.int64)
+    for t in range(1, t_len):
+        nxt = np.full(k_total, -np.inf)
+        for j in range(k_total):
+            best_v, best_i = -np.inf, -1
+            for i, la in preds[j]:
+                v = delta[i] + la
+                if v > best_v:
+                    best_v, best_i = v, i
+            if best_i >= 0 and np.isfinite(best_v):
+                nxt[j] = best_v + scores[t, state_of[j]]
+                ptr[t, j] = best_i
+        delta = nxt
+    path = np.empty(t_len, dtype=np.int64)
+    path[-1] = int(np.argmax(delta))
+    for t in range(t_len - 1, 0, -1):
+        path[t - 1] = ptr[t, path[t]]
+    return state_of[path].astype(np.int8)
+
+
+@pytest.mark.parametrize("min_dwell", [(1, 1, 1), (12, 12, 25), (3, 1, 2), (1, 5, 1)])
+@pytest.mark.parametrize("integer_scores", [False, True])
+def test_vectorised_matches_reference_loop(min_dwell, integer_scores):
+    rng = np.random.default_rng(sum(min_dwell) + 7 * integer_scores)
+    n = 1500
+    if integer_scores:  # many exact ties: exercises the smallest-index tie-break
+        scores = rng.integers(-1, 2, size=(n, 3)).astype(np.float64)
+    else:
+        scores = rng.normal(0.0, 0.5, size=(n, 3))
+    params = _params(min_dwell=min_dwell, mean_extra=40.0)
+    got = viterbi._viterbi_block(scores, params)
+    np.testing.assert_array_equal(got, _reference_block(scores, params))
+
+
+def test_exit_split_zero_blocks_transition():
+    split = {"H": {"A": 1.0, "D": 0.0}, "A": {"H": 0.5, "D": 0.5}, "D": {"H": 0.5, "A": 0.5}}
+    params = _params(min_dwell=(1, 1, 1), mean_extra=5.0, exit_split=split)
+    n = 60
+    scores = np.zeros((n, 3))
+    scores[:30, 0] = 2.0
+    scores[30:, 2] = 2.0  # D evidence right after H: H -> D is forbidden, must pass via A
+    codes = viterbi._viterbi_block(scores, params)
+    np.testing.assert_array_equal(codes, _reference_block(scores, params))
+    for prev, cur in zip(codes[:-1], codes[1:]):
+        assert not (prev == 0 and cur == 2)
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+def test_non_finite_scores_are_rejected(bad):
+    params = _params(min_dwell=(2, 2, 2))
+    scores = np.zeros((50, 3))
+    scores[20, 1] = bad
+    with pytest.raises(ValueError, match="finite"):
+        decode_match(scores, np.ones(50, np.int8), np.zeros(50, bool), params)
+
+
+def test_invalid_half_values_are_rejected():
+    params = _params()
+    with pytest.raises(ValueError, match="half"):
+        decode_match(np.zeros((5, 3)), np.array([1, 1, 3, 2, 2]), np.zeros(5, bool), params)

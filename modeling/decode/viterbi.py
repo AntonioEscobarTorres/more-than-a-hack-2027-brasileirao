@@ -87,74 +87,63 @@ def _attach_transition_logs(
         preds[j].sort(key=lambda pair: pair[0])
 
 
-def _viterbi_block(scores: np.ndarray, params: DecoderParams) -> np.ndarray:
-    """Decode one contiguous half block. ``scores`` is float64 ``(T, 3)``."""
-    t_len = int(scores.shape[0])
-    if t_len == 0:
-        return np.empty(0, dtype=np.int8)
+def _dense_predecessors(params: DecoderParams):
+    """Predecessor table of the expanded chain as dense ``(K, P)`` arrays.
 
+    Returns ``(state_of, terminal_idx, pred_src, pred_log)``. Row ``j`` lists the predecessors
+    of sub-state ``j`` sorted by source index; unused slots point at the sentinel index ``K``
+    (whose score is always -inf) with log-prob -inf. Every sub-state has at most 3 predecessors.
+    """
     min_dwell = params.min_dwell
-    k_total, state_of, _dwell_of, is_terminal, terminal_idx, offsets, preds = (
+    k_total, state_of, _dwell_of, _is_terminal, terminal_idx, offsets, preds = (
         _expand_topology(min_dwell)
     )
     _attach_transition_logs(
         preds, min_dwell, offsets, terminal_idx, params.log_p_stay, params.log_exit
     )
+    width = max(1, max(len(row) for row in preds))
+    pred_src = np.full((k_total, width), k_total, dtype=np.int64)
+    pred_log = np.full((k_total, width), _NEG_INF, dtype=np.float64)
+    for j, row in enumerate(preds):
+        for col, (i, la) in enumerate(row):  # already sorted by source index
+            pred_src[j, col] = i
+            pred_log[j, col] = la
+    return state_of, terminal_idx, pred_src, pred_log
 
-    # Pack sparse preds into arrays for the inner loop.
-    pred_i = []
-    pred_log = []
-    pred_ptr = np.zeros(k_total + 1, dtype=np.int32)
-    cursor = 0
-    for j in range(k_total):
-        pred_ptr[j] = cursor
-        for i, la in preds[j]:
-            pred_i.append(i)
-            pred_log.append(la)
-            cursor += 1
-    pred_ptr[k_total] = cursor
-    pred_i = np.asarray(pred_i, dtype=np.int16)
-    pred_log = np.asarray(pred_log, dtype=np.float64)
 
-    delta = np.full(k_total, _NEG_INF, dtype=np.float64)
+def _viterbi_block(scores: np.ndarray, params: DecoderParams) -> np.ndarray:
+    """Decode one contiguous half block. ``scores`` is float64 ``(T, 3)``.
+
+    The recursion is vectorised over the sub-states: at each frame every sub-state takes the
+    best of its (at most 3) predecessors with one gather and one ``argmax``. Predecessor
+    columns are sorted by source index, so ``np.argmax`` keeps the smallest index on ties.
+    """
+    t_len = int(scores.shape[0])
+    if t_len == 0:
+        return np.empty(0, dtype=np.int8)
+
+    state_of, terminal_idx, pred_src, pred_log = _dense_predecessors(params)
+    k_total = int(state_of.shape[0])
+    rows = np.arange(k_total)
+    emit = scores[:, state_of.astype(np.int64)]  # (T, K): sub-state (s, k) emits scores[t, s]
+
+    # delta has one extra sentinel slot (index K) that stays -inf for padded predecessors.
+    delta = np.full(k_total + 1, _NEG_INF, dtype=np.float64)
     # Init: only terminal sub-states (s, m_s) get log(1/3) + scores[0, s].
     for s in range(3):
         j = int(terminal_idx[s])
         delta[j] = _LOG_ONE_THIRD + scores[0, s]
 
-    ptr = np.empty((t_len, k_total), dtype=np.int16)
-    ptr[0, :] = -1
-
-    emit = np.empty(k_total, dtype=np.float64)
-
+    ptr = np.full((t_len, k_total), -1, dtype=np.int16)
     for t in range(1, t_len):
-        for s in range(3):
-            emit[offsets[s]:offsets[s] + min_dwell[s]] = scores[t, s]
-        prev = delta
-        nxt = np.full(k_total, _NEG_INF, dtype=np.float64)
-        for j in range(k_total):
-            a = int(pred_ptr[j])
-            b = int(pred_ptr[j + 1])
-            if a == b:
-                continue
-            # Predecessors are sorted by source index; strict '>' keeps the
-            # smallest index on ties (same rule as np.argmax on a dense row).
-            best_v = _NEG_INF
-            best_i = -1
-            for p in range(a, b):
-                i = int(pred_i[p])
-                v = prev[i] + pred_log[p]
-                if v > best_v:
-                    best_v = v
-                    best_i = i
-            if best_i < 0 or not np.isfinite(best_v):
-                continue
-            nxt[j] = best_v + emit[j]
-            ptr[t, j] = best_i
-        delta = nxt
+        candidates = delta[pred_src] + pred_log  # (K, P)
+        best = np.argmax(candidates, axis=1)
+        best_v = candidates[rows, best]
+        ptr[t] = pred_src[rows, best]
+        delta[:k_total] = best_v + emit[t]
 
-    end = int(np.argmax(delta))
-    path_sub = np.empty(t_len, dtype=np.int16)
+    end = int(np.argmax(delta[:k_total]))
+    path_sub = np.empty(t_len, dtype=np.int64)
     path_sub[t_len - 1] = end
     for t in range(t_len - 1, 0, -1):
         path_sub[t - 1] = ptr[t, path_sub[t]]
@@ -202,6 +191,12 @@ def decode_match(scores, half, force_d, params: DecoderParams) -> np.ndarray:
         raise ValueError("force_d must have shape ({},), got {}".format(n, force.shape))
     if not isinstance(params, DecoderParams):
         raise TypeError("params must be DecoderParams, got {}".format(type(params).__name__))
+    if not np.isfinite(scores).all():
+        bad = np.flatnonzero(~np.isfinite(scores).all(axis=1))
+        raise ValueError("scores must be finite (C3 never yields NaN/inf); first bad frame {}, "
+                         "{} bad frames".format(int(bad[0]), int(bad.size)))
+    if not np.isin(half, (0, 1, 2)).all():
+        raise ValueError("half must only contain 0, 1 or 2")
 
     # Default outside play; blocks overwrite with H/A/D.
     state_codes = np.full(n, 3, dtype=np.int8)  # X = 3
