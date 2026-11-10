@@ -1454,18 +1454,25 @@ O pré-pontapé não entra no logit; ele é a máscara `force_d` (C4).
 Padrão: tudo desligado. `midpoint_neutral_switch: false`, `d_bridge_frames: 0`, `min_spell_frames: 0`. Cada regra só é ligada pela F2-06.
 
 ### A.6 Degradação (`configs/degrade_default.yaml`)
+- `name=default`; tolerâncias dos alvos: `target_ball_visible_tolerance=0.01` e
+  `target_tracked_mean_tolerance=0.3`.
 - **Bola:**
   - `z_air_m=1.5`, `air_margin_frames=3`, `p_air=0.85`;
   - `crowd_n=3`, `crowd_r_m=2.0`, `crowd_hazard=0.02`;
   - `target_ball_visible=0.593`;
   - perfil de lacunas `{mix_geometric: 0.6, geometric_mean_frames: 8, lognormal_median_frames: 40, lognormal_sigma: 1.0, max_frames: 1500}`;
+  - `bg_hazard_init=0.01`, `hazard_max=1.0`, `bisection_iterations=30`;
   - `ball_noise_m=0.25`;
-  - `phantom_len_frames=[5, 60]`, `phantom_frac=0.01`.
+  - `phantom_len_frames=[5, 60]`, `phantom_frac=0.01`, `phantom_margin_m=5.0`.
 - **Jogadores:**
-  - `player_visible_mean_s=30.0` e `player_missing_mean_s=3.0` (este é só o ponto de partida da bisseção);
+  - `player_visible_mean_s=30.0` e `player_missing_mean_s_init=3.0` (ponto de partida),
+    `player_missing_mean_s_max=120.0`, `player_bisection_iterations=30`, `fps=25`;
   - `target_tracked_mean=20.5`;
   - `player_noise_m=0.15`;
-  - `dup_offset_m=0.3`, `dup_len_s=[1.0, 5.0]`, `dup_frac=0.02`.
+  - `dup_offset_m=0.3`, `dup_len_s=[1.0, 5.0]`, `dup_frac=0.02`,
+    `dup_max_attempts=10000`, `overtracked_threshold=22`.
+- `modeling.config.load_config` valida todas as chaves, exige `name` igual ao sufixo do arquivo
+  e rejeita valores ausentes ou desconhecidos.
 - **Variantes de estresse** (mesmas chaves da `default`; só mudam estes valores):
   - `configs/degrade_harder.yaml`: `target_ball_visible=0.50`, `phantom_frac=0.02`, `player_noise_m=0.25`, `target_tracked_mean=19.5`;
   - `configs/degrade_easier.yaml`: `target_ball_visible=0.68`, `phantom_frac=0.005`, `player_noise_m=0.10`, `target_tracked_mean=21.5`.

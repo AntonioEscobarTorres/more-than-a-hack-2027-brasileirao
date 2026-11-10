@@ -265,10 +265,20 @@ _StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _c
 
 
 def load_config(path) -> dict:
-    """C7: read ``path`` and validate it strictly; ``name`` must equal the file stem."""
+    """Read and validate a strict pipeline or external degradation config."""
     path = Path(path)
     with open(path, encoding="utf-8") as handle:
         raw = yaml.load(handle, Loader=_StrictLoader)  # noqa: S506 - strict SafeLoader subclass
+    if path.name.startswith("degrade_"):
+        from .external.degrade import validate_degrade_config
+        try:
+            cfg = validate_degrade_config(raw)
+            if cfg["name"] != path.stem.removeprefix("degrade_"):
+                raise ConfigError("name {!r} must match the file name {!r}".format(
+                    cfg["name"], path.stem.removeprefix("degrade_")))
+            return cfg
+        except (ConfigError, ValueError) as exc:
+            raise ConfigError("{}: {}".format(path, exc)) from None
     try:
         return validate_config(raw, expected_name=path.stem)
     except ConfigError as exc:
