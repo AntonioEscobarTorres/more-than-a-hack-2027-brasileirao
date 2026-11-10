@@ -10,7 +10,7 @@ from preprocessing.pipeline_api import build_master_from_arrays
 from test_build_master_table import BLOCKS, N, make_intermediates
 
 
-GOLDEN_MASTER_SHA256 = "528fb81073a8942514cdf765ccd724f48a37f60adf43591e44cbc72abee5e2c7"
+GOLDEN_MASTER_DATA_SHA256 = "b2ae7eca70223469e2bbc6dfaa362ffb1dda848f486aa0bf2147612d05ec7364"
 
 
 def test_empty_tagging_dataframe_matches_tagging_dtypes():
@@ -40,7 +40,17 @@ def test_original_build_master_golden_sha256(tmp_path):
     output = Path(tmp_path) / "master_features.parquet"
     bm.write_master(master, output)
 
-    assert bm.file_sha256(output) == GOLDEN_MASTER_SHA256
+    # Parquet bytes vary across pyarrow releases, even when the logical table is identical.
+    # Hash the ordered values instead, and separately check the schema metadata on disk.
+    import hashlib
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    data_hash = hashlib.sha256(
+        pd.util.hash_pandas_object(pd.read_parquet(output), index=False).to_numpy().tobytes()
+    ).hexdigest()
+    assert data_hash == GOLDEN_MASTER_DATA_SHA256
+    assert pq.read_schema(output).metadata[b"schema_version"] == bm.params.SCHEMA_VERSION.encode()
 
 
 def _synthetic_tracking(pitch):
