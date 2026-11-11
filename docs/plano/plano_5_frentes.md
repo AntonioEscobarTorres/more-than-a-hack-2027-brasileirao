@@ -112,6 +112,16 @@ Você **não implementa nada**. Você só organiza o trabalho no GitHub a partir
 9. **A janela pública nunca serve para ajustar ou escolher nada.** Nunca relatar score dela em issue, PR, relatório ou decisão.
 10. **Nada atravessa o limite de um tempo:** janelas temporais, interpolações e buscas operam sempre por bloco de `half`.
 11. Se a especificação for ambígua, comente na issue e pergunte. Não decida em silêncio.
+12. **CI e higiene do repositório (desde 11/11, F5-03):**
+   - Todo push e todo PR rodam `pytest -q` (a suíte inteira) no GitHub Actions, sem os dados da partida. Merge só com a CI verde.
+   - `tests/test_repo_hygiene.py` falha se o commit tiver:
+     - arquivo de dados (`.parquet .npy .npz .pkl .mp4 .xml`) fora de `tests/fixtures/`;
+     - qualquer arquivo em `data/` além de `data/README.md`;
+     - notebook com saída;
+     - arquivo acima de 1 MB fora da allowlist (`models/**/*.joblib` até 5 MB).
+   - Fixtures sintéticas `.npy`, `.npz`, `.pkl` ou `.parquet` em `tests/fixtures/` entram só com `git add -f`.
+   - Preencha o template de PR, inclusive a pergunta obrigatória "Este PR contém algum valor derivado dos dados da partida?".
+   - Regras completas e checklist de publicação: [`docs/data_safety.md`](../data_safety.md).
 
 ### 1.5 Fluxo Git
 - Branch `f<n>/<ID>-slug` a partir da `main`. Uma tarefa por PR, PR pequeno, com `Closes #<issue>`.
