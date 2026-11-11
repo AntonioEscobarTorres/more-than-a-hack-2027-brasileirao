@@ -195,8 +195,31 @@ the rule and where it is implemented.*
   players standing still, the mean player speed, a ball at rest for at least 1 s, a fast ball inside
   the pitch (evidence of live play) and the set-piece tags. All thresholds are physical priors kept
   in the configuration. Implemented in `modeling/deadball/features.py`.
-  *To be completed by F3 (tasks F3-02 and F3-04): how the features are weighted, and when the next
-  possession starts.*
+
+  The dead-ball evidence is the sum of the terms below, clipped to ±12. A term whose input is
+  missing contributes exactly zero. These weights are priors; none was fitted on any data.
+
+  | Evidence | Contribution |
+  | :--- | :--- |
+  | Ball outside the pitch | +4.0 |
+  | Ball gap: exit / high ball / undetermined | +3.0 / −1.0 / +0.5 |
+  | Fraction of players standing still | 0 up to 30%, rising to +3.0 at 70% |
+  | Mean player speed | +1.5 below 0.5 m/s, 0 from 1.5 to 2.5 m/s, −2.0 above 4.5 m/s |
+  | Ball at rest for at least 1 s | +2.0 |
+  | Fast ball inside the pitch | −3.0 |
+  | Set-piece tag active | +1.0 |
+  | Approaching a tagged set piece | up to +1.0, decaying over 10 s |
+  | Just after a tagged set piece | down to −1.0, decaying over 3 s |
+  | Within 60 s before a tagged kick-off after a goal | +2.0 |
+
+  The dead ball ends, and the next possession starts, when live evidence returns: a fast ball
+  inside the pitch, players running again and the end of a tagged set piece all push the evidence
+  negative, and the decoder then switches to the team in control. The tag weights are low on
+  purpose, because a tagged interval extends past the restart itself. Implemented in
+  `modeling/deadball/dead.py`.
+  *To be completed by F3 (task F3-04): the weights calibrated on IDSSE, if that variant is selected
+  by the protocol of Section 5. The tag terms always keep the priors above, because IDSSE has no
+  tags.*
 - **Before kick-off.** The graded block of the second half opens before its kick-off: those 2,934
   frames are forced to `D` by a mask that the decoder cannot override. The first half starts at the
   kick-off itself, so it has no such frames. The mask is the `pre_kickoff` column of the master
