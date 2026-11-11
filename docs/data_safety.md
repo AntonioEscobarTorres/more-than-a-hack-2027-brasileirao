@@ -45,7 +45,7 @@ Rodar cada item no próprio terminal e marcar na issue da F5-09.
     | git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' \
     | awk '$1=="blob" && $2>1000000 {print $2, $3}' | sort -u -k2
   ```
-- [ ] **Nenhum notebook com saída em nenhuma versão do histórico.** Abrir pessoalmente as versões antigas que tiverem saída. Em 11/11/2026 havia uma: `tests/prep_tracking.ipynb` no commit `7fbb12e`, com uma saída do tipo `error` (3 linhas de traceback). Conferir com `git show 7fbb12e:tests/prep_tracking.ipynb` se ela mostra algum dado da partida.
+- [ ] **Nenhum notebook com saída em nenhuma versão do histórico.** Se houver, uma pessoa abre essas versões e confere se mostram algum dado da partida.
 - [ ] **Nenhum GT completo:** nenhum `*_possession_gt.csv`, `*_possession_gt_meta.json`, `*_possession_gt_reference.csv` ou `possession_by_frame.pkl` no histórico (mesmo comando do segundo item).
 - [ ] **`reports/` só com resultados de dados externos (IDSSE)**, nunca números do BAR-ATH.
 - [ ] **Issues, PRs e comentários** também ficam públicos: conferir que nenhum tem valores derivados da partida ou score da janela pública.
