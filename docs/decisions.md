@@ -43,6 +43,7 @@ Modelo:
 | [D-004](#d-004--ativos-usados-e-descartados) | 2026-11-05 | Ativos usados e descartados | Vigente |
 | [D-005](#d-005--arquitetura-hmm-de-3-estados-com-viterbi-por-tempo) | 2026-11-05 | Arquitetura: HMM de 3 estados com Viterbi por tempo | Vigente |
 | [D-006](#d-006--seleção-pré-registrada-sem-a-janela-pública) | 2026-11-05 | Seleção pré-registrada, sem a janela pública | Vigente |
+| [D-007](#d-007--features-de-bola-morta-interpretações-da-especificação) | 2026-11-10 | Features de bola morta: interpretações da especificação | Vigente |
 
 ## Decisões
 
@@ -196,6 +197,33 @@ Modelo:
     jogo inteiro, e a degradação é só uma aproximação do ATD.
 - **Evidência:** issue oficial #10; EVALUATION.md; o resultado de cada passo ficará em `reports/selection.md`
   (F2-06).
+
+### D-007 — Features de bola morta: interpretações da especificação
+
+- **Data:** 2026-11-10
+- **Autor:** Bernardo (F3, F3-01)
+- **Status:** Vigente
+- **Decisão:** pontos que a especificação da F3-01 deixava em aberto, em `modeling/deadball/features.py`:
+  1. **Saída tem precedência sobre bola aérea.** Uma bola rápida que sai pela linha é `saída` (2), nunca
+     `aérea` (3).
+  2. **Lado da linha mais próxima sem o comprimento do campo.** `dead.params` só tem `pitch_w_m`. O lado é
+     lido das próprias distâncias: no lado baixo `coord − d = 0`; no lado alto `coord − d = tamanho − 2d`,
+     que perto de uma linha é maior que meia largura do campo nos dois eixos. Teste: `2·(coord − d) < pitch_w_m`.
+  3. **Os frames observados de uma lacuna são os adjacentes a ela, no mesmo tempo.** Uma lacuna encostada no
+     limite do tempo usa só o outro lado.
+  4. **Média móvel centrada:** a janela do frame `i` é `[i − w//2, i + (w−1)//2]`, cortada nas pontas do
+     bloco (média dos frames disponíveis).
+  5. **Indicadores 0/1 em `int8`**, valendo 0 fora dos tempos; as features reais valem NaN fora dos tempos.
+- **Opções consideradas:**
+  - (2) acrescentar `pitch_l_m` a `dead.params`: descartada, porque muda o esquema de config (A.7), que é
+    contrato;
+  - (2) comparar `coord == d` com tolerância: descartada, porque exige uma tolerância sem justificativa;
+  - (4) janela cheia obrigatória (NaN nas pontas): descartada, porque apagaria a evidência justamente no
+    início e no fim de cada tempo;
+  - (5) indicadores em `float32` com NaN: descartada, porque os indicadores são sempre definidos (a ausência
+    de bola já vale 0).
+- **Evidência:** `tests/test_modeling_deadball_features.py` (81 testes sintéticos), com um teste por ponto
+  acima.
 
 ## Registro de envios
 

@@ -58,6 +58,17 @@ _POST = {"midpoint_neutral_switch": False, "boundary_shift_file": None, "d_bridg
          "min_spell_frames": 0}
 
 
+def dead_params(**overrides) -> dict:
+    """Validated dead.params (Appendix A.2/A.3); keyword arguments override top-level keys."""
+    dead = copy.deepcopy(_DEAD)
+    dead["params"].update(overrides)
+    cfg = {"name": "t", "pipeline": "hmm", "ball_source": "tactical",
+           "team": {"kind": "none", "params": copy.deepcopy(_TEAM_PARAMS_RAW),
+                    "calibrated_file": None},
+           "dead": dead, "decoder": _DECODER, "postprocess": _POST}
+    return validate_config(cfg)["dead"]["params"]
+
+
 def make_master(n: int = 1, **cols) -> pd.DataFrame:
     """Valid observed ball, home 1 m from it and away 5 m, everything inside half 1.
 
