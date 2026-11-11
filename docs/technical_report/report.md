@@ -185,9 +185,11 @@ the rule and where it is implemented.*
   possession. *(F1)*
 - **Restarts and dead ball.** When the ball becomes dead and when the next possession starts.
   *(F3: tasks F3-02 and F3-04)*
-- **Before kick-off.** The frames of the second half before its kick-off are labelled `D`; the first
-  half starts at the kick-off itself. Both come from constants published by the organisers.
-  *(F3: task F3-03)*
+- **Before kick-off.** The graded block of the second half opens before its kick-off: those 2,934
+  frames are forced to `D` by a mask that the decoder cannot override. The first half starts at the
+  kick-off itself, so it has no such frames. The mask is the `pre_kickoff` column of the master
+  table, built from the kick-off frames published by the organisers (FAQ.md); nothing is inferred
+  from the tracking. Implemented in `modeling/deadball/force.py`.
 - **No `X` inside the halves.** `X` is written only outside the graded halves. *(F2)*
 
 ## 5. Validation protocol
