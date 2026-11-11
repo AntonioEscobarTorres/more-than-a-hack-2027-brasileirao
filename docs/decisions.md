@@ -44,6 +44,7 @@ Modelo:
 | [D-005](#d-005--arquitetura-hmm-de-3-estados-com-viterbi-por-tempo) | 2026-11-05 | Arquitetura: HMM de 3 estados com Viterbi por tempo | Vigente |
 | [D-006](#d-006--seleção-pré-registrada-sem-a-janela-pública) | 2026-11-05 | Seleção pré-registrada, sem a janela pública | Vigente |
 | [D-007](#d-007--features-de-bola-morta-interpretações-da-especificação) | 2026-11-10 | Features de bola morta: interpretações da especificação | Vigente |
+| [D-008](#d-008--dead_logit-rules_v1-rampas-no-código-e-convenção-de-params) | 2026-11-10 | `dead_logit` `rules_v1`: rampas no código e convenção de `params` | Vigente |
 
 ## Decisões
 
@@ -224,6 +225,28 @@ Modelo:
     de bola já vale 0).
 - **Evidência:** `tests/test_modeling_deadball_features.py` (81 testes sintéticos), com um teste por ponto
   acima.
+
+### D-008 — `dead_logit` `rules_v1`: rampas no código e convenção de `params`
+
+- **Data:** 2026-11-10
+- **Autor:** Bernardo (F3, F3-02)
+- **Status:** Vigente
+- **Decisão:** em `modeling/deadball/dead.py`:
+  1. **Os pontos das três rampas do Apêndice A.3 são constantes nomeadas no código** (`STILL_RAMP`,
+     `SPEED_HIGH_RAMP`, `SPEED_LOW_RAMP`), e não chaves de config. Os 13 pesos vêm de `dead.params.weights`.
+  2. **A variante recebe `cfg["dead"]["params"]`**, a mesma convenção de `team_logit_rules_v1` (já no
+     `main`) e de `build_deadball_features`. O texto da F5-04 fala em passar `cfg["dead"]`.
+  3. **`dead_tag_prior` devolve a soma dos quatro termos de tag sem recorte**, valendo 0 onde `half == 0`.
+     O recorte em ±12 é feito uma vez, no fim, por quem soma (`rules_v1` agora, `calibrated` na F3-04).
+- **Opções consideradas:**
+  - (1) acrescentar as rampas a `dead.params`: descartada por enquanto. O esquema do Apêndice A.7 é contrato
+    (C7, validação estrita) e só tem os pesos; mudá-lo exige issue aprovada pela F5. As rampas definem a
+    forma da variante `rules_v1`, e a variante `calibrated` (F3-04) não as usa;
+  - (2) aceitar tanto `cfg["dead"]` quanto `cfg["dead"]["params"]`: descartada, porque esconderia um erro de
+    integração. Com a seção inteira, a função falha com `KeyError` em vez de devolver um resultado errado;
+  - (3) recortar o prior das tags: descartada, porque recortar duas vezes mudaria a soma perto do limite.
+- **Evidência:** `tests/test_modeling_dead.py` (51 testes sintéticos); contrato C2 conferido no mock com
+  `validate_logits`; teste de mutação manual (8 alterações no código, todas detectadas pelos testes).
 
 ## Registro de envios
 
