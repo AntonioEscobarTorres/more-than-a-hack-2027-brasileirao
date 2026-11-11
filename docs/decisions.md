@@ -45,6 +45,7 @@ Modelo:
 | [D-006](#d-006--seleção-pré-registrada-sem-a-janela-pública) | 2026-11-05 | Seleção pré-registrada, sem a janela pública | Vigente |
 | [D-007](#d-007--features-de-bola-morta-interpretações-da-especificação) | 2026-11-10 | Features de bola morta: interpretações da especificação | Vigente |
 | [D-008](#d-008--dead_logit-rules_v1-rampas-no-código-e-convenção-de-params) | 2026-11-10 | `dead_logit` `rules_v1`: rampas no código e convenção de `params` | Vigente |
+| [D-009](#d-009--mestres-__none-só-para-diagnóstico) | 2026-11-11 | Mestres `__none` só para diagnóstico | Vigente |
 
 ## Decisões
 
@@ -247,6 +248,30 @@ Modelo:
   - (3) recortar o prior das tags: descartada, porque recortar duas vezes mudaria a soma perto do limite.
 - **Evidência:** `tests/test_modeling_dead.py` (51 testes sintéticos); contrato C2 conferido no mock com
   `validate_logits`; teste de mutação manual (8 alterações no código, todas detectadas pelos testes).
+
+### D-009 — Mestres `__none` só para diagnóstico
+
+- **Data:** 2026-11-11
+- **Autor:** Ahmed (F5, revisão de 11/11)
+- **Status:** Vigente
+- **Decisão:** os mestres externos `__none` (IDSSE sem degradação) servem só para diagnóstico. As
+  calibrações (F1-05, F3-04), a varredura (F2-05) e a seleção (F2-06) usam apenas os mestres degradados. Se a
+  F4-04 atrasar, essas tarefas esperam; no pior caso vale o passo 8 da Seção 6. Esta decisão substitui o
+  gatilho da Seção 7 que mandava calibrar nos `__none`.
+- **Opções consideradas:**
+  - **Esperar pelos mestres degradados (escolhida).**
+  - Calibrar nos `__none` se a F4-04 atrasar (gatilho anterior da Seção 7): descartada. No IDSSE limpo, a
+    posição da bola fica congelada durante a bola morta. Um modelo de bola morta ajustado nesses mestres
+    aprenderia "bola parada ⇒ D", o que não vale no tracking automático.
+- **Evidência** (só dados públicos do IDSSE, medidos com um script exploratório não commitado):
+  - nas partidas J03WMX, J03WN1, J03WOH e J03WOY, a velocidade da bola fica abaixo de 0,3 m/s em
+    99,8%–99,9% dos frames de D, contra 1%–2% dos frames de bola viva, e a bola é visível em 100% dos
+    frames de D;
+  - o artefato sobrevive à degradação atual (`configs/degrade_default.yaml`): no J03WOY degradado, a bola
+    fica parada por 1 s (deslocamento menor que 0,5 m) em 61% dos frames de D com bola visível, contra 3%
+    com a bola viva;
+  - a estatística "fração de bola parada por 1 s" passa a fazer parte da checagem de realismo da F4-04
+    (atualização de 11/11 na #74); ver também as atualizações de 11/11 nas #79, #80 e #81.
 
 ## Registro de envios
 

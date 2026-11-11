@@ -294,7 +294,7 @@ Objetivo: escolher a variante final **sem usar a janela pública e sem nenhum r�
 | Risco | Plano B |
 | :--- | :--- |
 | Atraso no caminho crítico | lista de corte abaixo; envio de segurança na qua 11/11 garante um CSV válido |
-| Mudança de domínio (IDSSE limpo → ATD automático) | degradação + checagem de realismo (F4-04); poucos parâmetros calibrados; aceitar só com ganho > 1 EP |
+| Mudança de domínio (IDSSE limpo → ATD automático) | degradação + checagem de realismo (F4-04), que inclui velocidades e bola parada; mestres `__none` só para diagnóstico, nunca para calibrar ou selecionar (D-009); poucos parâmetros calibrados; aceitar só com ganho > 1 EP |
 | Convenção de posse do DFL diferente da do GT Metrica | preferir parâmetros estruturais robustos; documentar como limitação |
 | Download, RAM ou disco do IDSSE | baixar do espelho no Hugging Face com revisão fixada (o figshare bloqueia scripts); uma partida por vez; `--delete-raw`; checar espaço livre antes |
 | Não determinismo | threads = 1; somas explícitas em float64; F5-06 em duas máquinas |
@@ -309,7 +309,7 @@ Objetivo: escolher a variante final **sem usar a janela pública e sem nenhum r�
 - **P2 (primeiras a cair):** F1-06, F1-07, F3-07, F3-08, F4-05, F4-06.
 
 **Gatilhos** (decididos pela F5 no check-in do dia):
-- **F4-04 não está pronta na qua 11/11 às 18h:** as calibrações usam os mestres `__none` (limpos), e a limitação é documentada.
+- **F4-04 não está pronta na qua 11/11 às 18h:** as calibrações (F1-05, F3-04) e a varredura (F2-05) esperam pelos mestres degradados. **Nunca** usam os mestres `__none` (limpos): no IDSSE limpo a bola fica congelada durante a bola morta, o que vaza o rótulo para as features (D-009).
 - **Também não está pronta na qui 12/11 às 12h:** Seção 6, passo 8.
 - **Calibrações não estão prontas na qui 12/11 às 20h:** a seleção fica só entre `baseline`, `v1` e `v1s`.
 - **F4-05 sem GO até qui 12/11 às 12h:** a F4-06 é fechada como "não será feita".
