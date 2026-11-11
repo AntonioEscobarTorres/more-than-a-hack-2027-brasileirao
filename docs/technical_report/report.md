@@ -183,8 +183,20 @@ the rule and where it is implemented.*
 - **Loose ball: persistence.** *(F1, F2)*
 - **Challenges and duels.** A touch without control, a deflection or an aerial duel does not change
   possession. *(F1)*
-- **Restarts and dead ball.** When the ball becomes dead and when the next possession starts.
-  *(F3: tasks F3-02 and F3-04)*
+- **Restarts and dead ball.** A missing ball is not treated as a dead ball. Every ball gap longer
+  than 0.5 s is classified from the last frame before it and the first frame after it:
+  - *exit*: the ball was out of the pitch, or within 3 m of a line and moving towards it, or it
+    reappears in a restart position (on a touchline, or inside the goal area);
+  - *high ball*: it is not an exit, the ball was faster than 8 m/s and the gap lasts at most 4 s.
+    Possession continues;
+  - *undetermined*: anything else.
+
+  Only an exit is strong evidence of a dead ball. The other dead-ball features are the fraction of
+  players standing still, the mean player speed, a ball at rest for at least 1 s, a fast ball inside
+  the pitch (evidence of live play) and the set-piece tags. All thresholds are physical priors kept
+  in the configuration. Implemented in `modeling/deadball/features.py`.
+  *To be completed by F3 (tasks F3-02 and F3-04): how the features are weighted, and when the next
+  possession starts.*
 - **Before kick-off.** The graded block of the second half opens before its kick-off: those 2,934
   frames are forced to `D` by a mask that the decoder cannot override. The first half starts at the
   kick-off itself, so it has no such frames. The mask is the `pre_kickoff` column of the master
