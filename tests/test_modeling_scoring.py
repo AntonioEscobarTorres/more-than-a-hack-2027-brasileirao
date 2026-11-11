@@ -19,6 +19,7 @@ from modeling.scoring.external_eval import evaluate_config, paired_delta
 from preprocessing.pipeline_api import build_master_from_arrays
 
 BASELINE_YAML = repo_root() / "configs" / "baseline.yaml"
+V1_YAML = repo_root() / "configs" / "v1.yaml"
 N_HALF = 300
 
 
@@ -185,6 +186,14 @@ def test_evaluate_config_c9_baseline(patched_external):
     per_match = df.loc[["S1", "S2"], "spell_f1_mean"]
     assert np.isclose(df.loc["mean", "spell_f1_mean"], per_match.mean())
     assert np.isclose(df.loc["se", "spell_f1_mean"], per_match.std(ddof=1) / math.sqrt(2))
+
+
+def test_evaluate_config_c9_v1(patched_external):
+    """The HMM v1 pipeline runs through the same harness on C9-layout masters (F5-04)."""
+    df = evaluate_config(load_config(V1_YAML), degrade="none", matches=["S1", "S2"])
+    assert list(df.index) == ["S1", "S2", "mean", "se"]
+    for match in ("S1", "S2"):
+        assert 0.0 <= df.loc[match, "spell_f1_mean"] <= 1.0
 
 
 def test_evaluate_config_single_match_se_is_nan(patched_external):
