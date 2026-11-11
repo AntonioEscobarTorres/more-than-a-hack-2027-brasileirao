@@ -273,6 +273,33 @@ Modelo:
   - a estatística "fração de bola parada por 1 s" passa a fazer parte da checagem de realismo da F4-04
     (atualização de 11/11 na #74); ver também as atualizações de 11/11 nas #79, #80 e #81.
 
+### D-010 — Integração do HMM no `predict_labels`
+
+- **Data:** 2026-11-11
+- **Autor:** Ahmed (F5, F5-04)
+- **Status:** Vigente
+- **Decisão:** em `modeling/pipeline.py`:
+  1. **As variantes recebem `cfg["team"]["params"]` e `cfg["dead"]["params"]`**, e não a seção inteira, como
+     fixou a D-008. O texto da F5-04 mandava passar `cfg["dead"]`.
+  2. **Enquanto `modeling/decode/postprocess.py` (F2-04) não existir, o pós-processamento é a identidade
+     mais a imposição final** (`force_d` → D, `half == 0` → X). O módulo da F2-04 é usado automaticamente
+     quando existir. Um config que ligue alguma regra antes disso é erro (`NotImplementedError`), e um erro
+     de import dentro do módulo não é escondido. Os `post_stats` vão para o log.
+  3. **`validate_logits` recebe `half`**, para conferir a regra do C2 de que os dois logits valem 0 onde
+     `half == 0`.
+  4. **`DecoderParams.from_config` recebe os FPS de `games.py`**, a mesma fonte que `load_config` usa para
+     validar `mean_duration_s` contra `min_dwell_frames`.
+- **Opções consideradas:**
+  - (2) levantar erro sempre que a F2-04 faltar: descartada, porque bloquearia a F5-05 por uma tarefa P1
+    cujas regras ficam desligadas no v1;
+  - (2) ignorar em silêncio as regras ligadas: descartada, porque o config diria uma coisa e o CSV faria
+    outra;
+  - (4) o padrão `fps=25` de `from_config`: descartado, porque é um número fixo no código, enquanto
+    `games.py` já tem a taxa da partida.
+- **Evidência:** `tests/test_modeling_pipeline_hmm.py` (29 testes sintéticos) e PR #117. Execução local
+  (humano) no BAR-ATH: CSV válido e as 7 checagens de `tools/check_public_window.py` em `PASS`; config `v1`
+  com sha256 `cef43128…`, CSV com sha256 `783dff2d…` (valores completos na #117).
+
 ## Registro de envios
 
 Preenchido pela F5 (F5-05 e F5-09). O CSV enviado tem de ser o arquivo validado, com o mesmo SHA-256.
