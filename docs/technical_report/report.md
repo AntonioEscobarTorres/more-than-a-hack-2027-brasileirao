@@ -257,8 +257,13 @@ and dropped and the reason for each.*
   challenge ground truth on short touches and duels.
 - **Tag recall.** Many restarts have no tag, so dead-ball detection depends mostly on kinematics, which
   are weakest when the ball is not tracked.
-- **Ball jump filter.** Two known edge cases of the filter were deliberately left unchanged.
-  *(F3: task F3-07 measures how often they occur.)*
+- **Ball jump filter.** Two edge cases of the filter are known from synthetic tests and were
+  deliberately left unchanged. A phantom detection that stands still for 3 s or more can beat a
+  real ball that is detected sparsely. In a multi-ball restart, when the new ball appears within
+  about 0.4 s of the old one, the last frames of the old ball (the crossing of the line) are
+  removed. In ordinary synthetic play the filter keeps every real observation. A local check
+  (`tools/jump_filter_edge_cases.py`) counts the footprint of both cases in each half.
+  *To be completed by F3 after the local run (task F3-07): whether the check passes.*
 - **What we would fix with more time.** *(All fronts.)*
 
 ## 7. Reproduction
