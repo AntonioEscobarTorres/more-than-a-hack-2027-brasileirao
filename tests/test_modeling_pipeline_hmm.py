@@ -344,3 +344,60 @@ def test_unregistered_kind_is_an_error(mock_master, v1_cfg, monkeypatch):
     monkeypatch.setattr(variants, "load_kinds", lambda: None)
     with pytest.raises(NotImplementedError, match="dead.kind 'rules_v1'"):
         predict_labels(mock_master, v1_cfg)
+
+
+# -- calibrated_file wiring (D-011) --------------------------------------------------------------
+
+def test_variant_params_without_file_is_params_itself(v1_cfg):
+    assert pipeline.variant_params(v1_cfg["team"]) is v1_cfg["team"]["params"]
+    assert pipeline.variant_params(v1_cfg["dead"]) is v1_cfg["dead"]["params"]
+
+
+def test_variant_params_relative_file_is_read_against_repo_root(v1_cfg):
+    section = copy.deepcopy(v1_cfg["team"])
+    section["calibrated_file"] = "configs/calib/team.yaml"
+    before = copy.deepcopy(section)
+    out = pipeline.variant_params(section)
+    assert out["calibrated_file"] == str(REPO / "configs" / "calib" / "team.yaml")
+    assert {k: v for k, v in out.items() if k != "calibrated_file"} == section["params"]
+    assert section == before                           # the config is not modified
+
+
+def test_variant_params_absolute_file_is_kept(v1_cfg, tmp_path):
+    section = copy.deepcopy(v1_cfg["dead"])
+    section["calibrated_file"] = str(tmp_path / "dead.yaml")
+    assert pipeline.variant_params(section)["calibrated_file"] == str(tmp_path / "dead.yaml")
+
+
+def test_variant_params_rejects_file_inside_params(v1_cfg):
+    section = copy.deepcopy(v1_cfg["team"])
+    section["calibrated_file"] = "a.yaml"
+    section["params"]["calibrated_file"] = "b.yaml"
+    with pytest.raises(ValueError, match="calibrated_file"):
+        pipeline.variant_params(section)
+
+
+def test_calibrated_kinds_receive_the_file(mock_master, v1_cfg, tmp_path, monkeypatch):
+    seen = {}
+
+    def team(master, params, *, holdout=None):
+        seen["team"] = (params, holdout)
+        return np.zeros(len(master), np.float32)
+
+    def dead(master, params, *, holdout=None):
+        seen["dead"] = (params, holdout)
+        return np.zeros(len(master), np.float32)
+
+    variants.load_kinds()
+    monkeypatch.setitem(variants.TEAM_KINDS, "calibrated", team)
+    monkeypatch.setitem(variants.DEAD_KINDS, "calibrated", dead)
+    cfg = copy.deepcopy(v1_cfg)
+    cfg["team"].update(kind="calibrated", calibrated_file="configs/calib/team.yaml")
+    cfg["dead"].update(kind="calibrated", calibrated_file=str(tmp_path / "dead.yaml"))
+    before = copy.deepcopy(cfg)
+    predict_labels(mock_master, cfg, holdout="S2")
+    assert seen["team"] == ({**v1_cfg["team"]["params"],
+                             "calibrated_file": str(REPO / "configs" / "calib" / "team.yaml")}, "S2")
+    assert seen["dead"] == ({**v1_cfg["dead"]["params"],
+                             "calibrated_file": str(tmp_path / "dead.yaml")}, "S2")
+    assert cfg == before

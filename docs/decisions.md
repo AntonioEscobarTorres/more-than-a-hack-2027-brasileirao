@@ -46,6 +46,8 @@ Modelo:
 | [D-007](#d-007--features-de-bola-morta-interpretações-da-especificação) | 2026-11-10 | Features de bola morta: interpretações da especificação | Vigente |
 | [D-008](#d-008--dead_logit-rules_v1-rampas-no-código-e-convenção-de-params) | 2026-11-10 | `dead_logit` `rules_v1`: rampas no código e convenção de `params` | Vigente |
 | [D-009](#d-009--mestres-__none-só-para-diagnóstico) | 2026-11-11 | Mestres `__none` só para diagnóstico | Vigente |
+| [D-010](#d-010--integração-do-hmm-no-predict_labels) | 2026-11-11 | Integração do HMM no `predict_labels` | Vigente |
+| [D-011](#d-011--calibrated_file-chega-às-variantes-dentro-de-params) | 2026-11-11 | `calibrated_file` chega às variantes dentro de `params` | Vigente |
 
 ## Decisões
 
@@ -299,6 +301,27 @@ Modelo:
 - **Evidência:** `tests/test_modeling_pipeline_hmm.py` (29 testes sintéticos) e PR #117. Execução local
   (humano) no BAR-ATH: CSV válido e as 7 checagens de `tools/check_public_window.py` em `PASS`; config `v1`
   com sha256 `cef43128…`, CSV com sha256 `783dff2d…` (valores completos na #117).
+
+### D-011 — `calibrated_file` chega às variantes dentro de `params`
+
+- **Data:** 2026-11-11
+- **Autor:** Ahmed (F5, revisão de 11/11)
+- **Status:** Vigente
+- **Decisão:** `modeling.pipeline.variant_params(section)` monta o `params` que cada variante recebe:
+  1. sem `calibrated_file` na seção (`null`), a variante recebe `params` sem mudança, como na D-010;
+  2. com `calibrated_file`, ela recebe uma **cópia** de `params` com a chave a mais
+     `params["calibrated_file"]`, um caminho absoluto. Um caminho relativo é lido a partir da raiz do
+     repositório, para o resultado não depender do diretório de trabalho;
+  3. o config nunca é modificado, e `params` com a chave `calibrated_file` é erro (ela pertence à seção).
+- **Motivo:** a D-010 passava só `params`, e o esquema do C7 deixa `calibrated_file` no nível da seção, onde
+  nenhuma variante o via. Os tipos `calibrated` (F1-05, F3-04) e `gbdt` (F1-07, F3-08) não teriam como achar
+  os pesos ajustados. As atualizações de 11/11 das #79 e #81 já anunciavam esta interface.
+- **Opções consideradas:**
+  - passar a seção inteira às variantes: descartada, porque mudaria a assinatura dos `rules_v1` (D-008);
+  - pôr `calibrated_file` dentro de `params` no YAML: descartada, porque muda o esquema do C7 e o
+    `load_config` já valida a chave no nível da seção.
+- **Evidência:** `tests/test_modeling_pipeline_hmm.py` (testes de `variant_params` e de um tipo
+  `calibrated` registrado no teste). O v1 não muda: as duas seções têm `calibrated_file: null`.
 
 ## Registro de envios
 
