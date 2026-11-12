@@ -275,7 +275,7 @@ Não criar pasta ou pacote chamado `eval` (sombreia a função embutida `eval` d
 | (envio de segurança) | qua 11/11 | formulário enviado com o CSV v1 (F5-05) |
 | **M2** Calibração e varredura | qui 12/11 | mestres externos degradados prontos (qua 12h); logits calibrados; decodificador varrido; viés de fronteira calibrado |
 | (portão da transmissão) | qui 12/11 12h | GO/NO-GO da trilha exploratória (F4-05) |
-| (candidatas P2) | sex 13/11 12h | variantes GBDT (F1-07, F3-08) e fusão da transmissão (F4-06) prontas, ou fechadas como "não será feita" |
+| (candidatas P2) | sex 13/11 12h | variante GBDT do dead (F3-08) e fusão da transmissão (F4-06) prontas, ou fechadas como "não será feita" (a F1-07 é P1 desde 11/11) |
 | **M3** Método final | sex 13/11 18h | `reports/selection.md` + `configs/final.yaml`; **code freeze às 20h** (G1) |
 | **M4** Reprodução limpa | sáb 14/11 | hash idêntico em duas máquinas, clonando do zero |
 | Relatório | dom 15/11 | relatório técnico (inglês) e PDF finais |
@@ -1349,6 +1349,8 @@ Se alguma das tarefas F1-05, F3-04, F1-07, F3-08 ou F4-06 for fechada como "não
 
 ## 6. Protocolo de seleção (pré-registrado: valem estas regras, não a intuição)
 
+> **Atualização de 11/11:** o teste de estresse passa a incluir os modos `hidelo` e `hidehi` (F4-04), e há passos novos na escada e uma checagem de estabilidade. Ver a seção de atualizações consolidadas em `docs/tasks/F2-06.md`, que prevalece sobre esta seção onde houver conflito.
+
 Objetivo: escolher a variante final **sem usar a janela pública e sem nenhum rótulo do BAR-ATH**.
 
 1. **Candidatas, da mais simples para a mais complexa:**
@@ -1399,15 +1401,15 @@ Objetivo: escolher a variante final **sem usar a janela pública e sem nenhum r�
 
 **Lista de corte:**
 - **P0 (nunca cortar):** F5-01, F5-02, F5-04, F5-05, F5-06, F5-07, F5-08, F5-09, F1-01, F1-02, F2-01, F2-02, F2-06, F3-01, F3-02, F3-03, F3-05, G1.
-- **P1 (cortar só pelos gatilhos abaixo):** F4-01, F4-02, F4-03, F4-04, F1-03, F1-04, F1-05, F2-03, F2-04, F2-05, F3-04, F3-06, F5-03.
-- **P2 (primeiras a cair):** F1-06, F1-07, F3-07, F3-08, F4-05, F4-06.
+- **P1 (cortar só pelos gatilhos abaixo):** F4-01, F4-02, F4-03, F4-04, F1-03, F1-04, F1-05, F2-03, F2-04, F2-05, F3-04, F3-06, F5-03; desde 11/11 também F1-06 e F1-07 (evidência de time é o gargalo de spellF1).
+- **P2 (primeiras a cair):** F3-07, F3-08, F4-05, F4-06.
 
 **Gatilhos** (decididos pela F5 no check-in do dia):
 - **F4-04 não está pronta na qua 11/11 às 18h:** as calibrações (F1-05, F3-04) e a varredura (F2-05) esperam pelos mestres degradados. **Nunca** usam os mestres `__none` (limpos): no IDSSE limpo a bola fica congelada durante a bola morta, o que vaza o rótulo para as features (D-009).
 - **Também não está pronta na qui 12/11 às 12h:** Seção 6, passo 8.
 - **Calibrações não estão prontas na qui 12/11 às 20h:** a seleção fica só entre `baseline`, `v1` e `v1s`.
 - **F4-05 sem GO até qui 12/11 às 12h:** a F4-06 é fechada como "não será feita".
-- **Candidatas P2 (F1-07, F3-08, F4-06) não prontas até sex 13/11 às 12h:** fechadas como "não será feita"; deixam de bloquear a F2-06.
+- **Candidatas P2 (F3-08, F4-06) não prontas até sex 13/11 às 12h:** fechadas como "não será feita"; deixam de bloquear a F2-06. A F1-07 é P1 desde 11/11 e não cai por este gatilho; o prazo dela é combinado com a F5.
 - **O freeze não se move.**
 
 **Fora do escopo desta entrega:** detecção automática do pontapé inicial a partir dos dados; detecção própria da bola no vídeo.
