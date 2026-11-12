@@ -5,7 +5,9 @@ Every variant has the signature::
     fn(master: pd.DataFrame, params: dict, *, holdout: str | None) -> np.ndarray  # float32[n]
 
 and registers itself with ``@register_team("name")`` or ``@register_dead("name")`` in its own
-module. :func:`load_kinds` imports those modules so the registries are populated.
+module. ``params`` is the section's ``params``; when the section sets ``calibrated_file`` (the
+``calibrated`` and ``gbdt`` kinds), it carries the extra key ``params["calibrated_file"]``, an
+absolute path (``modeling.pipeline.variant_params``, decision D-011). :func:`load_kinds` imports those modules so the registries are populated.
 """
 from __future__ import annotations
 

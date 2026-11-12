@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import importlib
 import logging
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 import games
 
-from . import variants
+from . import paths, variants
 from .baseline import baseline_labels
 from .contracts import LABEL_DTYPE, validate_labels, validate_logits
 from .deadball.force import build_force_d
@@ -82,12 +83,33 @@ def _postprocess_fn():
     return module.postprocess
 
 
+def variant_params(section: dict) -> dict:
+    """The ``params`` a variant receives for one evidence section (``cfg["team"]`` or ``cfg["dead"]``).
+
+    ``params`` itself, unchanged, when the section has no ``calibrated_file``. Otherwise a copy of
+    ``params`` with the extra key ``calibrated_file``: the path of the fitted file (``calibrated`` and
+    ``gbdt`` kinds), absolute, with a relative path read against the repository root so the result
+    does not depend on the working directory. ``cfg`` itself is never modified.
+    """
+    params = section["params"]
+    calibrated_file = section["calibrated_file"]
+    if calibrated_file is None:
+        return params
+    if "calibrated_file" in params:
+        raise ValueError("params must not contain 'calibrated_file'; it belongs to the section")
+    path = Path(calibrated_file)
+    if not path.is_absolute():
+        path = paths.repo_root() / path
+    return {**params, "calibrated_file": str(path)}
+
+
 def hmm_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = None) -> np.ndarray:
     """HMM pipeline (F5-04): evidence -> emission -> per-half Viterbi -> post-processing.
 
     Each variant receives its ``params`` section (``cfg["team"]["params"]``,
     ``cfg["dead"]["params"]``), the convention of ``team_logit_rules_v1`` and
-    ``dead_logit_rules_v1`` (decision D-008).
+    ``dead_logit_rules_v1`` (decision D-008), plus ``params["calibrated_file"]`` when the section
+    sets one (:func:`variant_params`, decision D-011).
     """
     variants.load_kinds()
     team_kind, dead_kind = cfg["team"]["kind"], cfg["dead"]["kind"]
@@ -100,8 +122,8 @@ def hmm_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = None) -
 
     n = len(master)
     half = master["half"].to_numpy()
-    team = variants.TEAM_KINDS[team_kind](master, cfg["team"]["params"], holdout=holdout)
-    dead = variants.DEAD_KINDS[dead_kind](master, cfg["dead"]["params"], holdout=holdout)
+    team = variants.TEAM_KINDS[team_kind](master, variant_params(cfg["team"]), holdout=holdout)
+    dead = variants.DEAD_KINDS[dead_kind](master, variant_params(cfg["dead"]), holdout=holdout)
     validate_logits(team, dead, n, half=half)
 
     force_d = build_force_d(master)
@@ -135,4 +157,4 @@ def predict_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = Non
     return labels
 
 
-__all__ = ["final_imposition", "hmm_labels", "predict_labels"]
+__all__ = ["final_imposition", "hmm_labels", "predict_labels", "variant_params"]
