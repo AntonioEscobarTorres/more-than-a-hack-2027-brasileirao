@@ -78,6 +78,32 @@ def _zero_run_covering(logit: np.ndarray, boundary: int) -> tuple[int, int] | No
     return lo, hi
 
 
+def _cuts(block: np.ndarray) -> tuple[list[str], list[int]]:
+    """Segment labels and the internal cut positions (first frame of each later segment)."""
+    segs = _segments(block)
+    return [lab for lab, _a, _b in segs], [b0 for _lab, b0, _b1 in segs[1:]]
+
+
+def _rebuild(block: np.ndarray, labs: list[str], cuts: list[int]) -> None:
+    """Paint ``labs`` back into ``block`` between the (strictly increasing) ``cuts``."""
+    edges = [0] + list(cuts) + [block.shape[0]]
+    for k, lab in enumerate(labs):
+        block[edges[k]:edges[k + 1]] = lab
+
+
+def _clamp_cut(target: int, k: int, new_cuts: list[int], cuts: list[int], n: int) -> int:
+    """Keep cut ``k`` strictly between its neighbours so every segment keeps >= 1 frame.
+
+    Cuts are moved left to right: the left neighbour is already at its new place
+    (``new_cuts[k - 1]``), the right neighbour still at its original one (``cuts[k + 1]``).
+    Because each later cut is clamped against the earlier ones' new places, two neighbouring
+    boundaries are never skipped or crossed, whatever the order of the moves.
+    """
+    lo = (new_cuts[k - 1] if k > 0 else 0) + 1
+    hi = (cuts[k + 1] if k + 1 < len(cuts) else n) - 1
+    return max(lo, min(hi, target))
+
+
 def _apply_midpoint_neutral_switch(
     labels: np.ndarray,
     team_logit: np.ndarray,
@@ -88,35 +114,17 @@ def _apply_midpoint_neutral_switch(
     block = labels[start:stop].copy()
     logit = team_logit[start:stop]
     before = block.copy()
-    segs = _segments(block)
-    for i in range(len(segs) - 1):
-        left_lab, left_start, _left_stop = segs[i]
-        right_lab, right_start, right_stop = segs[i + 1]
-        if {left_lab, right_lab} != {"H", "A"}:
-            continue
-        run = _zero_run_covering(logit, right_start)
-        if run is None:
-            continue
-        lo, hi = run
-        length = hi - lo + 1
-        mid = lo + length // 2
-        # Keep both segments non-empty within the H↔A pair.
-        mid = max(left_start + 1, min(right_stop - 1, mid))
-        # Re-locate the current boundary for this pair (labels may have changed).
-        segs_now = _segments(block)
-        found = None
-        for j in range(len(segs_now) - 1):
-            a_lab, a0, _a1 = segs_now[j]
-            b_lab, b0, b1 = segs_now[j + 1]
-            if a_lab == left_lab and b_lab == right_lab and a0 == left_start:
-                found = (a0, b0, b1)
-                break
-        if found is None:
-            continue
-        a0, _b0, b1 = found
-        mid = max(a0 + 1, min(b1 - 1, mid))
-        block[a0:mid] = left_lab
-        block[mid:b1] = right_lab
+    labs, cuts = _cuts(block)
+    new_cuts: list[int] = []
+    for k, cut in enumerate(cuts):
+        target = cut
+        if {labs[k], labs[k + 1]} == {"H", "A"}:
+            run = _zero_run_covering(logit, cut)
+            if run is not None:
+                lo, hi = run
+                target = lo + (hi - lo + 1) // 2
+        new_cuts.append(_clamp_cut(target, k, new_cuts, cuts, block.shape[0]))
+    _rebuild(block, labs, new_cuts)
     labels[start:stop] = block
     return _count_changes(before, block)
 
@@ -154,56 +162,34 @@ def _apply_boundary_shift(
     stop: int,
     shifts: Mapping[str, int],
 ) -> int:
-    """Shift each internal boundary by the typed displacement, clamped to neighbours."""
+    """Shift each internal boundary by the typed displacement, clamped to neighbours.
+
+    Every boundary of the initial segmentation is shifted exactly once (left to right), so
+    consecutive boundaries (``H|A|D``) are all corrected. Boundaries adjacent to ``force_d``
+    stay put, and a moved boundary never sweeps over a ``force_d`` frame.
+    """
     block = labels[start:stop].copy()
     force = force_d[start:stop]
+    n = block.shape[0]
     before = block.copy()
-    segs = _segments(block)
-    # Snapshot planned moves from the initial segmentation (left → right).
-    planned: list[tuple[str, str, int, int, int]] = []
-    for i in range(len(segs) - 1):
-        left_lab, left_start, _ls = segs[i]
-        right_lab, right_start, right_stop = segs[i + 1]
-        key = "{}>{}".format(left_lab, right_lab)
-        delta = int(shifts.get(key, 0))
-        if delta == 0:
+    labs, cuts = _cuts(block)
+    new_cuts: list[int] = []
+    for k, cut in enumerate(cuts):
+        delta = int(shifts.get("{}>{}".format(labs[k], labs[k + 1]), 0))
+        if delta == 0 or force[cut] or force[cut - 1]:
+            new_cuts.append(_clamp_cut(cut, k, new_cuts, cuts, n))
             continue
-        # Skip boundaries adjacent to force_d (either side of the cut).
-        if force[right_start] or (right_start > 0 and force[right_start - 1]):
-            continue
-        planned.append((left_lab, right_lab, left_start, right_stop, delta))
-
-    for left_lab, right_lab, left_start, right_stop, delta in planned:
-        segs_now = _segments(block)
-        boundary = left_s = right_e = None
-        for j in range(len(segs_now) - 1):
-            lab_a, a0, _a1 = segs_now[j]
-            lab_b, b0, b1 = segs_now[j + 1]
-            if lab_a == left_lab and lab_b == right_lab and a0 == left_start:
-                boundary = b0
-                left_s = a0
-                right_e = b1
-                break
-        if boundary is None:
-            continue
-        new_b = boundary + delta
-        # At least one frame in each segment.
-        new_b = max(left_s + 1, min(right_e - 1, new_b))
-        if new_b == boundary:
-            # Still apply clamp path below for force_d; may stay put.
-            pass
-        # Do not paint over force_d frames when expanding a label.
-        if new_b < boundary:
-            region = force[new_b:boundary]
+        target = _clamp_cut(cut + delta, k, new_cuts, cuts, n)
+        if target < cut:
+            region = force[target:cut]
             if region.any():
-                new_b = new_b + int(np.flatnonzero(region)[-1]) + 1
-        elif new_b > boundary:
-            region = force[boundary:new_b]
+                target = target + int(np.flatnonzero(region)[-1]) + 1
+        elif target > cut:
+            region = force[cut:target]
             if region.any():
-                new_b = boundary + int(np.flatnonzero(region)[0])
-        new_b = max(left_s + 1, min(right_e - 1, new_b))
-        block[left_s:new_b] = left_lab
-        block[new_b:right_e] = right_lab
+                target = cut + int(np.flatnonzero(region)[0])
+        new_cuts.append(_clamp_cut(target, k, new_cuts, cuts, n))
+    _rebuild(block, labs, new_cuts)
     labels[start:stop] = block
     return _count_changes(before, block)
 
@@ -278,31 +264,33 @@ def _apply_min_spell(
     stop: int,
     min_len: int,
 ) -> int:
-    """Absorb short H/A spells flanked by the same neighbour label (left-to-right, ≤20 passes)."""
+    """Absorb short H/A spells flanked by the same neighbour label.
+
+    One pass scans the whole half left to right and absorbs every eligible spell; after an
+    absorption the next segment (now merged into the neighbour) is skipped. Passes repeat until
+    nothing changes, at most ``_MAX_MIN_SPELL_PASSES`` times.
+    """
     if min_len <= 0:
         return 0
     block = labels[start:stop].copy()
-    total = 0
+    original = block.copy()
     for _ in range(_MAX_MIN_SPELL_PASSES):
-        before = block.copy()
         segs = _segments(block)
-        changed_this_pass = False
-        for i in range(1, len(segs) - 1):
+        changed = False
+        i = 1
+        while i < len(segs) - 1:
             lab, a, b = segs[i]
-            if lab not in ("H", "A") or (b - a) >= min_len:
-                continue
-            prev_lab = segs[i - 1][0]
-            next_lab = segs[i + 1][0]
-            if prev_lab != next_lab:
-                continue
-            block[a:b] = prev_lab
-            changed_this_pass = True
-            break  # left-to-right: restart scan after one absorption
-        total += _count_changes(before, block)
-        if not changed_this_pass:
+            prev_lab, next_lab = segs[i - 1][0], segs[i + 1][0]
+            if lab in ("H", "A") and (b - a) < min_len and prev_lab == next_lab:
+                block[a:b] = prev_lab
+                changed = True
+                i += 2  # segs[i + 1] is now part of the merged neighbour
+            else:
+                i += 1
+        if not changed:
             break
     labels[start:stop] = block
-    return total
+    return _count_changes(original, block)
 
 
 def postprocess(

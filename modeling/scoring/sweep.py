@@ -333,30 +333,41 @@ def sweep_postprocess(cfg: dict, *, degrade: str = "default", matches=None,
     return points
 
 
-def plateau_candidates(points: Sequence[Mapping[str, Any]], selected: Mapping[str, Any],
+def plateau_candidates(points: Sequence[Mapping[str, Any]],
                        *, mean_key: str = "mean", se_key: str = "se") -> list:
-    """All points within 1 SE of the stage-best (for the robust cross-check)."""
-    best_mean = float(selected[mean_key])
-    best_se = float(selected[se_key])
+    """All points within 1 SE of the stage-best point (for the robust cross-check).
+
+    The reference is always the best mean of the stage and its SE, never the point picked by
+    the plateau rule, which may sit below the best and would widen the candidate set.
+    """
+    if not points:
+        raise ValueError("plateau_candidates needs at least one point")
+    finite = [p for p in points if math.isfinite(float(p[mean_key]))]
+    if not finite:
+        return []
+    best = max(finite, key=lambda p: float(p[mean_key]))
+    best_mean = float(best[mean_key])
+    best_se = float(best[se_key])
     return [p for p in points if _is_close(float(p[mean_key]), best_mean, best_se)]
 
 
 def robustify_stage(
     points: Sequence[Mapping[str, Any]],
-    selected: Mapping[str, Any],
     *,
     evaluate_fn,
+    primary: str = "default",
     degrades: Sequence[str] = ROBUST_DEGRADES,
 ) -> Mapping[str, Any]:
     """Re-score plateau candidates on every degrade and pick best worst-case.
 
-    ``evaluate_fn(cfg, degrade) -> {mean, se, ...}``. The ``default`` scores already
-    on ``points`` are reused; other degrades are evaluated on demand.
+    ``evaluate_fn(cfg, degrade) -> {mean, se, ...}``. The scores already on ``points`` belong to
+    the ``primary`` degrade (the one the sweep ran on) and are reused for it; every other degrade
+    is evaluated on demand.
     """
-    candidates = plateau_candidates(points, selected)
-    scores: dict[str, dict[Any, dict]] = {"default": {p["id"]: p for p in points}}
+    candidates = plateau_candidates(points)
+    scores: dict[str, dict[Any, dict]] = {primary: {p["id"]: p for p in points}}
     for deg in degrades:
-        if deg == "default":
+        if deg == primary:
             continue
         scores[deg] = {}
         for p in candidates:
@@ -403,7 +414,7 @@ def run_staged_sweep(
     lam_points = sweep_lambdas(current, degrade=degrade, matches=matches)
     lam_pick = select_plateau(lam_points, neighbour_fn=_lam_neighbours)
     if robust:
-        lam_pick = robustify_stage(lam_points, lam_pick, evaluate_fn=evaluate_fn)
+        lam_pick = robustify_stage(lam_points, evaluate_fn=evaluate_fn, primary=degrade)
     current = lam_pick["cfg"]
     history["stages"].append({"name": "lam", "points": lam_points, "selected": lam_pick})
 
@@ -413,7 +424,7 @@ def run_staged_sweep(
         dwell_points, neighbour_fn=_dwell_neighbours,
         tiebreak_keys=("min_dwell_ha", "min_dwell_d", "lam_team", "lam_dead"))
     if robust:
-        dwell_pick = robustify_stage(dwell_points, dwell_pick, evaluate_fn=evaluate_fn)
+        dwell_pick = robustify_stage(dwell_points, evaluate_fn=evaluate_fn, primary=degrade)
     current = dwell_pick["cfg"]
     history["stages"].append({"name": "min_dwell", "points": dwell_points, "selected": dwell_pick})
 
@@ -423,21 +434,19 @@ def run_staged_sweep(
         scale_points, neighbour_fn=_scale_neighbours,
         tiebreak_keys=("duration_scale", "lam_team", "lam_dead"))
     if robust:
-        scale_pick = robustify_stage(scale_points, scale_pick, evaluate_fn=evaluate_fn)
+        scale_pick = robustify_stage(scale_points, evaluate_fn=evaluate_fn, primary=degrade)
     current = scale_pick["cfg"]
     history["stages"].append({
         "name": "duration_scale", "points": scale_points, "selected": scale_pick})
 
-    # Stage 4: post-process (isolated); keep the best isolated rule if it beats "off"
+    # Stage 4: post-process rules, each on in isolation. Recorded only: v1s is v1 with the chosen
+    # decoder, and a rule enters the submission only through F2-06 (Section 6) if it has an
+    # isolated gain. ``current`` therefore stays the stage-3 config.
     post_points = sweep_postprocess(
         current, degrade=degrade, matches=matches, include_d_cross=include_d_cross)
-    post_pick = select_plateau(
-        post_points, neighbour_fn=None,
-        tiebreak_keys=("lam_team", "lam_dead"))
-    if robust:
-        post_pick = robustify_stage(post_points, post_pick, evaluate_fn=evaluate_fn)
-    current = post_pick["cfg"]
-    history["stages"].append({"name": "postprocess", "points": post_points, "selected": post_pick})
+    post_best = max(post_points, key=lambda p: float(p["mean"]))
+    history["stages"].append({"name": "postprocess", "points": post_points,
+                              "selected": post_best, "applied": False})
 
     history["selected_cfg"] = current
     return history
@@ -457,10 +466,13 @@ def render_stage_markdown(stage: Mapping[str, Any]) -> str:
     name = stage["name"]
     selected = stage["selected"]
     df = points_to_frame(stage["points"])
+    applied = stage.get("applied", True)
     lines = [
         "## Stage: {}".format(name),
         "",
-        "- selected: `{}`".format(selected.get("id")),
+        "- {}: `{}`".format("selected" if applied else
+                            "best isolated (informational, not applied to v1s; see F2-06)",
+                            selected.get("id")),
         "- spellF1 mean±SE: {:.4f}±{:.4f}".format(
             float(selected["mean"]), float(selected["se"])),
         "- spell ratio (pred/gt): {:.4f}".format(float(selected.get(SPELL_RATIO, float("nan")))),
