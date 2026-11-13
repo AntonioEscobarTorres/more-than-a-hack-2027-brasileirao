@@ -49,6 +49,7 @@ Modelo:
 | [D-010](#d-010--integração-do-hmm-no-predict_labels) | 2026-11-11 | Integração do HMM no `predict_labels` | Vigente |
 | [D-011](#d-011--calibrated_file-chega-às-variantes-dentro-de-params) | 2026-11-11 | `calibrated_file` chega às variantes dentro de `params` | Vigente |
 | [D-012](#d-012--resposta-dos-organizadores-de-1311-e-candidatas-novas) | 2026-11-13 | Resposta dos organizadores de 13/11 e candidatas novas | Vigente |
+| [D-013](#d-013--nome-da-equipe-formulário-e-envio-único) | 2026-11-13 | Nome da equipe, formulário e envio único | Vigente |
 
 ## Decisões
 
@@ -371,14 +372,38 @@ Modelo:
 - **Evidência:** e-mail dos organizadores de 13/11/2026 (hackathon.talentarena@mobileworldcapital.com);
   RULES.md; issues #124, #125 e #126.
 
+### D-013 — Nome da equipe, formulário e envio único
+
+- **Data:** 2026-11-13
+- **Autor:** Ahmed (F5, F5-08)
+- **Status:** Vigente
+- **Decisão:**
+  1. **Nome da equipe:** `brasileirao`, igual ao do cadastro. É o valor do campo "Team name" e o
+     `<team_name>` dos arquivos: `brasileirao.csv` e `brasileirao.pdf`.
+  2. **Responsável pelo envio:** Ahmed (`HachemAhmed`). O acesso ao formulário foi testado com a conta Google
+     dele em 13/11. Só ele envia, porque o formulário aceita uma resposta por equipe.
+  3. **Envio único na seg 16/11 (F5-09).** Não haverá envio de segurança separado: a F5-05 (#77) foi
+     cancelada. O prazo oficial (17/11) não informa horário nem fuso, então
+     17/11 fica só como folga.
+  4. **Campos do formulário:** confirmação de e-mail (obrigatória); Team name; **Team members names**, campo
+     que não aparece no SUBMISSION.md (preencher com os nomes reais completos dos 5 membros, como no
+     cadastro); Possession file `.csv` (até 10 MB); Public code repository URL; Short technical document
+     (até 10 MB).
+- **Opções consideradas:**
+  - Envio único em 16/11: escolhido pela equipe.
+  - Envio de segurança antes, editado em 16/11 (plano original da F5-05): descartado pela equipe. Sem ele,
+    o envio de 16/11 precisa sair certo de primeira; a print do formulário não mostra se a resposta pode
+    ser editada depois.
+- **Evidência:** e-mail dos organizadores com a URL do formulário (13/11); SUBMISSION.md, seção "How to
+  submit"; issue #57.
+
 ## Registro de envios
 
-Preenchido pela F5 (F5-05 e F5-09). O CSV enviado tem de ser o arquivo validado, com o mesmo SHA-256.
+Preenchido pela F5 (F5-09; envio único, ver D-013). O CSV enviado tem de ser o arquivo validado, com o mesmo SHA-256.
 
 > **Lembrete obrigatório:** o repositório precisa estar **público** antes de 17/11/2026 em qualquer
 > cenário (ver F5-09).
 
 | Data | Envio | Config (nome e hash) | Commit ou tag | SHA-256 do CSV | `validate_submission` | Autor |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| _pendente_ | Envio de segurança (F5-05) | | | | | |
 | _pendente_ | Envio final (F5-09) | | | | | |
