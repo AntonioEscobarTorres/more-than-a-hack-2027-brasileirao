@@ -82,7 +82,7 @@ def test_v1_config_is_appendix_a(v1_cfg):
     }
     assert v1_cfg["postprocess"] == {"midpoint_neutral_switch": False,
                                      "boundary_shift_file": None, "d_bridge_frames": 0,
-                                     "min_spell_frames": 0}
+                                     "d_cross_frames": 0, "min_spell_frames": 0}
 
 
 # -- end to end on the mock ----------------------------------------------------------------------
@@ -219,7 +219,8 @@ def test_post_stats_are_logged(mock_master, v1_cfg, caplog):
 
 @pytest.mark.parametrize("post", [{"midpoint_neutral_switch": True},
                                   {"boundary_shift_file": "configs/calib/boundary.yaml"},
-                                  {"d_bridge_frames": 5}, {"min_spell_frames": 5}])
+                                  {"d_bridge_frames": 5}, {"d_cross_frames": 5},
+                                  {"min_spell_frames": 5}])
 def test_enabled_rule_without_f2_04_is_an_error(mock_master, v1_cfg, post, monkeypatch):
     monkeypatch.setattr(pipeline, "_postprocess_fn", lambda: pipeline._identity_postprocess)
     with pytest.raises(NotImplementedError, match="F2-04"):

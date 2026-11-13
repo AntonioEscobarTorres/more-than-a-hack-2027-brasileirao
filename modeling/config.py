@@ -189,6 +189,7 @@ POSTPROCESS_SCHEMA = {
     "midpoint_neutral_switch": Bool(),
     "boundary_shift_file": Str(nullable=True),
     "d_bridge_frames": Int(ge=0),
+    "d_cross_frames": Int(ge=0),
     "min_spell_frames": Int(ge=0),
 }
 

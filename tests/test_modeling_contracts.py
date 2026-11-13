@@ -97,6 +97,7 @@ HMM_CFG = {
         "midpoint_neutral_switch": False,
         "boundary_shift_file": None,
         "d_bridge_frames": 0,
+        "d_cross_frames": 0,
         "min_spell_frames": 0,
     },
 }

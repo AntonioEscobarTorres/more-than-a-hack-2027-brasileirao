@@ -80,4 +80,5 @@ postprocess:
   midpoint_neutral_switch: false
   boundary_shift_file: null
   d_bridge_frames: 0
+  d_cross_frames: 0
   min_spell_frames: 0
