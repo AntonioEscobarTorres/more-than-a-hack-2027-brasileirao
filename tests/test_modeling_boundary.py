@@ -81,3 +81,39 @@ def test_latencies_ignore_cross_half(tmp_path):
     pred = _codes_from_labels(labels, half)
     lat = bnd.latencies_for_match(gt, pred, tol=50)
     assert all(len(v) == 0 for v in lat.values())  # no transitions inside halves
+
+
+# -- regressions (review of #123) ---------------------------------------------------------------
+
+def test_median_rounds_half_away_from_zero():
+    lat = {k: [] for k in BOUNDARY_TYPES}
+    lat["H>A"] = [7.0, 8.0] * (bnd.MIN_PAIRS // 2)   # median 7.5
+    lat["A>H"] = [-2.0, -3.0] * (bnd.MIN_PAIRS // 2)  # median -2.5
+    lat["H>D"] = [2.4] * bnd.MIN_PAIRS
+    table = bnd.median_table(lat)
+    assert (table["H>A"], table["A>H"], table["H>D"]) == (8, -3, 2)
+
+
+def test_calibrate_refuses_config_with_shift_on():
+    cfg = {"postprocess": {"boundary_shift_file": "configs/calib/boundary.yaml"}}
+    with pytest.raises(ValueError, match="boundary_shift_file"):
+        bnd.calibrate_boundary(cfg, matches=["M1"])
+
+
+def test_compare_boundary_shift_runs_off_and_on(tmp_path):
+    import pandas as pd
+
+    cfg = {"postprocess": {"boundary_shift_file": "old.yaml", "d_bridge_frames": 0}}
+    seen = []
+
+    def fake(c, degrade, matches):
+        seen.append(c["postprocess"]["boundary_shift_file"])
+        value = 0.5 if c["postprocess"]["boundary_shift_file"] else 0.4
+        return pd.DataFrame({"spell_f1_mean": [value, value, 0.0]}, index=["M1", "mean", "se"])
+
+    path = tmp_path / "b.yaml"
+    result = bnd.compare_boundary_shift(cfg, path, evaluate_fn=fake)
+    assert seen == [None, str(path)]
+    assert cfg["postprocess"]["boundary_shift_file"] == "old.yaml"  # input untouched
+    text = bnd.comparison_markdown(result)
+    assert "off: spell_f1_mean 0.4000" in text and "on: spell_f1_mean 0.5000" in text

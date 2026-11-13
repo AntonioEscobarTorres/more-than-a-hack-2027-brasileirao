@@ -200,3 +200,49 @@ def test_write_v1s(tmp_path):
     loaded = load_config(path)
     assert loaded["name"] == "v1s"
     assert loaded["decoder"]["lam_team"] == 0.4
+
+
+# -- regressions (review of #123) ---------------------------------------------------------------
+
+def test_plateau_candidates_anchor_on_best_point():
+    points = [
+        {"id": "best", "mean": 0.50, "se": 0.01},
+        {"id": "near", "mean": 0.495, "se": 0.10},
+        {"id": "far", "mean": 0.40, "se": 0.10},
+    ]
+    # 1 SE of the best (0.01): only best and near; the wide SE of other points is irrelevant
+    assert [p["id"] for p in sweep.plateau_candidates(points)] == ["best", "near"]
+
+
+def test_robustify_reuses_scores_only_for_primary_degrade():
+    points = [{"id": "p", "mean": 0.5, "se": 0.01, sweep.SPELL_RATIO: 1.0, "cfg": {}}]
+    seen = []
+
+    def fake(cfg, deg):
+        seen.append(deg)
+        return {"mean": 0.1, "se": 0.0, sweep.SPELL_RATIO: 1.0}
+
+    out = sweep.robustify_stage(points, evaluate_fn=fake, primary="hidelo")
+    assert sorted(seen) == ["default", "hidehi"]
+    assert out["robust_scores"]["hidelo"]["mean"] == 0.5
+    assert out["robust_scores"]["default"]["mean"] == 0.1
+
+
+def test_postprocess_stage_is_not_applied_to_selected_cfg(monkeypatch):
+    cfg = _hmm_cfg()
+
+    def fake(c, deg="default"):
+        # every post-processing rule looks better than "off"
+        post = c["postprocess"]
+        bonus = 0.1 * (post["midpoint_neutral_switch"] or post["d_bridge_frames"] > 0
+                       or post["min_spell_frames"] > 0 or post["d_cross_frames"] > 0)
+        return {"mean": 0.4 + bonus, "se": 0.01, sweep.SPELL_RATIO: 1.0}
+
+    monkeypatch.setattr(sweep, "evaluate_point",
+                        lambda c, *, degrade="default", matches=None, metric=sweep.METRIC:
+                        fake(c, degrade))
+    history = sweep.run_staged_sweep(cfg, robust=False)
+    post = history["selected_cfg"]["postprocess"]
+    assert post == cfg["postprocess"]
+    assert history["stages"][-1]["applied"] is False
+    assert "not applied" in sweep.render_stage_markdown(history["stages"][-1])

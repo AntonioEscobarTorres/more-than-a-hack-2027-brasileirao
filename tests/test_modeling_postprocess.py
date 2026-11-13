@@ -305,3 +305,78 @@ def test_stats_keys_match_pipeline_rules():
     half = np.ones(4, np.int8)
     _, stats = _run(_labels("HHHH"), half, _cfg())
     assert set(stats) == set(POSTPROCESS_RULES) | {"final_imposition"}
+
+
+# -- regressions: consecutive boundaries and many short spells (review of #122) ---------------
+
+def _runs(out) -> list[tuple[str, int]]:
+    s = "".join(out)
+    runs, i = [], 0
+    while i < len(s):
+        j = i
+        while j < len(s) and s[j] == s[i]:
+            j += 1
+        runs.append((s[i], j - i))
+        i = j
+    return runs
+
+
+def test_midpoint_moves_consecutive_boundaries():
+    # H|A|H, both boundaries inside their own neutral run → both go to the midpoints 23 and 43
+    labels = _labels("H" * 20 + "A" * 20 + "H" * 20)
+    logit = np.ones(60)
+    logit[18:28] = 0.0
+    logit[38:48] = 0.0
+    cfg = _cfg(midpoint_neutral_switch=True)
+    out, _ = _run(labels, np.ones(60, np.int8), cfg, team_logit=logit)
+    assert _runs(out) == [("H", 23), ("A", 20), ("H", 17)]
+    out2, stats2 = _run(out, np.ones(60, np.int8), cfg, team_logit=logit)
+    np.testing.assert_array_equal(out, out2)
+    assert stats2["midpoint_neutral_switch"] == 0
+
+
+def test_boundary_shift_moves_consecutive_boundaries(tmp_path):
+    # H|A|D with median +3 on every type → both boundaries move 3 frames earlier
+    path = tmp_path / "boundary.yaml"
+    path.write_text(yaml.safe_dump({"all": {t: 3 for t in BOUNDARY_TYPES}}), encoding="utf-8")
+    labels = _labels("H" * 20 + "A" * 20 + "D" * 20)
+    out, stats = _run(labels, np.ones(60, np.int8), _cfg(boundary_shift_file=str(path)))
+    assert _runs(out) == [("H", 17), ("A", 20), ("D", 23)]
+    assert stats["boundary_shift_file"] == 6
+
+
+def test_boundary_shift_neighbours_never_cross(tmp_path):
+    # Opposite shifts squeeze the 2-frame A segment: it keeps exactly one frame
+    path = tmp_path / "boundary.yaml"
+    path.write_text(yaml.safe_dump({"all": {t: 0 for t in BOUNDARY_TYPES}
+                                    | {"H>A": -5, "A>D": 5}}), encoding="utf-8")
+    labels = _labels("HHHHHAADDDDD")
+    out, _ = _run(labels, np.ones(12, np.int8), _cfg(boundary_shift_file=str(path)))
+    assert [lab for lab, _n in _runs(out)] == ["H", "A", "D"]
+    assert min(n for _lab, n in _runs(out)) >= 1
+
+
+def test_boundary_shift_does_not_paint_over_force_d(tmp_path):
+    # H>A shifted 4 frames later would cover a force_d frame at 6: it stops just before it
+    path = tmp_path / "boundary.yaml"
+    path.write_text(yaml.safe_dump({"all": {t: 0 for t in BOUNDARY_TYPES} | {"H>A": -4}}),
+                    encoding="utf-8")
+    force = np.zeros(12, bool)
+    force[6] = True
+    labels = _labels("HHHHAAAAAAAA")
+    out, _ = _run(labels, np.ones(12, np.int8), _cfg(boundary_shift_file=str(path)),
+                  force_d=force)
+    assert "".join(out) == "HHHHHHDAAAAA"
+
+
+def test_min_spell_absorbs_more_than_twenty_spells():
+    # 30 short A blips inside H: one pass must absorb all of them (no per-pass cap)
+    labels = _labels("".join("H" * 20 + "A" * 3 for _ in range(30)) + "H" * 20)
+    half = np.ones(labels.shape[0], np.int8)
+    cfg = _cfg(min_spell_frames=13)
+    out, stats = _run(labels, half, cfg)
+    assert set("".join(out)) == {"H"}
+    assert stats["min_spell_frames"] == 90
+    out2, stats2 = _run(out, half, cfg)
+    np.testing.assert_array_equal(out, out2)
+    assert stats2["min_spell_frames"] == 0
