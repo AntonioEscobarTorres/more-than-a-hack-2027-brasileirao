@@ -48,6 +48,7 @@ Modelo:
 | [D-009](#d-009--mestres-__none-só-para-diagnóstico) | 2026-11-11 | Mestres `__none` só para diagnóstico | Vigente |
 | [D-010](#d-010--integração-do-hmm-no-predict_labels) | 2026-11-11 | Integração do HMM no `predict_labels` | Vigente |
 | [D-011](#d-011--calibrated_file-chega-às-variantes-dentro-de-params) | 2026-11-11 | `calibrated_file` chega às variantes dentro de `params` | Vigente |
+| [D-012](#d-012--resposta-dos-organizadores-de-1311-e-candidatas-novas) | 2026-11-13 | Resposta dos organizadores de 13/11 e candidatas novas | Vigente |
 
 ## Decisões
 
@@ -104,6 +105,9 @@ Modelo:
     issue oficial #10.
 - **Evidência:** issues oficiais #2 e #10; RULES.md ("Training and validation data"); Seção 1.2 e Apêndice E
   do [contexto global](plano/00_contexto_global.md).
+- **Confirmação (13/11):** os organizadores responderam por e-mail que todo treino e todo ajuste de
+  parâmetros devem usar só dados externos, e que o que não é explicitamente permitido não é permitido.
+  Isso fecha a zona cinzenta acima: nem ajuste não supervisionado (EM) no BAR-ATH. Ver D-012.
 
 ### D-003 — Emissão corrigida (contrato C3)
 
@@ -201,6 +205,10 @@ Modelo:
     jogo inteiro, e a degradação é só uma aproximação do ATD.
 - **Evidência:** issue oficial #10; EVALUATION.md; o resultado de cada passo ficará em `reports/selection.md`
   (F2-06).
+- **Esclarecimento (13/11):** os filtros eliminatórios no BAR-ATH (CSV válido, checagens da janela pública,
+  faixas de plausibilidade tiradas do IDSSE) e a checagem de estabilidade são checagens automáticas, que a
+  resposta dos organizadores permite. Eles só eliminam candidatas; nunca as ordenam nem ajustam parâmetros.
+  Ver D-012.
 
 ### D-007 — Features de bola morta: interpretações da especificação
 
@@ -322,6 +330,46 @@ Modelo:
     `load_config` já valida a chave no nível da seção.
 - **Evidência:** `tests/test_modeling_pipeline_hmm.py` (testes de `variant_params` e de um tipo
   `calibrated` registrado no teste). O v1 não muda: as duas seções têm `calibrated_file: null`.
+
+### D-012 — Resposta dos organizadores de 13/11 e candidatas novas
+
+- **Data:** 2026-11-13
+- **Autor:** Ahmed (F5)
+- **Status:** Vigente
+- **Contexto:** a equipe perguntou por e-mail se um ajuste não supervisionado (EM/Baum-Welch) do HMM sobre o
+  tracking do BAR-ATH, sem nenhum rótulo, era permitido. A resposta (e-mail de 13/11) repetiu o e-mail de
+  esclarecimento:
+  - **não permitido:** conferir a saída contra o vídeo; rótulos à mão ou qualquer dado produzido por pessoas
+    sobre o jogo; enviar os dados fornecidos a serviços de IA; treinar, ajustar ou calibrar no GT de posse ou
+    no vídeo fornecido;
+  - **permitido:** checagens automáticas usando só os dados fornecidos; inspecionar os dados e o vídeo para
+    entender o que conta como posse; usar como entrada o vídeo, o tracking, o Smart Tagging ou outros dados
+    gerados, desde que o algoritmo não tenha sido treinado no GT nem no vídeo; entregar arquivos de etapas
+    intermediárias; usar qualquer dataset com direito de uso;
+  - "If you need to train (or retrain), you MUST use only external data. If your algorithm has parameters
+    that need to be tuned, you MUST tune them on external data", e "anything that is not explicitly allowed
+    is not permitted".
+- **Decisão:**
+  1. **Nenhum ajuste no BAR-ATH, nem não supervisionado.** O EM proposto em 11/11 não será feito. A D-002
+     continua valendo, agora confirmada.
+  2. **Os filtros eliminatórios e a checagem de estabilidade da F2-06 ficam como estão:** são checagens
+     automáticas, com faixas externas, que só eliminam. Ficam documentados no relatório técnico com essa
+     natureza.
+  3. **Ninguém confere a saída contra o vídeo**, nem para depurar (por exemplo, rótulos previstos sobrepostos
+     ao vídeo). Olhar o vídeo para entender a definição de posse continua permitido.
+  4. **Três candidatas novas para a F2-06**, todas ajustadas só no IDSSE e com a saída do v1 byte a byte
+     igual quando desligadas: F1-08 (hazard de troca, #124), F2-07 (transições guiadas, #125) e F2-08
+     (durações semi-Markov, #126). Entram na escada da Seção 6 depois de `d_cross_frames`, com a mesma regra
+     de aceitação.
+  5. **Hash do config:** F2-07 e F2-08 acrescentam chaves obrigatórias a todos os configs. O hash do
+     `configs/v1.yaml` muda, mas os rótulos não; o envio de segurança registra o commit e o hash da época.
+- **Opções consideradas:**
+  - EM não supervisionado no BAR-ATH: descartado pela resposta acima.
+  - Trocar o fallback dos filtros eliminatórios por "investigar bug": descartado. As checagens são
+    permitidas, e sem o fallback uma vencedora degenerada no BAR-ATH poderia ser enviada.
+  - Pesos das tags do Smart Tagging ajustados no BAR-ATH: proibido; os pesos fixos do Apêndice A.3 continuam.
+- **Evidência:** e-mail dos organizadores de 13/11/2026 (hackathon.talentarena@mobileworldcapital.com);
+  RULES.md; issues #124, #125 e #126.
 
 ## Registro de envios
 

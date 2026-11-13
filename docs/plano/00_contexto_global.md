@@ -38,6 +38,7 @@ O gate G1 (code freeze) é da F5.
   - O **IDSSE** foi aprovado explicitamente na issue #16 (licença CC BY 4.0). É obrigatório citá-lo no README e no relatório.
   - Recado dos organizadores: "todo hiperparâmetro e limiar escolhido no IDSSE ou em outros jogos".
 - **Treinar no próprio BAR-ATH** usando o tracking fornecido como rótulo foi vetado na issue #2, embora o RULES.md (atualizado em 23/10) permita pseudo-rótulos algorítmicos. **Decisão deste plano: nada é treinado no BAR-ATH. Toda calibração usa o IDSSE.**
+  - **Confirmado em 13/11** por e-mail dos organizadores: treino e ajuste de parâmetros só em dados externos; nem ajuste não supervisionado no BAR-ATH. Conferir a saída contra o vídeo também é proibido (D-012).
 - **Reprodutibilidade** (issue #11): o CSV tem de sair **byte a byte igual** ao rodar o repositório, com os pesos commitados, sobre os dados fornecidos.
   - Inferência na CPU, versões fixadas, sementes fixas.
   - O treino não precisa ser bit-exato, mas o código de treino tem de estar publicado.
@@ -147,7 +148,7 @@ A mesma função, `modeling.pipeline.predict_labels(master, cfg)`, roda nos dois
 - **Pipeline idêntico nos dois domínios.** O IDSSE passa pelo **mesmo** pré-processamento (via F4-02), depois de degradado para parecer o ATD: bola some em ≈41% dos frames, trilhas quebram, aparecem fantasmas.
 - **Descartados:**
   - GBDT ou redes por frame: alto risco de mudança de domínio IDSSE→ATD, pouco tempo e determinismo mais difícil.
-  - Autotreino com pseudo-rótulos no BAR-ATH: zona cinzenta nas regras (issue #2).
+  - Autotreino com pseudo-rótulos ou ajuste não supervisionado (EM) no BAR-ATH: vetado (issue #2; confirmado pelos organizadores em 13/11, D-012).
   - Harness de mascaramento no BAR-ATH: não tem verdade, e premia suavização excessiva (uma saída constante seria "perfeitamente robusta").
   - Amostras abertas da Metrica com rótulos derivados de eventos: os rótulos são aproximados, enquanto o IDSSE tem rótulos nativos por frame.
 - **Ativos fora do modelo** (documentar no relatório): vídeo tático, vídeo da transmissão e homografia (só diagnóstico; `reproj_error` não entra no modelo). O **tracking da transmissão** é uma trilha exploratória (F4-05/F4-06): só entra se passar no portão de viabilidade e no protocolo da Seção 6.
