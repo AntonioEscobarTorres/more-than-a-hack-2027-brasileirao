@@ -62,6 +62,7 @@ Você **não implementa nada**. Você só organiza o trabalho no GitHub a partir
   - O **IDSSE** foi aprovado explicitamente na issue #16 (licença CC BY 4.0). É obrigatório citá-lo no README e no relatório.
   - Recado dos organizadores: "todo hiperparâmetro e limiar escolhido no IDSSE ou em outros jogos".
 - **Treinar no próprio BAR-ATH** usando o tracking fornecido como rótulo foi vetado na issue #2, embora o RULES.md (atualizado em 23/10) permita pseudo-rótulos algorítmicos. **Decisão deste plano: nada é treinado no BAR-ATH. Toda calibração usa o IDSSE.**
+  - **Confirmado em 13/11** por e-mail dos organizadores: treino e ajuste de parâmetros só em dados externos; nem ajuste não supervisionado no BAR-ATH. Conferir a saída contra o vídeo também é proibido (D-012).
 - **Reprodutibilidade** (issue #11): o CSV tem de sair **byte a byte igual** ao rodar o repositório, com os pesos commitados, sobre os dados fornecidos.
   - Inferência na CPU, versões fixadas, sementes fixas.
   - O treino não precisa ser bit-exato, mas o código de treino tem de estar publicado.
@@ -1301,7 +1302,17 @@ Se alguma das tarefas F1-05, F3-04, F1-07, F3-08 ou F4-06 for fechada como "não
 
 ---
 
-## 5. Arestas de dependência (todas as relações "bloqueada por") — 58 arestas
+#### F1-08, F2-07, F2-08 — Candidatas novas de 13/11 (Ahmed)
+Acrescentadas em 13/11 (D-012) para atacar a contagem baixa de posses e o atraso nas fronteiras. Especificações completas em `docs/tasks/`:
+- **F1-08 — Detector de troca de posse (hazard) no IDSSE** ([#124](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/124)): evidência simétrica, por frame, de que a posse está trocando. Bloqueada por F1-03 e F4-04.
+- **F2-07 — Transições guiadas pela evidência de troca (IO-HMM)** ([#125](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/125)): o hazard modula a troca H↔A no Viterbi. Bloqueada por F1-08 e F2-05.
+- **F2-08 — Durações semi-Markov (binomial negativa)** ([#126](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/126)): `r` estágios depois do `min_dwell`. Bloqueada por F2-03 e F2-05.
+
+As três bloqueiam a F2-06, deixam o v1 byte a byte igual quando desligadas e só entram pela regra da Seção 6.
+
+---
+
+## 5. Arestas de dependência (todas as relações "bloqueada por") — 67 arestas (58 + 9 de 13/11)
 
 | Tarefa | Bloqueada por |
 | :--- | :--- |
@@ -1340,7 +1351,10 @@ Se alguma das tarefas F1-05, F3-04, F1-07, F3-08 ou F4-06 for fechada como "não
 | F2-03 | F2-01, F4-01 |
 | F2-04 | F2-02 |
 | F2-05 | F1-03, F2-03, F2-04, F4-04, F5-04 |
-| F2-06 | F2-05, F1-05, F3-04, F1-07, F3-08, F4-06 |
+| F1-08 | F1-03, F4-04 |
+| F2-07 | F1-08, F2-05 |
+| F2-08 | F2-03, F2-05 |
+| F2-06 | F2-05, F1-05, F3-04, F1-07, F3-08, F4-06, F1-08, F2-07, F2-08 |
 | G1 | F2-06 |
 
 **Caminho crítico:** F4-01 → F4-03 → F4-04 → (F1-05, F3-04, F2-05) → F2-06 → G1 → F5-06 → F5-09. Uma tarefa P1/P2 fechada como "não será feita" deixa de bloquear (ver Seção 7).
