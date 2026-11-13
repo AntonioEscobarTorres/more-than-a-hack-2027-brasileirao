@@ -56,7 +56,7 @@ _DECODER = {
     "min_dwell_frames": {"H": 12, "A": 12, "D": 25},
 }
 _POST = {"midpoint_neutral_switch": False, "boundary_shift_file": None, "d_bridge_frames": 0,
-         "min_spell_frames": 0}
+         "d_cross_frames": 0, "min_spell_frames": 0}
 
 
 def dead_params(**overrides) -> dict:

@@ -24,10 +24,10 @@ from .decode.viterbi import decode_match
 
 log = logging.getLogger(__name__)
 
-# Post-processing (F2-04). Until that module exists, only the final imposition runs.
+# Post-processing (F2-04). Missing module → identity stand-in with final imposition only.
 POSTPROCESS_MODULE = "modeling.decode.postprocess"
 POSTPROCESS_RULES = ("midpoint_neutral_switch", "boundary_shift_file", "d_bridge_frames",
-                     "min_spell_frames")
+                     "d_cross_frames", "min_spell_frames")
 
 
 def _rules_enabled(cfg_post: dict) -> list[str]:
@@ -39,6 +39,8 @@ def _rules_enabled(cfg_post: dict) -> list[str]:
         on.append("boundary_shift_file")
     if cfg_post["d_bridge_frames"] > 0:
         on.append("d_bridge_frames")
+    if cfg_post.get("d_cross_frames", 0) > 0:
+        on.append("d_cross_frames")
     if cfg_post["min_spell_frames"] > 0:
         on.append("min_spell_frames")
     return on
