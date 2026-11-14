@@ -263,7 +263,8 @@ and dropped and the reason for each.*
   about 0.4 s of the old one, the last frames of the old ball (the crossing of the line) are
   removed. In ordinary synthetic play the filter keeps every real observation. A local check
   (`tools/jump_filter_edge_cases.py`) counts the footprint of both cases in each half.
-  *To be completed by F3 after the local run (task F3-07): whether the check passes.*
+  On the provided match the check passes in both halves (fewer than 10 occurrences of each case
+  per half), so the filter was left unchanged.
 - **What we would fix with more time.** *(All fronts.)*
 
 ## 7. Reproduction

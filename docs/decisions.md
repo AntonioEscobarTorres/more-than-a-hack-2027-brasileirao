@@ -50,7 +50,7 @@ Modelo:
 | [D-011](#d-011--calibrated_file-chega-às-variantes-dentro-de-params) | 2026-11-11 | `calibrated_file` chega às variantes dentro de `params` | Vigente |
 | [D-012](#d-012--resposta-dos-organizadores-de-1311-e-candidatas-novas) | 2026-11-13 | Resposta dos organizadores de 13/11 e candidatas novas | Vigente |
 | [D-013](#d-013--nome-da-equipe-formulário-e-envio-único) | 2026-11-13 | Nome da equipe, formulário e envio único | Vigente |
-| [D-014](#d-014--casos-de-borda-do-filtro-da-bola-como-são-contados) | 2026-11-10 | Casos de borda do filtro da bola: como são contados | Vigente |
+| [D-014](#d-014--casos-de-borda-do-filtro-da-bola-como-são-contados) | 2026-11-13 | Casos de borda do filtro da bola: como são contados | Vigente |
 
 ## Decisões
 
@@ -400,7 +400,7 @@ Modelo:
 
 ### D-014 — Casos de borda do filtro da bola: como são contados
 
-- **Data:** 2026-11-10
+- **Data:** 2026-11-13
 - **Autor:** Bernardo (F3, F3-07)
 - **Status:** Vigente
 - **Decisão:** `tools/jump_filter_edge_cases.py` conta, por tempo, a marca dos dois casos de borda de
