@@ -50,6 +50,7 @@ Modelo:
 | [D-011](#d-011--calibrated_file-chega-às-variantes-dentro-de-params) | 2026-11-11 | `calibrated_file` chega às variantes dentro de `params` | Vigente |
 | [D-012](#d-012--resposta-dos-organizadores-de-1311-e-candidatas-novas) | 2026-11-13 | Resposta dos organizadores de 13/11 e candidatas novas | Vigente |
 | [D-013](#d-013--nome-da-equipe-formulário-e-envio-único) | 2026-11-13 | Nome da equipe, formulário e envio único | Vigente |
+| [D-014](#d-014--casos-de-borda-do-filtro-da-bola-como-são-contados) | 2026-11-13 | Casos de borda do filtro da bola: como são contados | Vigente |
 | [D-015](#d-015--diagnósticos-de-bola-morta-como-são-calculados) | 2026-11-13 | Diagnósticos de bola morta: como são calculados | Vigente |
 
 ## Decisões
@@ -398,12 +399,50 @@ Modelo:
 - **Evidência:** e-mail dos organizadores com a URL do formulário (13/11); SUBMISSION.md, seção "How to
   submit"; issue #57.
 
+### D-014 — Casos de borda do filtro da bola: como são contados
+
+- **Data:** 2026-11-13
+- **Autor:** Bernardo (F3, F3-07)
+- **Status:** Vigente
+- **Decisão:** `tools/jump_filter_edge_cases.py` conta, por tempo, a marca dos dois casos de borda de
+  `remove_ball_jump_outliers`, com os limiares fixados pela F3-07. Pontos que a especificação deixava em
+  aberto:
+  1. **(a) A "bola mantida" inclui os frames interpolados.** Um trecho de bola parada e fora do campo pode
+     atravessar lacunas curtas preenchidas pelo pré-processamento. Nesses frames a velocidade é a da própria
+     interpolação.
+  2. **(a) "Enquanto os jogadores correm"** vale se o trecho contém 75 frames consecutivos em que a média da
+     velocidade dos jogadores é maior que 3 m/s. Um trecho em que todo frame passa de 3 m/s também é contado.
+  3. **(b) O salto é medido entre duas observações mantidas consecutivas**, no mesmo tempo.
+  4. **(b) "Seguido de bola parada"** vale se a bola mantida fica parada em algum dos 25 frames a partir do
+     pouso.
+  5. **(b) Contam todas as observações removidas nos 25 frames antes do pouso**, cada uma uma única vez. Com
+     `--verbose`, a ferramenta diz também quantas delas continuam a trajetória mantida dentro do alcance
+     físico do filtro; para isso usa as posições originais de `tracking_clean.parquet`.
+  6. **Entrada inutilizável não é FAIL:** arquivo ausente, ou master e `tracking_clean` de execuções
+     diferentes, dão `ERROR` e código de saída 2.
+  7. **O filtro não foi alterado.** A correção prevista na tarefa só entra se a execução local der FAIL,
+     houver tempo antes do freeze e a F5 aprovar: ela muda a saída de `preprocessing/`, que a regra global 7
+     congela.
+- **Opções consideradas:**
+  - (1) trechos só de frames observados: descartada. No cenário sintético, o fantasma que vence a bola real
+    vira uma cadeia de trechos observados de ~8 frames ligados por frames interpolados (as observações reais
+    removidas). Nenhum trecho observado chegaria a 75 frames, e a checagem passaria sempre;
+  - (2) exigir mais de 3 m/s em todos os frames: descartada, porque uma oscilação de um frame quebraria o
+    trecho. A leitura escolhida nunca conta menos que essa;
+  - (4) exigir bola parada no próprio frame do pouso: descartada. A velocidade do master é suavizada dentro
+    do trecho observado e fica contaminada pelo salto nos primeiros frames;
+  - (7) corrigir o filtro já: descartada, pelos motivos do item 7.
+- **Evidência:** `tests/test_modeling_jump_filter_edge_cases.py` (52 testes sintéticos). Os dois cenários
+  foram reproduzidos passando arrays sintéticos pelo pré-processamento real: a ferramenta conta o fantasma
+  parado e as observações removidas antes da reposição, e não conta nada em jogo corrido. Teste de mutação
+  manual: 14 alterações no código, todas detectadas.
+
 ### D-015 — Diagnósticos de bola morta: como são calculados
 
 - **Data:** 2026-11-13
 - **Autor:** Bernardo (F3, F3-06)
 - **Status:** Vigente
-- **Nota:** o id D-014 está reservado para a F3-07 (PR aberto). Esta entrada usa D-015 para não colidir.
+- **Nota:** o id D-014 é da F3-07 (PR #130).
 - **Decisão:** em `tools/deadball_diagnostics.py`:
   1. **As três estatísticas são calculadas com a mesma função que gerou as faixas** (`label_stats.half_stats`,
      F2-03). Assim, posse, D e frames X são definidos exatamente como no IDSSE.
