@@ -50,6 +50,7 @@ Modelo:
 | [D-011](#d-011--calibrated_file-chega-às-variantes-dentro-de-params) | 2026-11-11 | `calibrated_file` chega às variantes dentro de `params` | Vigente |
 | [D-012](#d-012--resposta-dos-organizadores-de-1311-e-candidatas-novas) | 2026-11-13 | Resposta dos organizadores de 13/11 e candidatas novas | Vigente |
 | [D-013](#d-013--nome-da-equipe-formulário-e-envio-único) | 2026-11-13 | Nome da equipe, formulário e envio único | Vigente |
+| [D-015](#d-015--diagnósticos-de-bola-morta-como-são-calculados) | 2026-11-13 | Diagnósticos de bola morta: como são calculados | Vigente |
 
 ## Decisões
 
@@ -396,6 +397,39 @@ Modelo:
     ser editada depois.
 - **Evidência:** e-mail dos organizadores com a URL do formulário (13/11); SUBMISSION.md, seção "How to
   submit"; issue #57.
+
+### D-015 — Diagnósticos de bola morta: como são calculados
+
+- **Data:** 2026-11-13
+- **Autor:** Bernardo (F3, F3-06)
+- **Status:** Vigente
+- **Nota:** o id D-014 está reservado para a F3-07 (PR aberto). Esta entrada usa D-015 para não colidir.
+- **Decisão:** em `tools/deadball_diagnostics.py`:
+  1. **As três estatísticas são calculadas com a mesma função que gerou as faixas** (`label_stats.half_stats`,
+     F2-03). Assim, posse, D e frames X são definidos exatamente como no IDSSE.
+  2. **As três checagens de faixa valem por tempo**, inclusive a duração média de posse. As faixas são o
+     mínimo e o máximo dos 14 tempos do IDSSE.
+  3. **Folga de ±40% multiplicativa:** a faixa aceita é `[min × 0,6, max × 1,4]`.
+  4. **Só as três checagens de faixa são eliminatórias** e decidem o resultado final e o código de saída
+     (o filtro do passo 4 da F2-06). As duas de limiar fixo aparecem como `PASS`/`FAIL` com a marca
+     `[informative]`, como pede a tarefa ("só informativo").
+  5. **Evidência de bola morta num segmento D:** basta um frame do segmento com bola fora do campo, lacuna
+     classificada como saída (F3-01), jogadores lentos, tag de bola parada ativa ou pré-pontapé. "Jogadores
+     lentos" é o critério em que os termos `still` ou `speed_low` do `dead_logit` `rules_v1` passam a
+     contribuir: fração de parados > 0,3 ou velocidade média < 1,5 m/s (as rampas da D-008, sem limiar novo).
+     O pré-pontapé conta como evidência porque é D por definição (C4).
+  6. **As features de bola morta usam `dead.params` de `configs/v1.yaml`** (Apêndice A), trocável por
+     `--config`.
+- **Opções consideradas:**
+  - (2) duração média de posse no jogo inteiro: descartada. As faixas são por tempo, e misturar os dois
+    tempos compararia grandezas diferentes;
+  - (4) as cinco checagens eliminatórias: descartada. A tarefa diz que as duas últimas são só informativas,
+    e os limiares delas não vêm de dados externos;
+  - (5) definir "jogadores lentos" com um limiar novo: descartada, porque seria um número sem origem. Os
+    limiares das rampas já são priors do Apêndice A.3.
+- **Evidência:** `tests/test_modeling_deadball_diagnostics.py` (43 testes sintéticos); teste de mutação
+  manual (12 alterações; 11 detectadas, e a restante é equivalente, porque o caso "nenhum tempo" é barrado
+  antes, na validação da entrada).
 
 ## Registro de envios
 

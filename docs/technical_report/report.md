@@ -242,6 +242,14 @@ The protocol was fixed before any result existed.
 - **The public window was never used to choose anything.** On the provided match there are only
   pass/fail checks: a valid file, a correctness check on the public window (alignment, format, label
   direction), and plausibility bands for label statistics derived from IDSSE.
+- **Plausibility filter.** For each half of the provided match, three statistics of the predicted
+  labels (the fraction of dead-ball frames, possessions per minute and mean possession duration) must
+  fall within the range observed over the 14 IDSSE halves, widened by 40% on each side
+  (`tools/deadball_diagnostics.py`). The check uses no ground truth and only eliminates: a candidate
+  that fails it is replaced by the best previous one that passes, and it never ranks candidates or
+  tunes anything. Two further checks are reported for information only: how much of the ball
+  out-of-pitch time is predicted as live play, and how many predicted dead-ball segments have no
+  dead-ball evidence at all.
 
 *To be completed by F2 (task F2-06), from `reports/selection.md`: the table of candidates with
 per-match scores, paired gains and the decision at each step, including the variants that were tested
