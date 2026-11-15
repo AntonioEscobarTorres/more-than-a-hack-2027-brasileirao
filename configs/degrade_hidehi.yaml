@@ -6,7 +6,7 @@ target_tracked_mean: 20.5
 target_tracked_mean_tolerance: 0.3
 z_air_m: 1.5
 air_margin_frames: 3
-p_air: 0.85
+p_air: 0.0
 crowd_n: 3
 crowd_r_m: 2.0
 crowd_hazard: 0.02
@@ -30,11 +30,13 @@ overtracked_threshold: 22
 fps: 25
 p_unfreeze_hide: 0.75
 restart_visible_s: 1.5
-unfreeze_drift_mps: 0.5
+unfreeze_drift_mps: 1.5
 unfreeze_drift_tau_s: 1.0
+bg_slow_speed_mps: 1.0
+bg_slow_factor: 40.0
 gap_profile:
-  mix_geometric: 0.6
+  mix_geometric: 0.3
   geometric_mean_frames: 8.0
-  lognormal_median_frames: 40.0
+  lognormal_median_frames: 150.0
   lognormal_sigma: 1.0
   max_frames: 1500

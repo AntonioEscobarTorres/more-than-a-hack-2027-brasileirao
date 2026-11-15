@@ -26,6 +26,7 @@ _CONFIG_KEYS = frozenset({
     "dup_offset_m", "dup_len_s", "dup_frac", "dup_max_attempts",
     "overtracked_threshold", "fps", "gap_profile",
     "p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps", "unfreeze_drift_tau_s",
+    "bg_slow_speed_mps", "bg_slow_factor",
 })
 
 
@@ -59,7 +60,8 @@ def validate_degrade_config(cfg: dict) -> dict:
             raise ValueError("{} must be between 0 and 1".format(key))
     nonnegative = ("target_ball_visible_tolerance", "target_tracked_mean_tolerance",
                    "ball_noise_m", "player_noise_m", "dup_offset_m",
-                   "restart_visible_s", "unfreeze_drift_mps")
+                   "restart_visible_s", "unfreeze_drift_mps", "bg_slow_speed_mps",
+                   "bg_slow_factor")
     for key in nonnegative:
         if cfg[key] < 0.0:
             raise ValueError("{} must be non-negative".format(key))
@@ -219,6 +221,26 @@ def _load_optional_profile():
     return {"lengths": lengths, "counts": counts}
 
 
+def _slow_play_mask(players: np.ndarray, slot_team_ids: np.ndarray, threshold_mps: float) -> np.ndarray:
+    """True where the mean of the home and away mean player speeds is below ``threshold_mps``.
+
+    Uses the source speeds (channel 2, m/s) of the tracked players; a frame where either team
+    has no tracked player is never slow. Mirrors ``(mean_speed_home + mean_speed_away) / 2``
+    of the master, the quantity statistic (f) of tools/compare_external_realism.py bins on.
+    """
+    speed = players[:, :, 2].astype(np.float64)
+    team_means = []
+    for team in (0, 1):
+        team_speed = speed[:, slot_team_ids == team]
+        tracked = np.isfinite(team_speed)
+        count = tracked.sum(axis=1)
+        total = np.where(tracked, team_speed, 0.0).sum(axis=1)
+        team_means.append(np.where(count > 0, total / np.maximum(count, 1), np.nan))
+    mean_speed = (team_means[0] + team_means[1]) / 2.0
+    with np.errstate(invalid="ignore"):
+        return mean_speed < threshold_mps
+
+
 def _dead_ball_mask(labels: np.ndarray) -> np.ndarray:
     """True on dead-ball (D) frames."""
     return np.asarray(labels) == _DEAD_LABEL
@@ -335,6 +357,12 @@ def degrade_with_info(match: ExternalMatch, cfg: dict, seed: int) -> tuple[Exter
     visible_after_crowd = _clear_bursts(ball_visible, crowd_starts, lengths, blocks)
     bg_random = rng.random(match.n_frames)
     bg_lengths = _sample_gap_lengths(rng, match.n_frames, cfg, profile)
+    # Broadcast tracking loses the ball more while play is slow (stoppages, replays, close-ups):
+    # the background hazard is multiplied by bg_slow_factor on slow-play frames. It reads only
+    # player speeds, never labels; bg_slow_factor == 1 disables it.
+    bg_weight = np.where(
+        _slow_play_mask(match.players, match.slot_team_ids, cfg["bg_slow_speed_mps"]),
+        cfg["bg_slow_factor"], 1.0)
 
     # Phantom bursts (step 5) are drawn here so the background-gap calibration can target the
     # visibility the output really has: a phantom on a frame that is already visible adds
@@ -356,7 +384,7 @@ def degrade_with_info(match: ExternalMatch, cfg: dict, seed: int) -> tuple[Exter
     target_visible = cfg["target_ball_visible"]
 
     def bg_visible(hazard):
-        starts = playable & visible_after_crowd & (bg_random < hazard)
+        starts = playable & visible_after_crowd & (bg_random < hazard * bg_weight)
         return _clear_bursts(visible_after_crowd, starts, bg_lengths, blocks)
 
     def final_fraction(hazard):

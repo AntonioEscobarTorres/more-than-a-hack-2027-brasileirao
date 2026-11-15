@@ -34,7 +34,8 @@ def _find_configs_dir() -> Path:
 
 CONFIGS_DIR = _find_configs_dir()
 CONFIG_NAMES = ("default", "harder", "easier", "hidelo", "hidehi")
-NEW_KEYS = ("p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps", "unfreeze_drift_tau_s")
+NEW_KEYS = ("p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps", "unfreeze_drift_tau_s",
+            "bg_slow_speed_mps", "bg_slow_factor")
 
 DEAD_LABEL = LABEL_CODES["D"]
 LIVE_LABEL = next(code for name, code in LABEL_CODES.items() if name not in ("D", "X"))
@@ -558,3 +559,89 @@ def test_dead_ball_mask_detects_c0_dead_label_on_int8_labels():
 
     np.testing.assert_array_equal(degrade_module._dead_ball_mask(labels),
                                   [False, True, True, False])
+
+
+# ------------------------------------------------- 6. slow-play background hazard
+def _with_two_players(match, slow):
+    """One home and one away player far from the ball; speed 0.5 m/s where ``slow``, else 3 m/s."""
+    players = match.players.copy()
+    playable = _playable(match)
+    home, away = 0, N_HOME_SLOTS
+    for slot, y in ((home, 0.05), (away, 0.95)):
+        players[playable, slot, 0] = 0.5
+        players[playable, slot, 1] = y
+        players[playable, slot, 2] = np.where(slow[playable], 0.5, 3.0)
+    return ExternalMatch(match_id=match.match_id, players=players, ball=match.ball,
+                         ball_z=match.ball_z, labels=match.labels, half=match.half,
+                         slot_team_ids=match.slot_team_ids, pitch=match.pitch)
+
+
+def _slow_cfg(factor):
+    cfg = _determinism_cfg()
+    cfg.update(p_unfreeze_hide=0.0, target_ball_visible=0.7, phantom_frac=0.0,
+               bg_slow_speed_mps=1.0, bg_slow_factor=factor, bisection_iterations=30)
+    cfg["gap_profile"]["mix_geometric"] = 1.0
+    cfg["gap_profile"]["geometric_mean_frames"] = 3.0
+    return cfg
+
+
+def test_slow_play_mask_averages_team_means_and_ignores_untracked_frames():
+    slot_team_ids = np.r_[np.zeros(2, np.int8), np.ones(2, np.int8)]
+    players = np.full((4, 4, 3), np.nan, dtype=np.float32)
+    players[0, :, 2] = (0.2, 0.4, 1.0, 1.0)   # (0.3 + 1.0) / 2 = 0.65 -> slow
+    players[1, :, 2] = (2.0, 2.0, 0.5, 0.5)   # (2.0 + 0.5) / 2 = 1.25 -> not slow
+    players[2, 0, 2] = 0.1                     # away team untracked -> never slow
+    # frame 3: nobody tracked -> never slow
+
+    mask = degrade_module._slow_play_mask(players, slot_team_ids, 1.0)
+
+    assert mask.tolist() == [True, False, False, False]
+
+
+def test_slow_factor_one_ignores_the_speed_threshold():
+    match, _ = _make_match([])
+    slow = np.zeros(N_FRAMES, dtype=bool)
+    slow[:N_FIRST // 2] = True
+    slow[SECOND:SECOND + N_SECOND // 2] = True
+    match = _with_two_players(match, slow)
+    low, high = _slow_cfg(1.0), _slow_cfg(1.0)
+    high["bg_slow_speed_mps"] = 10.0  # every frame is slow, but the factor is neutral
+
+    first, info_first = degrade_module.degrade_with_info(match, low, 4)
+    second, info_second = degrade_module.degrade_with_info(match, high, 4)
+
+    assert np.array_equal(first.ball, second.ball, equal_nan=True)
+    assert info_first["bg_hazard"] == info_second["bg_hazard"]
+
+
+def test_large_slow_factor_moves_background_gaps_to_slow_play():
+    match, _ = _make_match([])
+    slow = np.zeros(N_FRAMES, dtype=bool)
+    slow[:N_FIRST // 2] = True
+    slow[SECOND:SECOND + N_SECOND // 2] = True
+    match = _with_two_players(match, slow)
+    playable = _playable(match)
+
+    def hidden_share(factor):
+        out = degrade(match, _slow_cfg(factor), 4)
+        hidden = np.isnan(out.ball[:, 0]) & playable
+        return hidden[slow].mean(), hidden[playable & ~slow].mean()
+
+    neutral_slow, neutral_fast = hidden_share(1.0)
+    biased_slow, biased_fast = hidden_share(50.0)
+
+    assert biased_slow > neutral_slow
+    assert biased_fast < neutral_fast
+    assert biased_slow > biased_fast
+
+
+@pytest.mark.parametrize("key,value", [
+    ("bg_slow_factor", -1.0), ("bg_slow_factor", float("nan")),
+    ("bg_slow_speed_mps", -0.5), ("bg_slow_speed_mps", None),
+])
+def test_invalid_slow_play_values_are_rejected(key, value):
+    cfg = _load_config("default")
+    cfg[key] = value
+
+    with pytest.raises(ValueError):
+        validate_degrade_config(cfg)
