@@ -540,6 +540,20 @@ Modelo:
 - **Item 7 da F4-04 (`bg_hazard`):** no `default`, o `bg_hazard` final fica em 61–72% do valor com
   p = 0 (sem esconder bola morta) nas duas partidas da grade (J03WMX 0,000315 contra 0,000440; J03WN1 0,000211
   contra 0,000346), acima do limite de 10% que exigiria comentar na issue antes de gerar os mestres.
+- **Termômetro independente (feito depois da escolha, nunca usado para ajustar):** o starter dos organizadores
+  (`baseline_smooth50`: jogador mais próximo da bola, votação em ±50 frames) rodado no IDSSE, 7 partidas,
+  seed 0 + índice, comparado com os números publicados por eles no BAR-ATH (`EVALUATION.md`):
+
+  | Dados | macroF1 | spellF1 | posses previstas / reais |
+  | --- | ---: | ---: | ---: |
+  | BAR-ATH (publicado) | 0,672 | 0,243 | não publicado |
+  | IDSSE limpo | 0,392 | 0,308 | 0,87 |
+  | IDSSE degradação anterior (`main` 0b4e9d8) | 0,416 | 0,219 | 1,37 |
+  | IDSSE degradação desta decisão | 0,629 | 0,254 | 1,13 |
+
+  A distância em macroF1 cai de 0,256 para 0,043, e o spellF1 fica a 0,011 do publicado (o ruído do spellF1 é
+  ~0,04). O macroF1 do starter depende quase todo de "bola invisível ⇒ D". Como ele também é alto no BAR-ATH, a
+  bola do ATD de fato some mais na bola morta, o que reduz o risco abaixo, sem eliminá-lo.
 - **Risco conhecido:** com esses valores, a bola do IDSSE degradado fica visível em ~30% dos frames de D e em
   ~80% dos de jogo. É o padrão que (f) mede no BAR-ATH (bola some com jogadores lentos), mas é uma pista forte
   para "bola invisível ⇒ D". A F3-04 e a F2-05 devem conferir a estabilidade em `hidelo` e `hidehi`.
