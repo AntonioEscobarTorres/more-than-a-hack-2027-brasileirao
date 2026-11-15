@@ -40,6 +40,7 @@ Fonte: Seção 2.4 do [plano de implementação](plano/plano_5_frentes.md). Muda
 - **C8 Pipeline:** `modeling.pipeline.predict_labels(master, cfg, *, holdout=None) -> np.ndarray["<U1"]`.
   - É a **única** função que transforma um master em rótulos, tanto no BAR-ATH quanto no IDSSE.
   - `holdout`: id da partida externa sendo avaliada. Componentes calibrados (logits logísticos, modelos GBDT e correção de fronteira) usam então os parâmetros ajustados **sem** essa partida.
+  - Cada variante de evidência recebe o `params` da sua seção. Quando a seção tem `calibrated_file` (tipos `calibrated` e `gbdt`), recebe uma cópia com a chave a mais `params["calibrated_file"]`, caminho absoluto (relativo = a partir da raiz do repositório). Ver D-011.
 - **C9 Formato externo** (`modeling/external/files.py`):
   - `ExternalMatch`, dataclass salva em `ext_dir()/"arrays"/f"{match_id}.npz"`, com os campos:
     ```

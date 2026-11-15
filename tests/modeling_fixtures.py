@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from modeling.config import validate_config
+from modeling.deadball.features import half_blocks
 
 PITCH_L = 105.3
 
@@ -55,7 +56,90 @@ _DECODER = {
     "min_dwell_frames": {"H": 12, "A": 12, "D": 25},
 }
 _POST = {"midpoint_neutral_switch": False, "boundary_shift_file": None, "d_bridge_frames": 0,
-         "min_spell_frames": 0}
+         "d_cross_frames": 0, "min_spell_frames": 0}
+
+
+def dead_params(**overrides) -> dict:
+    """Validated dead.params (Appendix A.2/A.3).
+
+    Keyword arguments override top-level keys; ``weights`` overrides only the weights it names.
+    """
+    dead = copy.deepcopy(_DEAD)
+    weights = overrides.pop("weights", {})
+    dead["params"].update(overrides)
+    dead["params"]["weights"].update(weights)
+    cfg = {"name": "t", "pipeline": "hmm", "ball_source": "tactical",
+           "team": {"kind": "none", "params": copy.deepcopy(_TEAM_PARAMS_RAW),
+                    "calibrated_file": None},
+           "dead": dead, "decoder": _DECODER, "postprocess": _POST}
+    return validate_config(cfg)["dead"]["params"]
+
+
+PITCH_W = _DEAD["params"]["pitch_w_m"]
+LONG_GAP = _DEAD["params"]["long_gap_frames"] + 1      # shortest long ball gap
+
+
+def deadball_master(x, y, vx=0.0, vy=0.0, half=1, **cols) -> pd.DataFrame:
+    """Master columns used by the dead-ball features, derived from a ball trajectory.
+
+    ``x``/``y`` are NaN where the ball is not observed. ``gap_length``, the line distances and
+    ``out_of_pitch`` follow SCHEMA.md and are computed per half; ``ball_speed`` is the norm of the
+    velocity unless given. There is no set piece unless given. Any column can be overridden
+    through ``cols``.
+    """
+    x = np.asarray(x, dtype="float64")
+    n = len(x)
+
+    def full(v):
+        return np.broadcast_to(np.asarray(v, dtype="float64"), (n,)).copy()
+
+    y, vx, vy = full(y), full(vx), full(vy)
+    half = np.broadcast_to(np.asarray(half, dtype=np.int8), (n,)).copy()
+    observed = np.isfinite(x) & np.isfinite(y) & (half != 0)
+    vx[~observed], vy[~observed] = np.nan, np.nan
+
+    gap_length = np.where(half != 0, 0.0, np.nan)
+    for b0, b1 in half_blocks(half):
+        missing = ~observed[b0:b1]
+        edges = np.flatnonzero(np.diff(np.r_[False, missing, False].astype(np.int8)))
+        for a, b in zip(edges[::2], edges[1::2]):
+            gap_length[b0 + a:b0 + b] = b - a
+
+    out = ((x < -1.0) | (x > PITCH_L + 1.0) | (y < -1.0) | (y > PITCH_W + 1.0)).astype("float64")
+    out[~observed] = np.nan
+    base = {
+        "ball_x": np.where(observed, x, np.nan), "ball_y": np.where(observed, y, np.nan),
+        "ball_vx": vx, "ball_vy": vy, "ball_speed": np.hypot(vx, vy),
+        "ball_observed": observed.astype("float64"), "gap_length": gap_length,
+        "out_of_pitch": out,
+        "d_touchline": np.where(observed, np.minimum(y, PITCH_W - y), np.nan),
+        "d_goalline": np.where(observed, np.minimum(x, PITCH_L - x), np.nan),
+        "n_still_home": 2.0, "n_still_away": 2.0, "n_tracked_home": 10.0, "n_tracked_away": 10.0,
+        "mean_speed_home": 3.0, "mean_speed_away": 2.0,
+        "frames_to_next_sp": np.nan, "frames_since_sp_end": np.nan,
+    }
+    base.update({k: v for k, v in cols.items() if k not in ("next_sp_type", "is_set_piece")})
+    df = pd.DataFrame({k: full(v) for k, v in base.items()})
+    df["half"] = half
+    next_type = cols.get("next_sp_type", "")
+    df["is_set_piece"] = np.broadcast_to(
+        np.asarray(cols.get("is_set_piece", False), dtype=bool), (n,)).copy()
+    df["next_sp_type"] = pd.array(np.broadcast_to(np.asarray(next_type, dtype=object), (n,)),
+                                  dtype="string")
+    return df
+
+
+def with_gap(before, after, gap=None, lead=5, trail=5, **cols) -> pd.DataFrame:
+    """``lead`` frames at ``before``, ``gap`` frames with no ball, ``trail`` frames at ``after``.
+
+    ``before``/``after`` are ``(x, y, vx, vy)``; ``gap`` defaults to the shortest long gap.
+    """
+    gap = LONG_GAP if gap is None else gap
+    parts = [np.tile(np.asarray(before, dtype="float64"), (lead, 1)),
+             np.full((gap, 4), np.nan),
+             np.tile(np.asarray(after, dtype="float64"), (trail, 1))]
+    traj = np.vstack(parts)
+    return deadball_master(traj[:, 0], traj[:, 1], traj[:, 2], traj[:, 3], **cols)
 
 
 def make_master(n: int = 1, **cols) -> pd.DataFrame:

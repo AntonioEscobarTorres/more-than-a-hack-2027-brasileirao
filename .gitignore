@@ -40,6 +40,13 @@ data/*
 *.pl3container
 *.parquet
 
+# Array and pickle dumps (derived tracking, external IDSSE arrays, models in progress). Synthetic
+# test fixtures under tests/fixtures/ are the only data files allowed in git: add them with
+# `git add -f`, so committing one is always a deliberate act (tests/test_repo_hygiene.py, F5-03).
+*.npy
+*.npz
+*.pkl
+
 # -- internal documents ---------------------------------------------------------------------------
 # OVERVIEW.md -- the institutional description of the competition -- IS committed. It is the only
 # place that explains why the format changed from 2026, and a document like that circulating by

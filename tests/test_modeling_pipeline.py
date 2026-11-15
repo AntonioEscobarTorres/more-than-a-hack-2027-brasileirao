@@ -85,11 +85,6 @@ def test_predict_labels_ignores_holdout_for_baseline(mock_master, baseline_cfg):
                                   predict_labels(mock_master, baseline_cfg))
 
 
-def test_predict_labels_hmm_not_implemented(mock_master):
-    with pytest.raises(NotImplementedError, match="F5-04"):
-        predict_labels(mock_master, {"pipeline": "hmm"})
-
-
 def test_predict_labels_unknown_pipeline(mock_master):
     with pytest.raises(ValueError, match="unknown pipeline"):
         predict_labels(mock_master, {"pipeline": "magic"})

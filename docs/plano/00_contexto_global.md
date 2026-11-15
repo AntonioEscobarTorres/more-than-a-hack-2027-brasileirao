@@ -38,6 +38,7 @@ O gate G1 (code freeze) é da F5.
   - O **IDSSE** foi aprovado explicitamente na issue #16 (licença CC BY 4.0). É obrigatório citá-lo no README e no relatório.
   - Recado dos organizadores: "todo hiperparâmetro e limiar escolhido no IDSSE ou em outros jogos".
 - **Treinar no próprio BAR-ATH** usando o tracking fornecido como rótulo foi vetado na issue #2, embora o RULES.md (atualizado em 23/10) permita pseudo-rótulos algorítmicos. **Decisão deste plano: nada é treinado no BAR-ATH. Toda calibração usa o IDSSE.**
+  - **Confirmado em 13/11** por e-mail dos organizadores: treino e ajuste de parâmetros só em dados externos; nem ajuste não supervisionado no BAR-ATH. Conferir a saída contra o vídeo também é proibido (D-012).
 - **Reprodutibilidade** (issue #11): o CSV tem de sair **byte a byte igual** ao rodar o repositório, com os pesos commitados, sobre os dados fornecidos.
   - Inferência na CPU, versões fixadas, sementes fixas.
   - O treino não precisa ser bit-exato, mas o código de treino tem de estar publicado.
@@ -88,6 +89,16 @@ O gate G1 (code freeze) é da F5.
 9. **A janela pública nunca serve para ajustar ou escolher nada.** Nunca relatar score dela em issue, PR, relatório ou decisão.
 10. **Nada atravessa o limite de um tempo:** janelas temporais, interpolações e buscas operam sempre por bloco de `half`.
 11. Se a especificação for ambígua, comente na issue e pergunte. Não decida em silêncio.
+12. **CI e higiene do repositório (desde 11/11, F5-03):**
+   - Todo push e todo PR rodam `pytest -q` (a suíte inteira) no GitHub Actions, sem os dados da partida. Merge só com a CI verde.
+   - `tests/test_repo_hygiene.py` falha se o commit tiver:
+     - arquivo de dados (`.parquet .npy .npz .pkl .mp4 .xml`) fora de `tests/fixtures/`;
+     - qualquer arquivo em `data/` além de `data/README.md`;
+     - notebook com saída;
+     - arquivo acima de 1 MB fora da allowlist (`models/**/*.joblib` até 5 MB).
+   - Fixtures sintéticas `.npy`, `.npz`, `.pkl` ou `.parquet` em `tests/fixtures/` entram só com `git add -f`.
+   - Preencha o template de PR, inclusive a pergunta obrigatória "Este PR contém algum valor derivado dos dados da partida?".
+   - Regras completas e checklist de publicação: [`docs/data_safety.md`](../data_safety.md).
 
 ### 1.5 Fluxo Git
 - Branch `f<n>/<ID>-slug` a partir da `main`. Uma tarefa por PR, PR pequeno, com `Closes #<issue>`.
@@ -137,7 +148,7 @@ A mesma função, `modeling.pipeline.predict_labels(master, cfg)`, roda nos dois
 - **Pipeline idêntico nos dois domínios.** O IDSSE passa pelo **mesmo** pré-processamento (via F4-02), depois de degradado para parecer o ATD: bola some em ≈41% dos frames, trilhas quebram, aparecem fantasmas.
 - **Descartados:**
   - GBDT ou redes por frame: alto risco de mudança de domínio IDSSE→ATD, pouco tempo e determinismo mais difícil.
-  - Autotreino com pseudo-rótulos no BAR-ATH: zona cinzenta nas regras (issue #2).
+  - Autotreino com pseudo-rótulos ou ajuste não supervisionado (EM) no BAR-ATH: vetado (issue #2; confirmado pelos organizadores em 13/11, D-012).
   - Harness de mascaramento no BAR-ATH: não tem verdade, e premia suavização excessiva (uma saída constante seria "perfeitamente robusta").
   - Amostras abertas da Metrica com rótulos derivados de eventos: os rótulos são aproximados, enquanto o IDSSE tem rótulos nativos por frame.
 - **Ativos fora do modelo** (documentar no relatório): vídeo tático, vídeo da transmissão e homografia (só diagnóstico; `reproj_error` não entra no modelo). O **tracking da transmissão** é uma trilha exploratória (F4-05/F4-06): só entra se passar no portão de viabilidade e no protocolo da Seção 6.
@@ -241,7 +252,7 @@ Não criar pasta ou pacote chamado `eval` (sombreia a função embutida `eval` d
 | (envio de segurança) | qua 11/11 | formulário enviado com o CSV v1 (F5-05) |
 | **M2** Calibração e varredura | qui 12/11 | mestres externos degradados prontos (qua 12h); logits calibrados; decodificador varrido; viés de fronteira calibrado |
 | (portão da transmissão) | qui 12/11 12h | GO/NO-GO da trilha exploratória (F4-05) |
-| (candidatas P2) | sex 13/11 12h | variantes GBDT (F1-07, F3-08) e fusão da transmissão (F4-06) prontas, ou fechadas como "não será feita" |
+| (candidatas P2) | sex 13/11 12h | variante GBDT do dead (F3-08) e fusão da transmissão (F4-06) prontas, ou fechadas como "não será feita" (a F1-07 é P1 desde 11/11) |
 | **M3** Método final | sex 13/11 18h | `reports/selection.md` + `configs/final.yaml`; **code freeze às 20h** (G1) |
 | **M4** Reprodução limpa | sáb 14/11 | hash idêntico em duas máquinas, clonando do zero |
 | Relatório | dom 15/11 | relatório técnico (inglês) e PDF finais |
@@ -254,6 +265,8 @@ O calendário assume trabalho no fim de semana de 07–08/11. Se o grupo não pu
 ---
 
 ## 6. Protocolo de seleção (pré-registrado: valem estas regras, não a intuição)
+
+> **Atualização de 11/11:** o teste de estresse passa a incluir os modos `hidelo` e `hidehi` (F4-04), e há passos novos na escada e uma checagem de estabilidade. Ver a seção de atualizações consolidadas em `docs/tasks/F2-06.md`, que prevalece sobre esta seção onde houver conflito.
 
 Objetivo: escolher a variante final **sem usar a janela pública e sem nenhum rótulo do BAR-ATH**.
 
@@ -294,7 +307,7 @@ Objetivo: escolher a variante final **sem usar a janela pública e sem nenhum r�
 | Risco | Plano B |
 | :--- | :--- |
 | Atraso no caminho crítico | lista de corte abaixo; envio de segurança na qua 11/11 garante um CSV válido |
-| Mudança de domínio (IDSSE limpo → ATD automático) | degradação + checagem de realismo (F4-04); poucos parâmetros calibrados; aceitar só com ganho > 1 EP |
+| Mudança de domínio (IDSSE limpo → ATD automático) | degradação + checagem de realismo (F4-04), que inclui velocidades e bola parada; mestres `__none` só para diagnóstico, nunca para calibrar ou selecionar (D-009); poucos parâmetros calibrados; aceitar só com ganho > 1 EP |
 | Convenção de posse do DFL diferente da do GT Metrica | preferir parâmetros estruturais robustos; documentar como limitação |
 | Download, RAM ou disco do IDSSE | baixar do espelho no Hugging Face com revisão fixada (o figshare bloqueia scripts); uma partida por vez; `--delete-raw`; checar espaço livre antes |
 | Não determinismo | threads = 1; somas explícitas em float64; F5-06 em duas máquinas |
@@ -305,15 +318,15 @@ Objetivo: escolher a variante final **sem usar a janela pública e sem nenhum r�
 
 **Lista de corte:**
 - **P0 (nunca cortar):** F5-01, F5-02, F5-04, F5-05, F5-06, F5-07, F5-08, F5-09, F1-01, F1-02, F2-01, F2-02, F2-06, F3-01, F3-02, F3-03, F3-05, G1.
-- **P1 (cortar só pelos gatilhos abaixo):** F4-01, F4-02, F4-03, F4-04, F1-03, F1-04, F1-05, F2-03, F2-04, F2-05, F3-04, F3-06, F5-03.
-- **P2 (primeiras a cair):** F1-06, F1-07, F3-07, F3-08, F4-05, F4-06.
+- **P1 (cortar só pelos gatilhos abaixo):** F4-01, F4-02, F4-03, F4-04, F1-03, F1-04, F1-05, F2-03, F2-04, F2-05, F3-04, F3-06, F5-03; desde 11/11 também F1-06 e F1-07 (evidência de time é o gargalo de spellF1).
+- **P2 (primeiras a cair):** F3-07, F3-08, F4-05, F4-06.
 
 **Gatilhos** (decididos pela F5 no check-in do dia):
-- **F4-04 não está pronta na qua 11/11 às 18h:** as calibrações usam os mestres `__none` (limpos), e a limitação é documentada.
+- **F4-04 não está pronta na qua 11/11 às 18h:** as calibrações (F1-05, F3-04) e a varredura (F2-05) esperam pelos mestres degradados. **Nunca** usam os mestres `__none` (limpos): no IDSSE limpo a bola fica congelada durante a bola morta, o que vaza o rótulo para as features (D-009).
 - **Também não está pronta na qui 12/11 às 12h:** Seção 6, passo 8.
 - **Calibrações não estão prontas na qui 12/11 às 20h:** a seleção fica só entre `baseline`, `v1` e `v1s`.
 - **F4-05 sem GO até qui 12/11 às 12h:** a F4-06 é fechada como "não será feita".
-- **Candidatas P2 (F1-07, F3-08, F4-06) não prontas até sex 13/11 às 12h:** fechadas como "não será feita"; deixam de bloquear a F2-06.
+- **Candidatas P2 (F3-08, F4-06) não prontas até sex 13/11 às 12h:** fechadas como "não será feita"; deixam de bloquear a F2-06. A F1-07 é P1 desde 11/11 e não cai por este gatilho; o prazo dela é combinado com a F5.
 - **O freeze não se move.**
 
 **Fora do escopo desta entrega:** detecção automática do pontapé inicial a partir dos dados; detecção própria da bola no vídeo.

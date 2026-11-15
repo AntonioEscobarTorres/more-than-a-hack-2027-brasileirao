@@ -69,6 +69,11 @@ class DecoderParams:
         object.__setattr__(
             self, "log_exit",
             np.asarray(self.log_exit, dtype=np.float64).reshape(3, 3).copy())
+        # Frozen means frozen: the arrays are read-only too, so no caller can edit the
+        # transition table in place after the params were validated.
+        for name in ("mean_duration_frames", "exit_split", "min_dwell", "p_stay",
+                     "log_p_stay", "log_exit"):
+            getattr(self, name).setflags(write=False)
         object.__setattr__(self, "lam_team", float(self.lam_team))
         object.__setattr__(self, "lam_dead", float(self.lam_dead))
         object.__setattr__(self, "neg", float(self.neg))
@@ -108,7 +113,11 @@ class DecoderParams:
             for dst, di in _STATE_INDEX.items():
                 if dst == src:
                     continue
-                exit_split[si, di] = float(row[dst])
+                value = float(row[dst])
+                if not 0.0 <= value <= 1.0:
+                    raise ValueError("exit_split[{}][{}] must be in [0, 1], got {}".format(
+                        src, dst, value))
+                exit_split[si, di] = value
             total = float(exit_split[si].sum())
             if abs(total - 1.0) > 1e-9:
                 raise ValueError(

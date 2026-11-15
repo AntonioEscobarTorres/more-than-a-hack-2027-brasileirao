@@ -1,6 +1,6 @@
 # Issues do plano de implementação
 
-37 issues (36 tarefas + o gate G1) e 58 dependências nativas do GitHub ("blocked by"), criadas em 06/11/2026 a partir do [plano completo](plano_5_frentes.md).
+37 issues (36 tarefas + o gate G1) e 58 dependências nativas do GitHub ("blocked by"), criadas em 06/11/2026 a partir do [plano completo](plano_5_frentes.md). Em 13/11 entraram mais 3 tarefas (#124–#126, D-012) e 9 dependências.
 
 Quadro do projeto (colunas Bloqueada → Pronta → Em andamento → Em revisão → Concluída): https://github.com/users/HachemAhmed/projects/2
 
@@ -35,7 +35,7 @@ Quadro do projeto (colunas Bloqueada → Pronta → Em andamento → Em revisão
 | [#82](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/82) | [F1-07](../tasks/F1-07.md) | Variante GBDT do `team_logit` (opcional) | Fernando | M3 | sex 13/11 às 12h | P2 | #79 |
 | [#83](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/83) | [F3-08](../tasks/F3-08.md) | Variante GBDT do `dead_logit` (opcional) | Bernardo | M3 | sex 13/11 às 12h | P2 | #81 |
 | [#84](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/84) | [F4-06](../tasks/F4-06.md) | Trilha exploratória: fusão da bola da transmissão (se GO) | Antônio | M3 | sex 13/11 às 12h | P2 | #78, #73 |
-| [#85](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/85) | [F2-06](../tasks/F2-06.md) | Protocolo de seleção e `configs/final.yaml` | Hugo | M3 | sex 13/11 às 18h | P0 | #80, #79, #81, #82, #83, #84 |
+| [#85](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/85) | [F2-06](../tasks/F2-06.md) | Protocolo de seleção e `configs/final.yaml` | Hugo | M3 | sex 13/11 às 18h | P0 | #80, #79, #81, #82, #83, #84, #124, #125, #126 |
 | [#86](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/86) | [G1](../tasks/G1.md) | Code freeze | Ahmed | M3 | sex 13/11 às 20h | P0 | #85 |
 | [#87](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/87) | [F1-06](../tasks/F1-06.md) | Análise de erros agregada (IDSSE) | Fernando | M3 | sex 13/11 | P2 | #79 |
 | [#88](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/88) | [F3-06](../tasks/F3-06.md) | Diagnósticos de bola morta no BAR-ATH (execução local) | Bernardo | M3 | sex 13/11 | P1 | #73, #71 |
@@ -43,3 +43,6 @@ Quadro do projeto (colunas Bloqueada → Pronta → Em andamento → Em revisão
 | [#90](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/90) | [F5-06](../tasks/F5-06.md) | Reprodução limpa e determinismo entre máquinas | Ahmed | M4 | sáb 14/11 | P0 | #86 |
 | [#91](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/91) | [F5-07](../tasks/F5-07.md) | Relatório técnico final (inglês) | Ahmed | Entrega | dom 15/11 | P0 | #86, #68 |
 | [#92](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/92) | [F5-09](../tasks/F5-09.md) | Pacote final, repositório público e envio | Ahmed | Entrega | seg 16/11 | P0 | #90, #91, #57 |
+| [#124](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/124) | [F1-08](../tasks/F1-08.md) | Detector de troca de posse (hazard) no IDSSE | Ahmed | M3 | sáb 14/11 às 18h | P1 | #70, #74 |
+| [#125](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/125) | [F2-07](../tasks/F2-07.md) | Transições guiadas pela evidência de troca (IO-HMM) | Ahmed | M3 | sáb 14/11 às 18h | P1 | #124, #80 |
+| [#126](https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao/issues/126) | [F2-08](../tasks/F2-08.md) | Durações semi-Markov (binomial negativa) no decodificador | Ahmed | M3 | sáb 14/11 às 18h | P1 | #71, #80 |
