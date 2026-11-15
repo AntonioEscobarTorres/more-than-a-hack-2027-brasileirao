@@ -1,0 +1,39 @@
+# ---- configs/degrade_hidehi.yaml ----
+name: hidehi
+target_ball_visible: 0.593
+target_ball_visible_tolerance: 0.01
+target_tracked_mean: 20.5
+target_tracked_mean_tolerance: 0.3
+z_air_m: 1.5
+air_margin_frames: 3
+p_air: 0.85
+crowd_n: 3
+crowd_r_m: 2.0
+crowd_hazard: 0.02
+bg_hazard_init: 0.01
+hazard_max: 1.0
+bisection_iterations: 30
+player_bisection_iterations: 30
+ball_noise_m: 0.25
+phantom_len_frames: [5, 60]
+phantom_frac: 0.01
+phantom_margin_m: 5.0
+player_visible_mean_s: 30.0
+player_missing_mean_s_init: 3.0
+player_missing_mean_s_max: 120.0
+player_noise_m: 0.01
+dup_offset_m: 0.3
+dup_len_s: [1.0, 5.0]
+dup_frac: 0.02
+dup_max_attempts: 10000
+overtracked_threshold: 22
+fps: 25
+p_unfreeze_hide: 0.75
+restart_visible_s: 1.5
+unfreeze_drift_mps: 0.5
+gap_profile:
+  mix_geometric: 0.6
+  geometric_mean_frames: 8.0
+  lognormal_median_frames: 40.0
+  lognormal_sigma: 1.0
+  max_frames: 1500

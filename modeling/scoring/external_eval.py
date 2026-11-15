@@ -22,6 +22,8 @@ except ImportError:
     def predict_labels(master, cfg, holdout):
         raise NotImplementedError("modeling.pipeline is not available yet")
 
+DEGRADE_CHOICES = ("default", "none", "harder", "easier", "hidelo", "hidehi", "fused")
+
 
 def evaluate_config(cfg: dict, degrade: str = "default", matches: list[str] = None) -> pd.DataFrame:
     if matches is None:
@@ -65,7 +67,7 @@ def paired_delta(df_a: pd.DataFrame, df_b: pd.DataFrame, metric: str = "spell_f1
 def main():
     parser = argparse.ArgumentParser(description="External evaluation harness")
     parser.add_argument("--config", required=True, help="Path to YAML config")
-    parser.add_argument("--degrade", default="default", choices=["default", "none", "harder", "easier", "fused"])
+    parser.add_argument("--degrade", default="default", choices=DEGRADE_CHOICES)
     args = parser.parse_args()
     
     cfg = load_config(args.config)

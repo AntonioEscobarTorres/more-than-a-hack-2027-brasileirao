@@ -1,3 +1,4 @@
+# ---- configs/degrade_default.yaml ----
 name: default
 target_ball_visible: 0.593
 target_ball_visible_tolerance: 0.01
@@ -20,13 +21,16 @@ phantom_margin_m: 5.0
 player_visible_mean_s: 30.0
 player_missing_mean_s_init: 3.0
 player_missing_mean_s_max: 120.0
-player_noise_m: 0.15
+player_noise_m: 0.01
 dup_offset_m: 0.3
 dup_len_s: [1.0, 5.0]
 dup_frac: 0.02
 dup_max_attempts: 10000
 overtracked_threshold: 22
 fps: 25
+p_unfreeze_hide: 0.5
+restart_visible_s: 1.5
+unfreeze_drift_mps: 0.5
 gap_profile:
   mix_geometric: 0.6
   geometric_mean_frames: 8.0

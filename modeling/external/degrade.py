@@ -10,6 +10,9 @@ import numpy as np
 from .. import paths
 from .files import ExternalMatch
 
+from ..contracts import LABEL_CODES
+
+
 
 _CONFIG_KEYS = frozenset({
     "name", "target_ball_visible", "target_ball_visible_tolerance",
@@ -21,7 +24,13 @@ _CONFIG_KEYS = frozenset({
     "player_missing_mean_s_init", "player_missing_mean_s_max", "player_noise_m",
     "dup_offset_m", "dup_len_s", "dup_frac", "dup_max_attempts",
     "overtracked_threshold", "fps", "gap_profile",
+    "p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps",
 })
+
+
+
+# ---- degrade.py: replace the _DEAD_LABEL constant ----
+_DEAD_LABEL = LABEL_CODES["D"]
 
 
 def validate_degrade_config(cfg: dict) -> dict:
@@ -48,12 +57,13 @@ def validate_degrade_config(cfg: dict) -> dict:
             raise ValueError("{} must be a finite number".format(key))
 
     probabilities = ("p_air", "target_ball_visible", "phantom_frac", "dup_frac",
-                     "crowd_hazard", "bg_hazard_init")
+                     "crowd_hazard", "bg_hazard_init", "p_unfreeze_hide")
     for key in probabilities:
         if not 0.0 <= cfg[key] <= 1.0:
             raise ValueError("{} must be between 0 and 1".format(key))
     nonnegative = ("target_ball_visible_tolerance", "target_tracked_mean_tolerance",
-                   "ball_noise_m", "player_noise_m", "dup_offset_m")
+                   "ball_noise_m", "player_noise_m", "dup_offset_m",
+                   "restart_visible_s", "unfreeze_drift_mps")
     for key in nonnegative:
         if cfg[key] < 0.0:
             raise ValueError("{} must be non-negative".format(key))
@@ -212,6 +222,45 @@ def _load_optional_profile():
         raise ValueError("invalid ball gap profile")
     return {"lengths": lengths, "counts": counts}
 
+def _dead_ball_mask(labels):
+    """Return a boolean mask of dead-ball frames from the int8 C0 label array."""
+    return np.asarray(labels) == _DEAD_LABEL
+
+def _unfreeze_dead_ball(ball, labels, blocks, length_m, width_m, rng, cfg):
+    """Unfreeze each contiguous half-local dead-ball segment, modifying ``ball`` in place.
+
+    With probability ``p_unfreeze_hide`` the segment is hidden except for the last
+    ``restart_visible_s`` seconds before restart. Otherwise the frozen position is replaced
+    by a random walk (RMS speed ``unfreeze_drift_mps``) that ends at the restart position.
+    The uniform draw and the walk steps are always consumed, so the RNG stream stays
+    identical across different ``p_unfreeze_hide`` values (common random numbers).
+    Returns a boolean mask of frames that must be hidden.
+    """
+    hidden = np.zeros(ball.shape[0], dtype=bool)
+    dead = _dead_ball_mask(labels)
+    restart_frames = int(round(cfg["restart_visible_s"] * cfg["fps"]))
+    # Per-axis step std so that the 2D RMS speed equals unfreeze_drift_mps.
+    step_sigma_m = cfg["unfreeze_drift_mps"] / cfg["fps"] / math.sqrt(2.0)
+    scale = np.array([length_m, width_m], dtype=np.float64)
+    for _, first, last in blocks:
+        local = dead[first:last + 1]
+        edges = np.diff(np.r_[False, local, False].astype(np.int8))
+        for start, end in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+            lo = first + int(start)
+            hi = first + int(end)  # exclusive; hi <= last + 1, so never crosses the half
+            hide = rng.random() < cfg["p_unfreeze_hide"]
+            steps = rng.normal(0.0, step_sigma_m, size=(hi - lo, 2))
+            if hide:
+                hidden[lo:max(lo, hi - restart_frames)] = True
+                continue
+            restart_m = ball[hi - 1, :2].astype(np.float64) * scale
+            if not np.isfinite(restart_m).all():
+                continue
+            # Walk backwards in time from the restart position: pos[t] = restart + sum(steps[t+1:]).
+            reverse_cumulative = np.cumsum(steps[::-1], axis=0)[::-1]
+            positions_m = restart_m + reverse_cumulative - steps
+            ball[lo:hi, :2] = (positions_m / scale).astype(np.float32)
+    return hidden
 
 def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     """Return a degraded copy of ``match`` using one seeded RNG and half-local processes."""
@@ -228,8 +277,12 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
         playable[first:last + 1] = True
     profile = _load_optional_profile()
 
+    # Dead-ball unfreezing runs before every visibility process (air, crowd, bg_hazard).
+    unfreeze_hidden = _unfreeze_dead_ball(ball, labels, blocks, length_m, width_m, rng, cfg)
+
     # High-ball gaps are drawn independently for contiguous above-threshold runs.
-    ball_visible = np.isfinite(ball[:, 0]) & np.isfinite(ball[:, 1]) & playable
+    ball_visible = (np.isfinite(ball[:, 0]) & np.isfinite(ball[:, 1]) & playable &
+                    ~unfreeze_hidden)
     above = np.isfinite(ball_z) & (ball_z > cfg["z_air_m"]) & playable
     for _, first, last in blocks:
         local = above[first:last + 1]
@@ -259,6 +312,8 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     calibrated_target = max(0.0, cfg["target_ball_visible"] - cfg["phantom_frac"])
     if visible_after_crowd.sum() / playable.sum() < calibrated_target:
         raise ValueError("air and crowd gaps exceed the target ball visibility")
+
+    # ... from here on (def bg_visible(hazard): ... up to the final return) nothing changes.
 
     def bg_visible(hazard):
         starts = playable & visible_after_crowd & (bg_random < hazard)
