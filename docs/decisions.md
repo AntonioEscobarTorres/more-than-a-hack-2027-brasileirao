@@ -52,6 +52,7 @@ Modelo:
 | [D-013](#d-013--nome-da-equipe-formulário-e-envio-único) | 2026-11-13 | Nome da equipe, formulário e envio único | Vigente |
 | [D-014](#d-014--casos-de-borda-do-filtro-da-bola-como-são-contados) | 2026-11-13 | Casos de borda do filtro da bola: como são contados | Vigente |
 | [D-015](#d-015--diagnósticos-de-bola-morta-como-são-calculados) | 2026-11-13 | Diagnósticos de bola morta: como são calculados | Vigente |
+| [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente |
 
 ## Decisões
 
@@ -469,6 +470,79 @@ Modelo:
 - **Evidência:** `tests/test_modeling_deadball_diagnostics.py` (43 testes sintéticos); teste de mutação
   manual (12 alterações; 11 detectadas, e a restante é equivalente, porque o caso "nenhum tempo" é barrado
   antes, na validação da entrada).
+
+### D-016 — Degradação do IDSSE ajustada pelo realismo (F4-04)
+
+- **Data:** 2026-11-15
+- **Autor:** Ahmed (revisão e fechamento da F4-04, #74, sobre a implementação do Antônio)
+- **Status:** Vigente
+- **Decisão:** os mestres externos usam `configs/degrade_default.yaml` com os valores abaixo. As outras
+  chaves não mudaram.
+
+  | Chave | Antes (A.6 / 11/11) | Agora | Motivo (estatística da F4-04) |
+  | --- | ---: | ---: | --- |
+  | `player_noise_m` | 0,15 | 0,01 | (a) velocidade dos jogadores (feito pelo Antônio) |
+  | `unfreeze_drift_mps` | — | 1,5 | (b) velocidade da bola e (c) bola parada |
+  | `unfreeze_drift_tau_s` (nova) | — | 1,0 | idem: velocidade persistente, ver abaixo |
+  | `p_unfreeze_hide` | — | 0,5 | grade da etapa 4 (escolha abaixo) |
+  | `p_air` | 0,85 | 0,0 | (f) visibilidade com jogadores rápidos |
+  | `bg_slow_speed_mps` (nova) | — | 1,0 | (f) visibilidade com jogadores lentos |
+  | `bg_slow_factor` (nova) | — | 40 | idem |
+  | `gap_profile.lognormal_median_frames` | 40 | 150 | (e) lacunas longas |
+  | `gap_profile.mix_geometric` | 0,6 | 0,3 | (e) lacunas longas |
+
+  Duas mudanças de código em `modeling/external/degrade.py`:
+  1. **Deriva da bola morta com velocidade persistente.** Na versão anterior, cada frame recebia um passo
+     independente, então a 0,5 m/s a bola andava só ~0,08 m por segundo e continuava "parada" para (c). A
+     velocidade agora segue um AR(1) por eixo (tempo de correlação `unfreeze_drift_tau_s`), e a trajetória é
+     uma ponte entre a posição congelada e a do reinício (sem salto nas pontas).
+  2. **Lacunas de fundo mais prováveis com jogo lento.** A chance de iniciar uma lacuna de fundo é
+     multiplicada por `bg_slow_factor` nos frames em que a média das velocidades médias dos dois times é menor
+     que `bg_slow_speed_mps` (a mesma borda da faixa lenta de (f)). O passo lê só a velocidade dos jogadores,
+     nunca os rótulos, e não muda a sequência de sorteios. `bg_slow_factor = 1` desliga.
+
+  **Grade de `p_unfreeze_hide`** (J03WMX e J03WN1, outras chaves fixas no `default` acima):
+
+  | p | (a) | (b) | (c) | (d) | (e) | (f) |
+  | ---: | --- | --- | --- | --- | --- | --- |
+  | 0,00 | PASS | PASS | PASS | FAIL | PASS | FAIL |
+  | 0,25 | PASS | PASS | PASS | FAIL | PASS | FAIL |
+  | 0,50 | PASS | PASS | PASS | FAIL | PASS | PASS |
+  | 0,75 | PASS | PASS | FAIL | FAIL | PASS | PASS |
+  | 1,00 | inviável: esconder toda a bola morta passa da cota de 40,7% de bola invisível | | | | | |
+
+  Conjunto plausível ((b), (c) e (f) em PASS): {0,5}, então `default` = 0,5. A faixa tem largura < 0,5, então
+  `hidelo` = 0,25 e `hidehi` = 0,75 (`default` ± 0,25). `harder` e `easier` = `default` com `ball_noise_m` e
+  `player_noise_m` × 1,5 e × 0,5 (0,375/0,015 e 0,125/0,005).
+
+  **Divergência que fica:** (d), posses por minuto do baseline, falha em todos os candidatos. O baseline faz
+  mais posses por minuto no IDSSE degradado do que no BAR-ATH. Fica registrada aqui e vai para as limitações
+  do relatório. (d) não é eliminatória pelo aceite da F4-04.
+- **Opções consideradas:**
+  - manter a degradação de 11/11 e só varrer `p_unfreeze_hide`: descartada. Nenhum valor passou em (b), (c)
+    e (f) (p = 0; 0,25; 0,5 com (b), (c), (d), (e) e (f) em FAIL; 0,75 e 1,0 inviáveis);
+  - baixar `ball_noise_m`: descartada. A velocidade da bola do BAR-ATH fica acima da do IDSSE degradado, e
+    a causa era a bola parada na bola morta;
+  - esconder mais bola morta (p alto) para acertar (f): limitada pela cota de visibilidade (p = 1,0 é inviável
+    em todas as partidas, e 0,75 era inviável no J03WN1 com `p_air` = 0,85). A visibilidade por velocidade só
+    passou com o fator de jogo lento;
+  - `bg_slow_factor` = 100 (também passou em (b), (c) e (f) com p = 0,6): descartado em favor de 40, o menos
+    extremo que passou.
+- **Evidência:** só `PASS`/`FAIL` e, para orientar o ajuste, o lado (acima/abaixo) do BAR-ATH em relação à
+  média do IDSSE degradado em cada estatística. Nenhum valor do BAR-ATH saiu da execução local. Foram 6 rodadas
+  de candidatos, cada uma com 2 partidas. Os números do lado do IDSSE estão em
+  [`reports/external_masters.md`](../reports/external_masters.md). Testes sintéticos novos em
+  `tests/test_modeling_external_degrade.py` (deriva: deslocamento em 1 s; jogo lento: máscara, fator neutro,
+  concentração das lacunas). Hashes e comandos de regeneração em [`docs/external_data.md`](external_data.md).
+- **Checagem final (7 partidas, `tools/compare_external_realism.py`):** `default`: (a), (b), (c), (e) e (f)
+  PASS, (d) FAIL. `hidelo`: (f) e (d) FAIL. `hidehi`: (c) e (d) FAIL. Os modos de sensibilidade cercam o
+  `default` por definição e não precisam passar.
+- **Item 7 da F4-04 (`bg_hazard`):** no `default`, o `bg_hazard` final fica em 61–72% do valor com
+  p = 0 (sem esconder bola morta) nas duas partidas da grade (J03WMX 0,000315 contra 0,000440; J03WN1 0,000211
+  contra 0,000346), acima do limite de 10% que exigiria comentar na issue antes de gerar os mestres.
+- **Risco conhecido:** com esses valores, a bola do IDSSE degradado fica visível em ~30% dos frames de D e em
+  ~80% dos de jogo. É o padrão que (f) mede no BAR-ATH (bola some com jogadores lentos), mas é uma pista forte
+  para "bola invisível ⇒ D". A F3-04 e a F2-05 devem conferir a estabilidade em `hidelo` e `hidehi`.
 
 ## Registro de envios
 
