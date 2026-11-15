@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import inspect
+import os
 import re
+import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -76,31 +77,14 @@ def _load_degrade_config(mode: str) -> dict:
 
 
 def _call_build_master(match: ExternalMatch) -> pd.DataFrame:
-    """Invoke ``build_master_from_arrays`` adapting to its parameter signature."""
-    sig = inspect.signature(build_master_from_arrays)
-    params = list(sig.parameters.keys())
-    if len(params) == 1 and params[0] in ("match", "ext_match", "external_match"):
-        return build_master_from_arrays(match)
-
-    available: dict[str, Any] = {
-        "players": match.players,
-        "ball": match.ball,
-        "ball_z": match.ball_z,
-        "blocks": match.blocks(),
-        "half": match.half,
-        "slot_team_ids": match.slot_team_ids,
-        "pitch": match.pitch,
-        "pitch_length": float(match.pitch[0]),
-        "pitch_width": float(match.pitch[1]),
-        "length_m": float(match.pitch[0]),
-        "width_m": float(match.pitch[1]),
-        "match_id": match.match_id,
-    }
-    kwargs = {k: available[k] for k in params if k in available}
-    if kwargs:
-        return build_master_from_arrays(**kwargs)
+    """Build the master via ``build_master_from_arrays(players, ball, slot_team_ids, blocks, pitch)``."""
+    pitch = (float(match.pitch[0]), float(match.pitch[1]))
     return build_master_from_arrays(
-        match.players, match.ball, match.half, match.slot_team_ids, match.pitch
+        match.players,
+        match.ball,
+        match.slot_team_ids,
+        match.blocks(),
+        pitch=pitch,
     )
 
 
@@ -121,7 +105,10 @@ def summarize_master(
     labels: np.ndarray,
     bg_hazard: float | None = None,
 ) -> dict[str, Any]:
-    """Compute public summary metrics for ``reports/external_masters.md`` on half frames."""
+    """Compute public summary metrics for ``reports/external_masters.md`` on half frames.
+
+    Empty denominators (no graded, D or in-play frames) are reported as 0.0.
+    """
     half = master["half"].to_numpy()
     graded = half != 0
     n_graded = int(np.count_nonzero(graded))
@@ -216,6 +203,27 @@ def update_report(rows: list[dict[str, Any]], report_path: Path | None = None) -
     return target
 
 
+def _atomic_write(path: Path, writer: Callable[[Path], None]) -> None:
+    """Write through a temp file in the same directory, then rename.
+
+    A crash mid-write leaves no partial file that ``--verify`` would later flag.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        writer(tmp)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def _save_npy(path: Path, arr: np.ndarray) -> None:
+    # Write through a file handle so numpy does not append ".npy" to the temp name.
+    with open(path, "wb") as handle:
+        np.save(handle, arr, allow_pickle=False)
+
+
 def build_one(match_id: str, mode: str, seed: int = 0) -> dict[str, Any]:
     """Build master and labels for a single ``(match_id, mode)`` pair and return its summary."""
     raw_match = ExternalMatch.load(arrays_path(match_id))
@@ -227,19 +235,29 @@ def build_one(match_id: str, mode: str, seed: int = 0) -> dict[str, Any]:
         match_seed = _seed_for_match(seed, match_id)
         work_match = degrade_mod.degrade(raw_match, cfg, seed=match_seed)
         bg_hazard = _extract_bg_hazard(work_match)
+        if bg_hazard is None:
+            warnings.warn(
+                "degrade did not expose bg_hazard for {} / {}; the report will show n/a".format(
+                    match_id, mode
+                )
+            )
 
     master = _call_build_master(work_match)
     validate_master(master, n_frames=work_match.n_frames)
 
     labels = np.array(work_match.labels, dtype=np.int8, copy=True)
-    gap = master["half"].to_numpy() == 0
-    labels[gap] = X_CODE
+    if labels.shape[0] != len(master):
+        raise ValueError(
+            "labels length {} != master length {} for {} / {}".format(
+                labels.shape[0], len(master), match_id, mode
+            )
+        )
+    labels[master["half"].to_numpy() == 0] = X_CODE
 
-    mpath = master_path(match_id, mode)
-    lpath = labels_path(match_id, mode)
-    mpath.parent.mkdir(parents=True, exist_ok=True)
-    master.to_parquet(mpath, index=False)
-    np.save(lpath, labels, allow_pickle=False)
+    _atomic_write(
+        master_path(match_id, mode), lambda p: master.to_parquet(p, index=False)
+    )
+    _atomic_write(labels_path(match_id, mode), lambda p: _save_npy(p, labels))
 
     return summarize_master(match_id, mode, master, labels, bg_hazard=bg_hazard)
 
@@ -260,7 +278,12 @@ def parse_expected_hashes(doc_path: Path | None = None) -> dict[str, str]:
     text = target.read_text(encoding="utf-8")
     hashes: dict[str, str] = {}
     for match in _HASH_ROW_RE.finditer(text):
-        hashes[match.group(1)] = match.group(2).lower()
+        name, digest = match.group(1), match.group(2).lower()
+        if name in hashes and hashes[name] != digest:
+            raise ValueError(
+                "conflicting SHA-256 entries for {} in {}".format(name, target)
+            )
+        hashes[name] = digest
     if not hashes:
         raise ValueError("no SHA-256 entries found in {}".format(target))
     return hashes
@@ -338,8 +361,10 @@ def main(argv: list[str] | None = None) -> int:
         return verify_external_files(args.doc)
 
     matches = _resolve_matches(args.matches)
-    rows = [build_one(match_id, args.degrade, seed=args.seed) for match_id in matches]
-    update_report(rows, report_path=args.report)
+    for match_id in matches:
+        row = build_one(match_id, args.degrade, seed=args.seed)
+        # Update the report after each match so a later failure keeps earlier rows.
+        update_report([row], report_path=args.report)
     return 0
 
 

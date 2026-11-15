@@ -8,7 +8,11 @@ from pathlib import Path
 import numpy as np
 
 from .. import paths
+from ..contracts import LABEL_CODES
 from .files import ExternalMatch
+
+# Final background hazard of the last ``degrade`` call (read by ``build``).
+_last_bg_hazard: float | None = None
 
 
 _CONFIG_KEYS = frozenset({
@@ -21,6 +25,7 @@ _CONFIG_KEYS = frozenset({
     "player_missing_mean_s_init", "player_missing_mean_s_max", "player_noise_m",
     "dup_offset_m", "dup_len_s", "dup_frac", "dup_max_attempts",
     "overtracked_threshold", "fps", "gap_profile",
+    "p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps",
 })
 
 
@@ -48,12 +53,13 @@ def validate_degrade_config(cfg: dict) -> dict:
             raise ValueError("{} must be a finite number".format(key))
 
     probabilities = ("p_air", "target_ball_visible", "phantom_frac", "dup_frac",
-                     "crowd_hazard", "bg_hazard_init")
+                     "crowd_hazard", "bg_hazard_init", "p_unfreeze_hide")
     for key in probabilities:
         if not 0.0 <= cfg[key] <= 1.0:
             raise ValueError("{} must be between 0 and 1".format(key))
     nonnegative = ("target_ball_visible_tolerance", "target_tracked_mean_tolerance",
-                   "ball_noise_m", "player_noise_m", "dup_offset_m")
+                   "ball_noise_m", "player_noise_m", "dup_offset_m",
+                   "restart_visible_s", "unfreeze_drift_mps")
     for key in nonnegative:
         if cfg[key] < 0.0:
             raise ValueError("{} must be non-negative".format(key))
@@ -213,8 +219,51 @@ def _load_optional_profile():
     return {"lengths": lengths, "counts": counts}
 
 
+def _unfreeze_dead_ball(ball, ball_visible, labels, blocks, cfg, rng, length_m, width_m):
+    """Undo the frozen ball in dead-ball (D) segments, in place and half by half.
+
+    Each D segment gets one of two treatments, drawn with ``p_unfreeze_hide``:
+      * hide: the ball is erased for the whole segment except the last ``restart_visible_s``
+        seconds before the restart (the ball being placed);
+      * jitter: the ball stays visible but its frozen position is replaced by a slow drift
+        (Brownian bridge with per-frame step ``unfreeze_drift_mps / fps`` metres) that ends at
+        the restart position, i.e. the ball position of the first frame after the segment when
+        that frame lies in the same half (otherwise the segment's first position).
+    Segments never cross a half boundary. Uses only the IDSSE labels to mimic the ATD behaviour.
+    """
+    d_code = LABEL_CODES["D"]
+    fps = cfg["fps"]
+    restart_frames = int(round(cfg["restart_visible_s"] * fps))
+    sigma_m = cfg["unfreeze_drift_mps"] / fps
+    scale = np.array([length_m, width_m], dtype=np.float64)
+    for _, first, last in blocks:
+        local = labels[first:last + 1] == d_code
+        edges = np.diff(np.r_[False, local, False].astype(np.int8))
+        for s, e in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+            start, end = first + int(s), first + int(e)  # end is exclusive
+            if rng.random() < cfg["p_unfreeze_hide"]:
+                ball_visible[start:max(start, end - restart_frames)] = False
+                continue
+            n = end - start
+            view = ball[start:end, :2]
+            seg = view.astype(np.float64) * scale
+            finite = np.isfinite(seg).all(axis=1)
+            if not finite.any():
+                continue
+            p0 = seg[int(np.argmax(finite))]
+            restart = ball[end, :2].astype(np.float64) * scale if end <= last else None
+            q = restart if restart is not None and np.isfinite(restart).all() else p0
+            steps = rng.normal(0.0, sigma_m, size=(n, 2))
+            walk = np.vstack([np.zeros((1, 2)), np.cumsum(steps, axis=0)])
+            u = (np.arange(n + 1, dtype=np.float64) / n)[:, None]
+            path = p0 + (q - p0) * u + (walk - u * walk[n])
+            view[finite] = (path[:n] / scale)[finite].astype(view.dtype)
+
+
 def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     """Return a degraded copy of ``match`` using one seeded RNG and half-local processes."""
+    global _last_bg_hazard
+    _last_bg_hazard = None
     validate_degrade_config(cfg)
     rng = np.random.default_rng(seed)
     blocks = match.blocks()
@@ -239,6 +288,10 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
                 lo = max(first, first + int(start) - cfg["air_margin_frames"])
                 hi = min(last + 1, first + int(end) + cfg["air_margin_frames"])
                 ball_visible[lo:hi] = False
+
+    # Dead-ball freeze (DFL artifact): hide or jitter the ball in each D segment, before the
+    # visibility calibration so that the bisection accounts for the hidden frames.
+    _unfreeze_dead_ball(ball, ball_visible, labels, blocks, cfg, rng, length_m, width_m)
 
     # Crowd hazards and background hazards share one sampled gap-length sequence.
     x_m = ball[:, 0].astype(np.float64) * length_m
@@ -298,6 +351,7 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
             high = mid
     # The visible fraction is a step function of the hazard: keep the closer bracket end.
     hazard = min((low, high), key=lambda h: abs(final_fraction(h) - target_visible))
+    _last_bg_hazard = float(hazard)
     ball_visible = bg_visible(hazard)
     ball[~ball_visible, :2] = np.nan
     ball[~ball_visible, 2] = np.nan
