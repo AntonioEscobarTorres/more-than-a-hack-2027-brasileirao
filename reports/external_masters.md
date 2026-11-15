@@ -1,5 +1,10 @@
 # External Masters Overview (IDSSE)
 
+> **STALE (2026-11-15):** the dead-ball drift in `degrade.py` was fixed (random walk anchored on
+> the restart spot, RMS speed = `unfreeze_drift_mps`, hide/drift branches share the random
+> stream). Every degraded master below must be regenerated, including the `p_unfreeze_hide`
+> grid; only the `none` rows stay valid.
+
 | Match | Degrade | % Ball Observed | % Ball Filled | % Ball Jump Removed | Mean Tracked (H+A) | % D | % Ball Vis in D | % Ball Vis in Play | bg_hazard |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | J03WMX | none | 97.74% | 0.20% | 2.26% | 21.83 | 41.51% | 96.95% | 98.31% | n/a |

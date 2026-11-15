@@ -158,6 +158,9 @@ def _cfg(p_unfreeze_hide, *, ball_noise_m=0.0, unfreeze_drift_mps=2.0, restart_v
         bisection_iterations=5,
         player_bisection_iterations=3,
     )
+    # The synthetic match has no players (all NaN), so the tracked mean is 0. Players are not
+    # under test here: widen the tolerance so the player calibration accepts that.
+    cfg["target_tracked_mean_tolerance"] = cfg["target_tracked_mean"]
     return cfg
 
 
@@ -305,8 +308,10 @@ def test_drift_never_leaks_positions_or_random_walks_across_the_halftime_gap():
 def test_second_half_is_untouched_when_only_the_first_half_has_dead_frames(p_unfreeze_hide):
     match, dead = _make_match([(150, N_FIRST - 1)])  # dead segment ends at the halftime gap
     cfg = _cfg(p_unfreeze_hide)
-    cfg["target_ball_visible"] = _visible_target(
-        match, _expected_hidden(dead, _restart_frames(cfg)))
+    # Only the hide branch removes frames; with p_unfreeze_hide == 0 the ball stays fully visible.
+    hidden = _expected_hidden(dead, _restart_frames(cfg)) if p_unfreeze_hide == 1.0 \
+        else np.zeros(N_FRAMES, dtype=bool)
+    cfg["target_ball_visible"] = _visible_target(match, hidden)
 
     out = degrade(match, cfg, 0)
 
@@ -321,6 +326,11 @@ def _determinism_cfg():
     cfg = copy.deepcopy(_load_config("default"))
     cfg.update(p_unfreeze_hide=0.5, target_ball_visible=0.3, dup_frac=0.0,
                bisection_iterations=10, player_bisection_iterations=3)
+    cfg["target_tracked_mean_tolerance"] = cfg["target_tracked_mean"]  # no synthetic players
+    # The 2 x 200-frame fixture is too short for gaps of up to 1500 frames to hit the
+    # visibility tolerance (same fix as tests/test_modeling_degrade.py).
+    cfg["gap_profile"]["lognormal_median_frames"] = 12.0
+    cfg["gap_profile"]["max_frames"] = 40
     return cfg
 
 

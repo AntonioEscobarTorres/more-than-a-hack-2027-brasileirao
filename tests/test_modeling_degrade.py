@@ -1,17 +1,11 @@
 """Synthetic-only tests for IDSSE degradation."""
 from __future__ import annotations
 
-<<<<<<< HEAD
-from pathlib import Path
-
-import numpy as np
-=======
 import copy
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
->>>>>>> main
 import pytest
 
 from modeling import paths
@@ -25,13 +19,10 @@ def cfg():
     path = Path(__file__).resolve().parents[1] / "configs" / "degrade_default.yaml"
     config = load_config(path)
     config["player_visible_mean_s"] = 5.0
-<<<<<<< HEAD
-=======
     # The 2 x 1200-frame fixture is too short for gaps of up to 1500 frames to hit the
     # visibility tolerance; real matches (~70k frames per half) use the default profile.
     config["gap_profile"]["lognormal_median_frames"] = 12.0
     config["gap_profile"]["max_frames"] = 40
->>>>>>> main
     return config
 
 
@@ -77,11 +68,6 @@ def test_degrade_is_deterministic_and_does_not_mutate(synthetic_match, cfg, tmp_
 def test_degrade_hits_visibility_tracking_and_injection_targets(synthetic_match, cfg,
                                                                  tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "processed_dir", lambda: tmp_path)
-<<<<<<< HEAD
-    cfg["gap_profile"]["lognormal_median_frames"] = 12.0
-    cfg["gap_profile"]["max_frames"] = 40
-=======
->>>>>>> main
     result = degrade(synthetic_match, cfg, 8)
     block_frames = result.half != 0
     ball_visible = np.isfinite(result.ball[:, 0]) & np.isfinite(result.ball[:, 1])
@@ -117,8 +103,6 @@ def test_degrade_config_rejects_unknown_missing_and_invalid_values(cfg):
     invalid = dict(cfg, p_air=1.5)
     with pytest.raises(ValueError, match="between 0 and 1"):
         validate_degrade_config(invalid)
-<<<<<<< HEAD
-=======
 
 
 @pytest.fixture
@@ -196,4 +180,3 @@ def test_ball_gap_profile_counts_raw_gaps_not_interpolated_ball():
                            "ball_jump_removed": jump_removed,
                            "ball_x": np.where(half > 0, 0.5, np.nan)})  # fully filled
     assert sorted(gap_lengths_by_half(master)) == [2, 2, 3]
->>>>>>> main

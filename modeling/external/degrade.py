@@ -14,6 +14,9 @@ from .files import ExternalMatch
 # Final background hazard of the last ``degrade`` call (read by ``build``).
 _last_bg_hazard: float | None = None
 
+# C0 code of the dead-ball label; the only label ``degrade`` reads (to unfreeze the DFL ball).
+_DEAD_LABEL = LABEL_CODES["D"]
+
 
 _CONFIG_KEYS = frozenset({
     "name", "target_ball_visible", "target_ball_visible_tolerance",
@@ -219,45 +222,50 @@ def _load_optional_profile():
     return {"lengths": lengths, "counts": counts}
 
 
+def _dead_ball_mask(labels: np.ndarray) -> np.ndarray:
+    """True on dead-ball (D) frames."""
+    return np.asarray(labels) == _DEAD_LABEL
+
+
 def _unfreeze_dead_ball(ball, ball_visible, labels, blocks, cfg, rng, length_m, width_m):
     """Undo the frozen ball in dead-ball (D) segments, in place and half by half.
 
     Each D segment gets one of two treatments, drawn with ``p_unfreeze_hide``:
       * hide: the ball is erased for the whole segment except the last ``restart_visible_s``
         seconds before the restart (the ball being placed);
-      * jitter: the ball stays visible but its frozen position is replaced by a slow drift
-        (Brownian bridge with per-frame step ``unfreeze_drift_mps / fps`` metres) that ends at
-        the restart position, i.e. the ball position of the first frame after the segment when
-        that frame lies in the same half (otherwise the segment's first position).
-    Segments never cross a half boundary. Uses only the IDSSE labels to mimic the ATD behaviour.
+      * drift: the ball stays visible but its frozen position is replaced by a slow random walk
+        that ends exactly on the segment's last frozen position (the restart spot). Steps are
+        Gaussian with ``unfreeze_drift_mps / (fps * sqrt(2))`` metres per axis, so the RMS speed
+        is ``unfreeze_drift_mps``; with ``unfreeze_drift_mps == 0`` the ball is left untouched.
+    Both branches draw the same random numbers (one uniform plus the walk steps), so
+    ``p_unfreeze_hide`` never shifts the random stream of the later stages. Segments never
+    cross a half boundary. Uses only the IDSSE labels to mimic the ATD behaviour.
     """
-    d_code = LABEL_CODES["D"]
     fps = cfg["fps"]
     restart_frames = int(round(cfg["restart_visible_s"] * fps))
-    sigma_m = cfg["unfreeze_drift_mps"] / fps
+    sigma_axis_m = cfg["unfreeze_drift_mps"] / fps / np.sqrt(2.0)
     scale = np.array([length_m, width_m], dtype=np.float64)
     for _, first, last in blocks:
-        local = labels[first:last + 1] == d_code
+        local = _dead_ball_mask(labels[first:last + 1])
         edges = np.diff(np.r_[False, local, False].astype(np.int8))
         for s, e in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
             start, end = first + int(s), first + int(e)  # end is exclusive
-            if rng.random() < cfg["p_unfreeze_hide"]:
+            n = end - start
+            hide = rng.random() < cfg["p_unfreeze_hide"]
+            steps = rng.normal(0.0, 1.0, size=(n, 2)) * sigma_axis_m
+            if hide:
                 ball_visible[start:max(start, end - restart_frames)] = False
                 continue
-            n = end - start
             view = ball[start:end, :2]
             seg = view.astype(np.float64) * scale
             finite = np.isfinite(seg).all(axis=1)
-            if not finite.any():
+            if not finite.any() or sigma_axis_m == 0.0:
                 continue
-            p0 = seg[int(np.argmax(finite))]
-            restart = ball[end, :2].astype(np.float64) * scale if end <= last else None
-            q = restart if restart is not None and np.isfinite(restart).all() else p0
-            steps = rng.normal(0.0, sigma_m, size=(n, 2))
-            walk = np.vstack([np.zeros((1, 2)), np.cumsum(steps, axis=0)])
-            u = (np.arange(n + 1, dtype=np.float64) / n)[:, None]
-            path = p0 + (q - p0) * u + (walk - u * walk[n])
-            view[finite] = (path[:n] / scale)[finite].astype(view.dtype)
+            anchor = seg[n - 1 - int(np.argmax(finite[::-1]))]
+            # Walk backwards from the restart spot: offset[k] = -sum(steps[k + 1:]).
+            offset = np.zeros((n, 2))
+            offset[:-1] = -np.cumsum(steps[:0:-1], axis=0)[::-1]
+            view[finite] = ((anchor + offset) / scale)[finite].astype(view.dtype)
 
 
 def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
