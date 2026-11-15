@@ -24,7 +24,7 @@ from modeling.pipeline import predict_labels
 from modeling.scoring.metrics import score
 
 SUMMARY_ROWS = ("mean", "se")
-DEGRADE_CHOICES = ("default", "none", "harder", "easier", "fused")
+DEGRADE_CHOICES = ("default", "none", "harder", "easier", "fused", "hidelo", "hidehi")
 
 
 def evaluate_config(cfg: dict, degrade: str = "default", matches=None) -> pd.DataFrame:

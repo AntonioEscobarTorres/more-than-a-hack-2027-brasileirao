@@ -8,7 +8,11 @@ from pathlib import Path
 import numpy as np
 
 from .. import paths
+from ..contracts import LABEL_CODES
 from .files import ExternalMatch
+
+# C0 code of the dead-ball label; the only label ``degrade`` reads (to unfreeze the DFL ball).
+_DEAD_LABEL = LABEL_CODES["D"]
 
 
 _CONFIG_KEYS = frozenset({
@@ -21,6 +25,8 @@ _CONFIG_KEYS = frozenset({
     "player_missing_mean_s_init", "player_missing_mean_s_max", "player_noise_m",
     "dup_offset_m", "dup_len_s", "dup_frac", "dup_max_attempts",
     "overtracked_threshold", "fps", "gap_profile",
+    "p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps", "unfreeze_drift_tau_s",
+    "bg_slow_speed_mps", "bg_slow_factor",
 })
 
 
@@ -48,18 +54,20 @@ def validate_degrade_config(cfg: dict) -> dict:
             raise ValueError("{} must be a finite number".format(key))
 
     probabilities = ("p_air", "target_ball_visible", "phantom_frac", "dup_frac",
-                     "crowd_hazard", "bg_hazard_init")
+                     "crowd_hazard", "bg_hazard_init", "p_unfreeze_hide")
     for key in probabilities:
         if not 0.0 <= cfg[key] <= 1.0:
             raise ValueError("{} must be between 0 and 1".format(key))
     nonnegative = ("target_ball_visible_tolerance", "target_tracked_mean_tolerance",
-                   "ball_noise_m", "player_noise_m", "dup_offset_m")
+                   "ball_noise_m", "player_noise_m", "dup_offset_m",
+                   "restart_visible_s", "unfreeze_drift_mps", "bg_slow_speed_mps",
+                   "bg_slow_factor")
     for key in nonnegative:
         if cfg[key] < 0.0:
             raise ValueError("{} must be non-negative".format(key))
     positive = ("z_air_m", "crowd_r_m", "hazard_max", "player_visible_mean_s",
                 "player_missing_mean_s_init", "player_missing_mean_s_max", "fps",
-                "phantom_margin_m")
+                "phantom_margin_m", "unfreeze_drift_tau_s")
     for key in positive:
         if cfg[key] <= 0.0:
             raise ValueError("{} must be positive".format(key))
@@ -213,8 +221,97 @@ def _load_optional_profile():
     return {"lengths": lengths, "counts": counts}
 
 
+def _slow_play_mask(players: np.ndarray, slot_team_ids: np.ndarray, threshold_mps: float) -> np.ndarray:
+    """True where the mean of the home and away mean player speeds is below ``threshold_mps``.
+
+    Uses the source speeds (channel 2, m/s) of the tracked players; a frame where either team
+    has no tracked player is never slow. Mirrors ``(mean_speed_home + mean_speed_away) / 2``
+    of the master, the quantity statistic (f) of tools/compare_external_realism.py bins on.
+    """
+    speed = players[:, :, 2].astype(np.float64)
+    team_means = []
+    for team in (0, 1):
+        team_speed = speed[:, slot_team_ids == team]
+        tracked = np.isfinite(team_speed)
+        count = tracked.sum(axis=1)
+        total = np.where(tracked, team_speed, 0.0).sum(axis=1)
+        team_means.append(np.where(count > 0, total / np.maximum(count, 1), np.nan))
+    mean_speed = (team_means[0] + team_means[1]) / 2.0
+    with np.errstate(invalid="ignore"):
+        return mean_speed < threshold_mps
+
+
+def _dead_ball_mask(labels: np.ndarray) -> np.ndarray:
+    """True on dead-ball (D) frames."""
+    return np.asarray(labels) == _DEAD_LABEL
+
+
+def _unfreeze_dead_ball(ball, ball_visible, labels, blocks, cfg, rng, length_m, width_m):
+    """Undo the frozen ball in dead-ball (D) segments, in place and half by half.
+
+    Each D segment gets one of two treatments, drawn with ``p_unfreeze_hide``:
+      * hide: the ball is erased for the whole segment except the last ``restart_visible_s``
+        seconds before the restart (the ball being placed);
+      * drift: the ball stays visible but its frozen position is replaced by a slow, smooth
+        drift pinned to the segment's first and last frozen positions (the last one is the
+        restart spot), so the path joins live play continuously at both ends.
+    The drift is a bridge built on a persistent-velocity walk: per axis, the velocity follows
+    ``v[k] = rho * v[k-1] + sqrt(1 - rho**2) * sigma * eps[k]`` with
+    ``sigma = unfreeze_drift_mps / sqrt(2)`` and ``rho = exp(-1 / (unfreeze_drift_tau_s * fps))``.
+    The RMS speed is ``unfreeze_drift_mps`` and, because the velocity persists for about
+    ``unfreeze_drift_tau_s``, the ball really travels about that far in one second; a walk with
+    independent per-frame steps would cancel out (about ``unfreeze_drift_mps / sqrt(fps)`` per
+    second) and leave the ball looking stationary. With ``unfreeze_drift_mps == 0`` the ball
+    is left untouched.
+    Both branches draw the same random numbers (one uniform plus ``n x 2`` normals), so
+    ``p_unfreeze_hide`` never shifts the random stream of the later stages. Segments never
+    cross a half boundary. Uses only the IDSSE labels to mimic the ATD behaviour.
+    """
+    fps = cfg["fps"]
+    restart_frames = int(round(cfg["restart_visible_s"] * fps))
+    sigma_mps = cfg["unfreeze_drift_mps"] / np.sqrt(2.0)
+    rho = float(np.exp(-1.0 / (cfg["unfreeze_drift_tau_s"] * fps)))
+    innovation = np.sqrt(1.0 - rho * rho) * sigma_mps
+    scale = np.array([length_m, width_m], dtype=np.float64)
+    for _, first, last in blocks:
+        local = _dead_ball_mask(labels[first:last + 1])
+        edges = np.diff(np.r_[False, local, False].astype(np.int8))
+        for s, e in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+            start, end = first + int(s), first + int(e)  # end is exclusive
+            n = end - start
+            hide = rng.random() < cfg["p_unfreeze_hide"]
+            eps = rng.normal(0.0, 1.0, size=(n, 2))
+            if hide:
+                ball_visible[start:max(start, end - restart_frames)] = False
+                continue
+            if n < 2 or sigma_mps == 0.0:
+                continue
+            view = ball[start:end, :2]
+            seg = view.astype(np.float64) * scale
+            finite = np.isfinite(seg).all(axis=1)
+            if not finite.any():
+                continue
+            begin_m = seg[int(np.argmax(finite))]
+            anchor_m = seg[n - 1 - int(np.argmax(finite[::-1]))]
+            velocity = np.empty((n, 2), dtype=np.float64)
+            velocity[0] = sigma_mps * eps[0]
+            for k in range(1, n):
+                velocity[k] = rho * velocity[k - 1] + innovation * eps[k]
+            walk = np.zeros((n, 2), dtype=np.float64)
+            walk[1:] = np.cumsum(velocity[:-1], axis=0) / fps
+            # Bridge: pin the walk to begin_m at k = 0 and to anchor_m at k = n - 1.
+            t = (np.arange(n, dtype=np.float64) / (n - 1))[:, None]
+            path = begin_m + (anchor_m - begin_m) * t + walk - walk[-1] * t
+            view[finite] = (path / scale)[finite].astype(view.dtype)
+
+
 def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     """Return a degraded copy of ``match`` using one seeded RNG and half-local processes."""
+    return degrade_with_info(match, cfg, seed)[0]
+
+
+def degrade_with_info(match: ExternalMatch, cfg: dict, seed: int) -> tuple[ExternalMatch, dict]:
+    """Like ``degrade``, plus a dict of calibration results (``bg_hazard``: final hazard)."""
     validate_degrade_config(cfg)
     rng = np.random.default_rng(seed)
     blocks = match.blocks()
@@ -240,6 +337,10 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
                 hi = min(last + 1, first + int(end) + cfg["air_margin_frames"])
                 ball_visible[lo:hi] = False
 
+    # Dead-ball freeze (DFL artifact): hide or jitter the ball in each D segment, before the
+    # visibility calibration so that the bisection accounts for the hidden frames.
+    _unfreeze_dead_ball(ball, ball_visible, labels, blocks, cfg, rng, length_m, width_m)
+
     # Crowd hazards and background hazards share one sampled gap-length sequence.
     x_m = ball[:, 0].astype(np.float64) * length_m
     y_m = ball[:, 1].astype(np.float64) * width_m
@@ -256,6 +357,12 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     visible_after_crowd = _clear_bursts(ball_visible, crowd_starts, lengths, blocks)
     bg_random = rng.random(match.n_frames)
     bg_lengths = _sample_gap_lengths(rng, match.n_frames, cfg, profile)
+    # Broadcast tracking loses the ball more while play is slow (stoppages, replays, close-ups):
+    # the background hazard is multiplied by bg_slow_factor on slow-play frames. It reads only
+    # player speeds, never labels; bg_slow_factor == 1 disables it.
+    bg_weight = np.where(
+        _slow_play_mask(match.players, match.slot_team_ids, cfg["bg_slow_speed_mps"]),
+        cfg["bg_slow_factor"], 1.0)
 
     # Phantom bursts (step 5) are drawn here so the background-gap calibration can target the
     # visibility the output really has: a phantom on a frame that is already visible adds
@@ -277,7 +384,7 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     target_visible = cfg["target_ball_visible"]
 
     def bg_visible(hazard):
-        starts = playable & visible_after_crowd & (bg_random < hazard)
+        starts = playable & visible_after_crowd & (bg_random < hazard * bg_weight)
         return _clear_bursts(visible_after_crowd, starts, bg_lengths, blocks)
 
     def final_fraction(hazard):
@@ -406,9 +513,10 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     if duplicate_covered < target_dup_frames:
         raise ValueError("dup_max_attempts cannot reach dup_frac")
     players[~playable] = np.nan
-    return ExternalMatch(match_id=match.match_id, players=players, ball=ball,
-                         ball_z=ball_z.copy(), labels=labels, half=match.half.copy(),
-                         slot_team_ids=match.slot_team_ids.copy(), pitch=match.pitch.copy())
+    degraded = ExternalMatch(match_id=match.match_id, players=players, ball=ball,
+                             ball_z=ball_z.copy(), labels=labels, half=match.half.copy(),
+                             slot_team_ids=match.slot_team_ids.copy(), pitch=match.pitch.copy())
+    return degraded, {"bg_hazard": float(hazard)}
 
 
-__all__ = ["degrade", "validate_degrade_config"]
+__all__ = ["degrade", "degrade_with_info", "validate_degrade_config"]
