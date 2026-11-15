@@ -137,23 +137,23 @@ def isolated_data_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def degrade_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
-    """Wrap ``degrade_mod.degrade`` to record calls and tolerate tiny-fixture failures.
+    """Wrap ``degrade_mod.degrade_with_info`` to record calls and tolerate tiny-fixture failures.
 
     The bisection target of the real degrader may be unreachable on a tiny synthetic
     match; in that case the undegraded copy is returned so the build path is still
     exercised end-to-end.
     """
     calls: list[dict] = []
-    orig_degrade = build.degrade_mod.degrade
+    orig_degrade = build.degrade_mod.degrade_with_info
 
-    def _safe_degrade(m: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
+    def _safe_degrade(m: ExternalMatch, cfg: dict, seed: int) -> tuple[ExternalMatch, dict]:
         calls.append({"match_id": m.match_id, "seed": seed})
         try:
             return orig_degrade(m, cfg, seed=seed)
         except Exception:  # noqa: BLE001 - tiny fixture may not satisfy bisection target
-            return m
+            return m, {"bg_hazard": 0.0}
 
-    monkeypatch.setattr(build.degrade_mod, "degrade", _safe_degrade)
+    monkeypatch.setattr(build.degrade_mod, "degrade_with_info", _safe_degrade)
     return calls
 
 
@@ -421,6 +421,50 @@ def test_verify_cli_reports_missing_file_as_different(
     assert rc == 1
     assert "DIFFERENT" in out
     assert "missing" in out
+
+
+def test_parse_expected_hashes_accepts_extra_columns_and_skips_source_rows(tmp_path: Path) -> None:
+    """Hash rows may carry columns between name and digest; XML source rows are not artifacts."""
+    digest_a, digest_b, digest_xml = "a" * 64, "B" * 64, "c" * 64
+    doc_file = tmp_path / "external_data.md"
+    doc_file.write_text(
+        "Prose mentioning `J03WMX.npz` without a digest is ignored.\n\n"
+        "| Match | Source | Bytes | SHA-256 |\n| --- | --- | ---: | --- |\n"
+        f"| J03WMX | `DFL_04_03_positions.xml` | 12 | `{digest_xml}` |\n\n"
+        "| File | Bytes | SHA-256 |\n| --- | ---: | --- |\n"
+        f"| `J03WMX.npz` | 123 | `{digest_a}` |\n"
+        f"| `J03WMX__default_master.parquet` | 456 | `{digest_b}` |\n",
+        encoding="utf-8",
+    )
+
+    assert build.parse_expected_hashes(doc_file) == {
+        "J03WMX.npz": digest_a,
+        "J03WMX__default_master.parquet": digest_b.lower(),
+    }
+
+
+def test_parse_expected_hashes_rejects_rows_with_unpaired_digests(tmp_path: Path) -> None:
+    doc_file = tmp_path / "external_data.md"
+    doc_file.write_text(
+        f"| `J03WMX.npz` | `J03WN1.npz` | `{'a' * 64}` |\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="file name"):
+        build.parse_expected_hashes(doc_file)
+
+
+def test_verify_cli_without_published_hashes_prints_different_and_fails(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A doc with no artifact hashes yet is a clean DIFFERENT, not a traceback."""
+    doc_file = tmp_path / "external_data.md"
+    doc_file.write_text("# External data\n\nNo hashes published yet.\n", encoding="utf-8")
+
+    rc = build.main(["--verify", "--doc", str(doc_file)])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert out.startswith("DIFFERENT")
 
 
 # --------------------------------------------------------------------------- #

@@ -11,9 +11,6 @@ from .. import paths
 from ..contracts import LABEL_CODES
 from .files import ExternalMatch
 
-# Final background hazard of the last ``degrade`` call (read by ``build``).
-_last_bg_hazard: float | None = None
-
 # C0 code of the dead-ball label; the only label ``degrade`` reads (to unfreeze the DFL ball).
 _DEAD_LABEL = LABEL_CODES["D"]
 
@@ -28,7 +25,7 @@ _CONFIG_KEYS = frozenset({
     "player_missing_mean_s_init", "player_missing_mean_s_max", "player_noise_m",
     "dup_offset_m", "dup_len_s", "dup_frac", "dup_max_attempts",
     "overtracked_threshold", "fps", "gap_profile",
-    "p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps",
+    "p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps", "unfreeze_drift_tau_s",
 })
 
 
@@ -68,7 +65,7 @@ def validate_degrade_config(cfg: dict) -> dict:
             raise ValueError("{} must be non-negative".format(key))
     positive = ("z_air_m", "crowd_r_m", "hazard_max", "player_visible_mean_s",
                 "player_missing_mean_s_init", "player_missing_mean_s_max", "fps",
-                "phantom_margin_m")
+                "phantom_margin_m", "unfreeze_drift_tau_s")
     for key in positive:
         if cfg[key] <= 0.0:
             raise ValueError("{} must be positive".format(key))
@@ -233,17 +230,26 @@ def _unfreeze_dead_ball(ball, ball_visible, labels, blocks, cfg, rng, length_m, 
     Each D segment gets one of two treatments, drawn with ``p_unfreeze_hide``:
       * hide: the ball is erased for the whole segment except the last ``restart_visible_s``
         seconds before the restart (the ball being placed);
-      * drift: the ball stays visible but its frozen position is replaced by a slow random walk
-        that ends exactly on the segment's last frozen position (the restart spot). Steps are
-        Gaussian with ``unfreeze_drift_mps / (fps * sqrt(2))`` metres per axis, so the RMS speed
-        is ``unfreeze_drift_mps``; with ``unfreeze_drift_mps == 0`` the ball is left untouched.
-    Both branches draw the same random numbers (one uniform plus the walk steps), so
+      * drift: the ball stays visible but its frozen position is replaced by a slow, smooth
+        drift pinned to the segment's first and last frozen positions (the last one is the
+        restart spot), so the path joins live play continuously at both ends.
+    The drift is a bridge built on a persistent-velocity walk: per axis, the velocity follows
+    ``v[k] = rho * v[k-1] + sqrt(1 - rho**2) * sigma * eps[k]`` with
+    ``sigma = unfreeze_drift_mps / sqrt(2)`` and ``rho = exp(-1 / (unfreeze_drift_tau_s * fps))``.
+    The RMS speed is ``unfreeze_drift_mps`` and, because the velocity persists for about
+    ``unfreeze_drift_tau_s``, the ball really travels about that far in one second; a walk with
+    independent per-frame steps would cancel out (about ``unfreeze_drift_mps / sqrt(fps)`` per
+    second) and leave the ball looking stationary. With ``unfreeze_drift_mps == 0`` the ball
+    is left untouched.
+    Both branches draw the same random numbers (one uniform plus ``n x 2`` normals), so
     ``p_unfreeze_hide`` never shifts the random stream of the later stages. Segments never
     cross a half boundary. Uses only the IDSSE labels to mimic the ATD behaviour.
     """
     fps = cfg["fps"]
     restart_frames = int(round(cfg["restart_visible_s"] * fps))
-    sigma_axis_m = cfg["unfreeze_drift_mps"] / fps / np.sqrt(2.0)
+    sigma_mps = cfg["unfreeze_drift_mps"] / np.sqrt(2.0)
+    rho = float(np.exp(-1.0 / (cfg["unfreeze_drift_tau_s"] * fps)))
+    innovation = np.sqrt(1.0 - rho * rho) * sigma_mps
     scale = np.array([length_m, width_m], dtype=np.float64)
     for _, first, last in blocks:
         local = _dead_ball_mask(labels[first:last + 1])
@@ -252,26 +258,38 @@ def _unfreeze_dead_ball(ball, ball_visible, labels, blocks, cfg, rng, length_m, 
             start, end = first + int(s), first + int(e)  # end is exclusive
             n = end - start
             hide = rng.random() < cfg["p_unfreeze_hide"]
-            steps = rng.normal(0.0, 1.0, size=(n, 2)) * sigma_axis_m
+            eps = rng.normal(0.0, 1.0, size=(n, 2))
             if hide:
                 ball_visible[start:max(start, end - restart_frames)] = False
+                continue
+            if n < 2 or sigma_mps == 0.0:
                 continue
             view = ball[start:end, :2]
             seg = view.astype(np.float64) * scale
             finite = np.isfinite(seg).all(axis=1)
-            if not finite.any() or sigma_axis_m == 0.0:
+            if not finite.any():
                 continue
-            anchor = seg[n - 1 - int(np.argmax(finite[::-1]))]
-            # Walk backwards from the restart spot: offset[k] = -sum(steps[k + 1:]).
-            offset = np.zeros((n, 2))
-            offset[:-1] = -np.cumsum(steps[:0:-1], axis=0)[::-1]
-            view[finite] = ((anchor + offset) / scale)[finite].astype(view.dtype)
+            begin_m = seg[int(np.argmax(finite))]
+            anchor_m = seg[n - 1 - int(np.argmax(finite[::-1]))]
+            velocity = np.empty((n, 2), dtype=np.float64)
+            velocity[0] = sigma_mps * eps[0]
+            for k in range(1, n):
+                velocity[k] = rho * velocity[k - 1] + innovation * eps[k]
+            walk = np.zeros((n, 2), dtype=np.float64)
+            walk[1:] = np.cumsum(velocity[:-1], axis=0) / fps
+            # Bridge: pin the walk to begin_m at k = 0 and to anchor_m at k = n - 1.
+            t = (np.arange(n, dtype=np.float64) / (n - 1))[:, None]
+            path = begin_m + (anchor_m - begin_m) * t + walk - walk[-1] * t
+            view[finite] = (path / scale)[finite].astype(view.dtype)
 
 
 def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     """Return a degraded copy of ``match`` using one seeded RNG and half-local processes."""
-    global _last_bg_hazard
-    _last_bg_hazard = None
+    return degrade_with_info(match, cfg, seed)[0]
+
+
+def degrade_with_info(match: ExternalMatch, cfg: dict, seed: int) -> tuple[ExternalMatch, dict]:
+    """Like ``degrade``, plus a dict of calibration results (``bg_hazard``: final hazard)."""
     validate_degrade_config(cfg)
     rng = np.random.default_rng(seed)
     blocks = match.blocks()
@@ -359,7 +377,6 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
             high = mid
     # The visible fraction is a step function of the hazard: keep the closer bracket end.
     hazard = min((low, high), key=lambda h: abs(final_fraction(h) - target_visible))
-    _last_bg_hazard = float(hazard)
     ball_visible = bg_visible(hazard)
     ball[~ball_visible, :2] = np.nan
     ball[~ball_visible, 2] = np.nan
@@ -468,9 +485,10 @@ def degrade(match: ExternalMatch, cfg: dict, seed: int) -> ExternalMatch:
     if duplicate_covered < target_dup_frames:
         raise ValueError("dup_max_attempts cannot reach dup_frac")
     players[~playable] = np.nan
-    return ExternalMatch(match_id=match.match_id, players=players, ball=ball,
-                         ball_z=ball_z.copy(), labels=labels, half=match.half.copy(),
-                         slot_team_ids=match.slot_team_ids.copy(), pitch=match.pitch.copy())
+    degraded = ExternalMatch(match_id=match.match_id, players=players, ball=ball,
+                             ball_z=ball_z.copy(), labels=labels, half=match.half.copy(),
+                             slot_team_ids=match.slot_team_ids.copy(), pitch=match.pitch.copy())
+    return degraded, {"bg_hazard": float(hazard)}
 
 
-__all__ = ["degrade", "validate_degrade_config"]
+__all__ = ["degrade", "degrade_with_info", "validate_degrade_config"]

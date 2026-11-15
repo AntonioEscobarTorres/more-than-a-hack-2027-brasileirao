@@ -15,7 +15,6 @@ import argparse
 import hashlib
 import os
 import re
-import warnings
 from pathlib import Path
 from typing import Any, Callable
 
@@ -47,9 +46,10 @@ A_CODE = LABEL_CODES["A"]
 DEFAULT_REPORT_PATH = paths.repo_root() / "reports" / "external_masters.md"
 DEFAULT_EXTERNAL_DATA_DOC = paths.repo_root() / "docs" / "external_data.md"
 
-_HASH_ROW_RE = re.compile(
-    r"`?([A-Za-z0-9_.-]+\.(?:npz|parquet|npy))`?\s*\|\s*`?([0-9a-fA-F]{64})`?"
-)
+# A hash row is a Markdown table row holding artifact file names and SHA-256 digests. Columns
+# may sit between them (sizes, notes): the i-th file name on the row pairs with the i-th digest.
+_HASH_FILE_RE = re.compile(r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:npz|parquet|npy))\b")
+_HASH_DIGEST_RE = re.compile(r"(?<![0-9a-fA-F])([0-9a-fA-F]{64})(?![0-9a-fA-F])")
 
 
 def _resolve_matches(matches_arg: list[str]) -> list[str]:
@@ -71,9 +71,7 @@ def _seed_for_match(base_seed: int, match_id: str) -> int:
 
 def _load_degrade_config(mode: str) -> dict:
     cfg_path = paths.repo_root() / "configs" / "degrade_{}.yaml".format(mode)
-    raw = load_config(cfg_path)
-    cfg = raw.get("degrade", raw) if isinstance(raw, dict) and "degrade" in raw else raw
-    return degrade_mod.validate_degrade_config(cfg)
+    return load_config(cfg_path)  # validates the keys and that ``name`` matches the file
 
 
 def _call_build_master(match: ExternalMatch) -> pd.DataFrame:
@@ -86,16 +84,6 @@ def _call_build_master(match: ExternalMatch) -> pd.DataFrame:
         match.blocks(),
         pitch=pitch,
     )
-
-
-def _extract_bg_hazard(degraded_match: ExternalMatch) -> float | None:
-    """Retrieve the final bisection ``bg_hazard`` recorded by ``degrade`` if exposed."""
-    for obj in (degraded_match, degrade_mod):
-        for attr in ("bg_hazard", "last_bg_hazard", "_last_bg_hazard"):
-            val = getattr(obj, attr, None)
-            if val is not None and np.isfinite(float(val)):
-                return float(val)
-    return None
 
 
 def summarize_master(
@@ -233,14 +221,8 @@ def build_one(match_id: str, mode: str, seed: int = 0) -> dict[str, Any]:
     else:
         cfg = _load_degrade_config(mode)
         match_seed = _seed_for_match(seed, match_id)
-        work_match = degrade_mod.degrade(raw_match, cfg, seed=match_seed)
-        bg_hazard = _extract_bg_hazard(work_match)
-        if bg_hazard is None:
-            warnings.warn(
-                "degrade did not expose bg_hazard for {} / {}; the report will show n/a".format(
-                    match_id, mode
-                )
-            )
+        work_match, info = degrade_mod.degrade_with_info(raw_match, cfg, seed=match_seed)
+        bg_hazard = float(info["bg_hazard"])
 
     master = _call_build_master(work_match)
     validate_master(master, n_frames=work_match.n_frames)
@@ -277,16 +259,30 @@ def parse_expected_hashes(doc_path: Path | None = None) -> dict[str, str]:
         raise FileNotFoundError("hash specification not found: {}".format(target))
     text = target.read_text(encoding="utf-8")
     hashes: dict[str, str] = {}
-    for match in _HASH_ROW_RE.finditer(text):
-        name, digest = match.group(1), match.group(2).lower()
-        if name in hashes and hashes[name] != digest:
+    for line in text.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        names = _HASH_FILE_RE.findall(line)
+        digests = _HASH_DIGEST_RE.findall(line)
+        if not names or not digests:
+            continue  # not a hash row (prose or a table without digests)
+        if len(names) != len(digests):
             raise ValueError(
-                "conflicting SHA-256 entries for {} in {}".format(name, target)
+                "hash row in {} has {} file name(s) but {} SHA-256 value(s): {}".format(
+                    target, len(names), len(digests), line.strip()
+                )
             )
-        hashes[name] = digest
+        for name, digest in zip(names, digests):
+            _add_expected_hash(hashes, name, digest.lower(), target)
     if not hashes:
         raise ValueError("no SHA-256 entries found in {}".format(target))
     return hashes
+
+
+def _add_expected_hash(hashes: dict[str, str], name: str, digest: str, target: Path) -> None:
+    if name in hashes and hashes[name] != digest:
+        raise ValueError("conflicting SHA-256 entries for {} in {}".format(name, target))
+    hashes[name] = digest
 
 
 def _resolve_local_artifact(filename: str) -> Path:
@@ -358,7 +354,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.verify:
-        return verify_external_files(args.doc)
+        try:
+            return verify_external_files(args.doc)
+        except (OSError, ValueError) as exc:
+            print("DIFFERENT  cannot read the expected hashes: {}".format(exc))
+            return 1
 
     matches = _resolve_matches(args.matches)
     for match_id in matches:

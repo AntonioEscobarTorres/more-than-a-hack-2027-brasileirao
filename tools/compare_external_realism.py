@@ -40,12 +40,12 @@ if str(REPO_ROOT) not in sys.path:
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-import yaml  # noqa: E402
 
 import games  # noqa: E402
 from evaluation import possession_metrics as pm  # noqa: E402
 from modeling import io  # noqa: E402
-from modeling.baseline import baseline_labels  # noqa: E402
+from modeling.config import load_config  # noqa: E402
+from modeling.pipeline import predict_labels  # noqa: E402
 from modeling.external.files import IDSSE_MATCHES, load_external  # noqa: E402
 
 DEFAULT_BASELINE_CONFIG = REPO_ROOT / "configs" / "baseline.yaml"
@@ -77,12 +77,6 @@ class CheckResult:
     title: str
     passed: bool
     detail: str = ""
-
-
-def predict_labels(master: pd.DataFrame, config: dict) -> np.ndarray:
-    """Run the rule-based baseline labeller from a loaded baseline config dict."""
-    params = config.get("baseline", config) if isinstance(config, dict) else config
-    return baseline_labels(master, params)
 
 
 # -- helpers ------------------------------------------------------------------------------------
@@ -394,8 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        with open(args.baseline_config, encoding="utf-8") as stream:
-            config = yaml.safe_load(stream)
+        config = load_config(args.baseline_config)
         reference = master_statistics(
             io.load_master(args.master, n_frames=_n_frames()), config
         )
@@ -404,7 +397,7 @@ def main(argv=None) -> int:
             for degrade in args.degrade:
                 master, _ = load_external(match, degrade)
                 degraded.append(master_statistics(master, config))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError) as exc:  # ConfigError is a ValueError
         print("FAIL  could not load inputs: {}".format(exc))
         return 1
     results = run_checks(reference, degraded)

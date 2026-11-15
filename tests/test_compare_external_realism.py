@@ -65,8 +65,7 @@ def test_cli_default_outputs_only_pass_fail_and_verbose_adds_numbers(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Default CLI prints only PASS/FAIL without numbers; --verbose adds diagnostic figures."""
-    baseline_cfg = tmp_path / "baseline.yaml"
-    baseline_cfg.write_text("dummy: true\n", encoding="utf-8")
+    baseline_cfg = cer.DEFAULT_BASELINE_CONFIG  # loaded with load_config; predictions are mocked
 
     ref_df = _two_half_master(n_per_half=300, speed_home=1.637, speed_away=1.637, ball_speed=4.219)
     ext_df = _two_half_master(n_per_half=300, speed_home=1.641, speed_away=1.641, ball_speed=4.223)

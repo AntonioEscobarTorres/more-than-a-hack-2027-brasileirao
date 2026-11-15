@@ -31,6 +31,7 @@ fps: 25
 p_unfreeze_hide: 0.5
 restart_visible_s: 1.5
 unfreeze_drift_mps: 0.5
+unfreeze_drift_tau_s: 1.0
 gap_profile:
   mix_geometric: 0.6
   geometric_mean_frames: 8.0

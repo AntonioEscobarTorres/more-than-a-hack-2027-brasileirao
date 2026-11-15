@@ -34,7 +34,7 @@ def _find_configs_dir() -> Path:
 
 CONFIGS_DIR = _find_configs_dir()
 CONFIG_NAMES = ("default", "harder", "easier", "hidelo", "hidehi")
-NEW_KEYS = ("p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps")
+NEW_KEYS = ("p_unfreeze_hide", "restart_visible_s", "unfreeze_drift_mps", "unfreeze_drift_tau_s")
 
 DEAD_LABEL = LABEL_CODES["D"]
 LIVE_LABEL = next(code for name, code in LABEL_CODES.items() if name not in ("D", "X"))
@@ -210,13 +210,26 @@ def test_hidden_segment_visible_window_has_exactly_restart_visible_s_seconds():
 
 
 # ------------------------------------------------- 2. drifted dead-ball segments
+def _drift_bound_m(cfg, n_frames):
+    """Generous per-axis bound on the drift around the straight line between the segment ends.
+
+    The velocity is an AR(1) process with per-axis s.d. ``unfreeze_drift_mps / sqrt(2)`` and
+    correlation time ``unfreeze_drift_tau_s``: over ``T`` seconds the position spreads by at
+    most ``sigma * T`` (ballistic) and about ``sigma * sqrt(2 * tau * T)`` (diffusive).
+    """
+    sigma_v = cfg["unfreeze_drift_mps"] / math.sqrt(2.0)
+    duration = n_frames / cfg["fps"]
+    spread = sigma_v * min(duration, math.sqrt(2.0 * cfg["unfreeze_drift_tau_s"] * duration))
+    return STEP_SIGMA_LIMIT * spread
+
+
 @pytest.mark.parametrize("seed", [0, 1, 2])
 @pytest.mark.parametrize("dead_ranges", LAYOUTS)
 def test_drifted_dead_segment_stays_visible_moves_smoothly_and_ends_at_restart(
         dead_ranges, seed):
     match, dead = _make_match(dead_ranges)
     cfg = _cfg(0.0)
-    sigma_axis = cfg["unfreeze_drift_mps"] / cfg["fps"] / math.sqrt(2.0)
+    sigma_step = cfg["unfreeze_drift_mps"] / cfg["fps"] / math.sqrt(2.0)
 
     out = degrade(match, cfg, seed)
     meters = _meters(out.ball)
@@ -225,24 +238,67 @@ def test_drifted_dead_segment_stays_visible_moves_smoothly_and_ends_at_restart(
     np.testing.assert_allclose(out.ball[~dead, :2], match.ball[~dead, :2],
                                atol=ATOL_NORMALIZED)
     for lo, hi in _dead_segments(dead):
-        restart = np.array(FROZEN[int(match.half[lo])]) * PITCH_M
+        frozen = np.array(FROZEN[int(match.half[lo])]) * PITCH_M
         positions = meters[lo:hi]
-        # Ends at the restart position.
-        np.testing.assert_allclose(positions[-1], restart, atol=ATOL_M)
+        # Pinned at both ends: starts where the ball froze, ends at the restart position.
+        np.testing.assert_allclose(positions[0], frozen, atol=ATOL_M)
+        np.testing.assert_allclose(positions[-1], frozen, atol=ATOL_M)
         # Leaves the frozen state: it is a trajectory, not a constant.
-        assert np.linalg.norm(positions[0] - restart) > 1e-6
         assert np.ptp(positions, axis=0).max() > ATOL_M
         # Smooth: bounded per-frame steps and bounded total displacement.
         steps = np.diff(positions, axis=0)
-        assert np.abs(steps).max() < STEP_SIGMA_LIMIT * sigma_axis
-        assert np.abs(positions - restart).max() < \
-            STEP_SIGMA_LIMIT * sigma_axis * math.sqrt(hi - lo)
-        # Typical speed matches unfreeze_drift_mps on long enough segments.
-        if hi - lo >= MIN_FRAMES_FOR_SPEED_STATS:
-            speeds = np.hypot(steps[:, 0], steps[:, 1]) * cfg["fps"]
-            rms = math.sqrt(float(np.mean(speeds ** 2)))
-            assert RMS_SPEED_BAND[0] * cfg["unfreeze_drift_mps"] < rms < \
-                RMS_SPEED_BAND[1] * cfg["unfreeze_drift_mps"]
+        assert np.abs(steps).max() < STEP_SIGMA_LIMIT * sigma_step
+        assert np.abs(positions - frozen).max() < _drift_bound_m(cfg, hi - lo)
+
+
+DRIFT_STATS_FRAMES = 25 * 60 * 5  # five minutes of dead ball: enough for stable statistics
+ONE_SECOND_FRAMES = 25
+
+
+def _long_drift(cfg, seed, begin=(30.0, 20.0), restart=(30.0, 20.0)):
+    """Run the unfreeze step on one long drifted D segment; return positions in metres."""
+    n = DRIFT_STATS_FRAMES
+    ball = np.zeros((n, 3), dtype=np.float32)
+    ball[:, 0], ball[:, 1] = restart[0] / PITCH_M[0], restart[1] / PITCH_M[1]
+    ball[0, :2] = (begin[0] / PITCH_M[0], begin[1] / PITCH_M[1])
+    visible = np.ones(n, dtype=bool)
+    labels = np.full(n, DEAD_LABEL, dtype=np.int8)
+    rng = np.random.default_rng(seed)
+    degrade_module._unfreeze_dead_ball(ball, visible, labels, [(1, 0, n - 1)], cfg, rng,
+                                       float(PITCH_M[0]), float(PITCH_M[1]))
+    assert visible.all()
+    return ball[:, :2].astype(np.float64) * PITCH_M
+
+
+@pytest.mark.parametrize("seed", [0, 1])
+def test_drift_speed_matches_config_at_the_one_second_scale(seed):
+    """RMS speed ~ unfreeze_drift_mps, and the ball really travels ~that far in one second.
+
+    Guards against a walk with independent per-frame steps, whose one-second displacement is
+    only ~unfreeze_drift_mps / sqrt(fps): it keeps the ball looking stationary to statistic (c)
+    of tools/compare_external_realism.py, which is what the drift is meant to undo.
+    """
+    cfg = _cfg(0.0, unfreeze_drift_mps=0.5)
+    positions = _long_drift(cfg, seed)
+
+    speeds = np.hypot(*np.diff(positions, axis=0).T) * cfg["fps"]
+    rms = math.sqrt(float(np.mean(speeds ** 2)))
+    assert RMS_SPEED_BAND[0] * cfg["unfreeze_drift_mps"] < rms < \
+        RMS_SPEED_BAND[1] * cfg["unfreeze_drift_mps"]
+    one_second = np.hypot(*(positions[ONE_SECOND_FRAMES:] - positions[:-ONE_SECOND_FRAMES]).T)
+    # AR(1) velocity with tau = 1 s: median 1 s displacement ~0.71 x unfreeze_drift_mps.
+    assert np.median(one_second) > 0.5 * cfg["unfreeze_drift_mps"] * 1.0
+
+
+def test_drift_joins_different_freeze_and_restart_positions_continuously():
+    cfg = _cfg(0.0, unfreeze_drift_mps=0.5)
+    positions = _long_drift(cfg, 0, begin=(10.0, 5.0), restart=(40.0, 50.0))
+
+    np.testing.assert_allclose(positions[0], (10.0, 5.0), atol=ATOL_M)
+    np.testing.assert_allclose(positions[-1], (40.0, 50.0), atol=ATOL_M)
+    # No teleport: the largest step stays a plausible slow-ball step.
+    max_step_mps = np.hypot(*np.diff(positions, axis=0).T).max() * cfg["fps"]
+    assert max_step_mps < STEP_SIGMA_LIMIT * cfg["unfreeze_drift_mps"]
 
 
 def test_zero_drift_speed_keeps_the_ball_on_the_frozen_position():
@@ -283,7 +339,6 @@ def test_hiding_never_leaks_masks_across_the_halftime_gap():
 def test_drift_never_leaks_positions_or_random_walks_across_the_halftime_gap():
     match, _ = _make_match(TOUCHING_GAP)
     cfg = _cfg(0.0)
-    sigma_axis = cfg["unfreeze_drift_mps"] / cfg["fps"] / math.sqrt(2.0)
     frozen1 = np.array(FROZEN[1]) * PITCH_M
     frozen2 = np.array(FROZEN[2]) * PITCH_M
 
@@ -293,7 +348,7 @@ def test_drift_never_leaks_positions_or_random_walks_across_the_halftime_gap():
     # The gap stays NaN: no walk is extended into it.
     assert np.isnan(out.ball[N_FIRST:SECOND]).all()
     # Each half drifts around its own restart position only.
-    bound = STEP_SIGMA_LIMIT * sigma_axis * math.sqrt(N_FIRST - 100)
+    bound = _drift_bound_m(cfg, N_FIRST - 100)
     assert np.abs(meters[100:N_FIRST] - frozen1).max() < bound
     assert np.abs(meters[SECOND:SECOND + 100] - frozen2).max() < bound
     # Each half ends exactly at its own restart position.
@@ -474,6 +529,9 @@ def test_unknown_key_is_rejected(name):
     ("unfreeze_drift_mps", -0.1),
     ("unfreeze_drift_mps", float("nan")),
     ("unfreeze_drift_mps", False),
+    ("unfreeze_drift_tau_s", 0.0),
+    ("unfreeze_drift_tau_s", -1.0),
+    ("unfreeze_drift_tau_s", float("inf")),
 ])
 def test_invalid_unfreeze_values_are_rejected(key, value):
     cfg = _load_config("default")
