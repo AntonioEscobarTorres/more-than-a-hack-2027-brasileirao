@@ -9,6 +9,10 @@ Steps: (1) preprocessing (``preprocessing.run_all.run_pipeline``) unless ``--ski
 ``outputs/<name>.csv``; (5) print the config name and hash, the CSV SHA-256 and a summary of the
 *predicted* labels only (H/A/D shares on the graded frames, possessions per half).
 
+With ``ball_source: fused`` in the config (F4-06) step (1) builds the master from the tactical ball
+completed with the broadcast ball into ``<data dir>/processed_fused`` and step (2) loads it from
+there; ``ball_source: tactical`` keeps using ``<data dir>/processed``.
+
 The thread limits below are set before numpy is imported, so inference runs single-threaded
 and the CSV is byte-reproducible on any machine.
 """
@@ -36,8 +40,9 @@ from .config import BALL_SOURCES, ConfigError, config_hash, load_config  # noqa:
 from .contracts import STATES  # noqa: E402
 from .pipeline import predict_labels  # noqa: E402
 
-SUPPORTED_BALL_SOURCES = ("tactical",)   # "fused" arrives with F4-06
-assert set(SUPPORTED_BALL_SOURCES) <= set(BALL_SOURCES)
+SUPPORTED_BALL_SOURCES = BALL_SOURCES
+TACTICAL, FUSED = BALL_SOURCES
+PROCESSED_DIR_NAMES = {TACTICAL: "processed", FUSED: "processed_fused"}
 
 
 def file_sha256(path) -> str:
@@ -71,12 +76,29 @@ def format_summary(summary: dict) -> list[str]:
             "possessions: {}".format(possessions or "none")]
 
 
-def _master_location(data_dir):
-    """(path, n_frames) for load_master: the default location, or <data-dir>/processed."""
+def _data_root(data_dir=None) -> Path:
+    """Data bundle root, resolved like ``preprocessing.run_all``: argument, MTAH_DATA_DIR, ./data."""
+    if data_dir:
+        return Path(data_dir).expanduser()
+    env = os.environ.get("MTAH_DATA_DIR")
+    if env:
+        return Path(env).expanduser()
+    return Path(__file__).resolve().parent.parent / "data"
+
+
+def _master_location(data_dir, ball_source=TACTICAL):
+    """(path, n_frames) for load_master.
+
+    Tactical: the default location, or <data-dir>/processed. Fused: always an explicit path under
+    <data root>/processed_fused, so the fused master can never be confused with the tactical one.
+    """
+    n_frames = int(games.GAMES[games.GAME]["n_video_frames"])
+    if ball_source == FUSED:
+        return _data_root(data_dir) / PROCESSED_DIR_NAMES[FUSED] / io.MASTER_FILENAME, n_frames
     if data_dir is None:
         return None, None
-    path = Path(data_dir).expanduser() / "processed" / io.MASTER_FILENAME
-    return path, int(games.GAMES[games.GAME]["n_video_frames"])
+    path = Path(data_dir).expanduser() / PROCESSED_DIR_NAMES[TACTICAL] / io.MASTER_FILENAME
+    return path, n_frames
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,21 +123,27 @@ def main(argv=None) -> int:
     except (ConfigError, FileNotFoundError) as exc:
         print("error: {}".format(exc), file=sys.stderr)
         return 2
-    if cfg["ball_source"] not in SUPPORTED_BALL_SOURCES:
-        print("error: ball_source {!r} is not supported yet (F4-06)".format(cfg["ball_source"]),
-              file=sys.stderr)
+    ball_source = cfg["ball_source"]
+    if ball_source not in SUPPORTED_BALL_SOURCES:
+        print("error: unsupported ball_source {!r}".format(ball_source), file=sys.stderr)
         return 2
     print("config: {} (sha256 {})".format(cfg["name"], config_hash(cfg)))
 
     if not args.skip_preprocessing:
         from preprocessing.run_all import run_pipeline
-        rc = run_pipeline(data_dir=args.data_dir)
+        if ball_source == FUSED:
+            rc = run_pipeline(
+                data_dir=args.data_dir,
+                processed_dir=_data_root(args.data_dir) / PROCESSED_DIR_NAMES[FUSED],
+                ball_source=FUSED)
+        else:
+            rc = run_pipeline(data_dir=args.data_dir)
         if rc != 0:
             print("error: preprocessing failed (exit code {}); no submission written".format(rc),
                   file=sys.stderr)
             return rc if isinstance(rc, int) and rc > 0 else 1
 
-    master_path, n_frames = _master_location(args.data_dir)
+    master_path, n_frames = _master_location(args.data_dir, ball_source)
     try:
         master = io.load_master(master_path, n_frames=n_frames)
     except FileNotFoundError as exc:

@@ -17,6 +17,7 @@ Usage::
     python -m preprocessing.run_all
     python -m preprocessing.run_all --check-determinism
     python -m preprocessing.run_all --skip-homography
+    python -m preprocessing.run_all --ball-source fused --processed-dir <data dir>/processed_fused
 """
 from __future__ import annotations
 
@@ -38,8 +39,12 @@ def _data_root(data_dir=None):
     return os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 
-def _run_steps(root, processed, skip_homography):
-    """One complete run C → C5 → A(V1) → B → D into ``processed``. Returns an exit code."""
+def _run_steps(root, processed, skip_homography, ball_source="tactical", broadcast_config=None):
+    """One complete run C → C5 → A(V1) → B → D into ``processed``. Returns an exit code.
+
+    ``ball_source="fused"`` makes step A use the tactical ball completed with the aligned
+    broadcast ball (F4-06). The default leaves the step-A arguments exactly as before.
+    """
     from games import GAME, half_video_blocks
     from preprocessing.export_tagging import export_tagging_data
     from preprocessing.prep_homography import export_homography_data
@@ -67,11 +72,16 @@ def _run_steps(root, processed, skip_homography):
             _remove_stale(homography)
 
     LOGGER.info("A: prep_tracking --stage V1 → %s", processed)
-    rc = prep_tracking.main([
+    tracking_args = [
         "--data-dir", data_dir_str,
         "--output-dir", str(processed),
         "--stage", "V1",
-    ])
+    ]
+    if ball_source != "tactical":
+        tracking_args += ["--ball-source", ball_source]
+        if broadcast_config:
+            tracking_args += ["--broadcast-config", str(broadcast_config)]
+    rc = prep_tracking.main(tracking_args)
     if rc:
         return rc
 
@@ -97,6 +107,8 @@ def run_pipeline(
     processed_dir=None,
     skip_homography=False,
     check_determinism=False,
+    ball_source="tactical",
+    broadcast_config=None,
 ):
     """Execute C → C5 → A(V1) → B → D. Returns a process exit code (0 = ok).
 
@@ -105,16 +117,18 @@ def run_pipeline(
     """
     from preprocessing.build_master_table import OUTPUT_FILE, file_sha256
 
+    if ball_source not in ("tactical", "fused"):
+        raise ValueError(f"ball_source must be 'tactical' or 'fused', got {ball_source!r}")
     root = Path(_data_root(data_dir))
     processed = Path(processed_dir) if processed_dir else root / "processed"
-    rc = _run_steps(root, processed, skip_homography)
+    rc = _run_steps(root, processed, skip_homography, ball_source, broadcast_config)
     if rc or not check_determinism:
         return rc
 
     LOGGER.info("determinism: second complete run")
     with tempfile.TemporaryDirectory() as tmp:
         second = Path(tmp) / "processed"
-        rc = _run_steps(root, second, skip_homography)
+        rc = _run_steps(root, second, skip_homography, ball_source, broadcast_config)
         if rc:
             return rc
         first_hash = file_sha256(processed / OUTPUT_FILE)
@@ -142,12 +156,20 @@ def main(argv=None):
     parser.add_argument(
         "--check-determinism", action="store_true",
         help="run the whole pipeline a second time and compare the master sha256")
+    parser.add_argument(
+        "--ball-source", choices=["tactical", "fused"], default="tactical",
+        help="ball series: tactical only (default) or completed with the aligned broadcast ball")
+    parser.add_argument(
+        "--broadcast-config",
+        help="F4-05 alignment config used by --ball-source fused (defaults to configs/broadcast.yaml)")
     args = parser.parse_args(argv)
     return run_pipeline(
         data_dir=args.data_dir,
         processed_dir=args.processed_dir,
         skip_homography=args.skip_homography,
         check_determinism=args.check_determinism,
+        ball_source=args.ball_source,
+        broadcast_config=args.broadcast_config,
     )
 
 

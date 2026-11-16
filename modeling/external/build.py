@@ -38,7 +38,7 @@ from .files import (
     master_path,
 )
 
-BUILD_DEGRADE_CHOICES = ("none", "default", "harder", "easier", "hidelo", "hidehi")
+BUILD_DEGRADE_CHOICES = ("none", "default", "harder", "easier", "fused", "hidelo", "hidehi")
 D_CODE = LABEL_CODES["D"]
 H_CODE = LABEL_CODES["H"]
 A_CODE = LABEL_CODES["A"]
