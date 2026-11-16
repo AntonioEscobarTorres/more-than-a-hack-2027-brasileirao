@@ -65,7 +65,7 @@ into the repository.
 
 ### Expected SHA-256
 
-Generated on 2026-11-15 with the F4-04 code (branch `f4/04-mestres-externos`, #74), seed 0.
+Generated on 2026-11-15 with the F4-04 code (#74), seed 0; `harder`/`easier` regenerated after the review (D-017).
 
 | File | SHA-256 |
 | --- | --- |
@@ -104,33 +104,33 @@ Generated on 2026-11-15 with the F4-04 code (branch `f4/04-mestres-externos`, #7
 | `J03WQQ__default_labels.npy` | `eea603073d79ce275a40bcc4e173972af098b1eded3d68d1f4311c43bb7aacdc` |
 | `J03WR9__default.parquet` | `d45cfe4eda1301dc8d1ae96341c0e2033384d0f8463edca3c22194484fd4637e` |
 | `J03WR9__default_labels.npy` | `c2c39be67571923e9aeba01260b2edc10482579fc3b3bd0ebeafb51f5b2b1fa4` |
-| `J03WMX__harder.parquet` | `f8cd67466104f17a6c7dd04c413ca3d278b9993761a8e94512ff568f409122a0` |
+| `J03WMX__harder.parquet` | `a0215b6d0f62cc138c39236eb496c87820e511d8b22e9a591863bacbbae7cce4` |
 | `J03WMX__harder_labels.npy` | `cbbac0011d2b7021600617149ed8907402e8ee14a6a7b5229aa142222cc2de82` |
-| `J03WN1__harder.parquet` | `321dcd90ad24a773770ee983ef8e221305fa8b6aa29553a476c4a2c703c2836d` |
+| `J03WN1__harder.parquet` | `6fbc6250ad7c6e345130d9144712ebfd963f34b1af761f23d5a9dbc5da99267b` |
 | `J03WN1__harder_labels.npy` | `25000b6d2f33b8b4e37275025c3608454b7c3c009586b3c1a0ca253a236f1686` |
-| `J03WOH__harder.parquet` | `9c35e4e69632dac7338f91cf8f11e97c025f527ba917c895471bd9e2c23ea771` |
+| `J03WOH__harder.parquet` | `337efe4262643a8160fd0c212fecd6c08e67fb20dd5ea6bf5ab81f94337d8fc8` |
 | `J03WOH__harder_labels.npy` | `b0c547527fbb1d65074a84fe7d26da806e1ad5ad66ea80e5a8dc771265aaf8d2` |
-| `J03WOY__harder.parquet` | `1a9afd5dc96025824278085b95b5c62ad141502ca18e922076c673803673f670` |
+| `J03WOY__harder.parquet` | `e338e9a9de2b1ba38de8ceedd5327b40fff6c66aab08f46270c6d6f01f65aa91` |
 | `J03WOY__harder_labels.npy` | `660199b59c77d50d86aa2f36c645241ef1b2598d0fa9aa6e83b49f0dd10155a0` |
-| `J03WPY__harder.parquet` | `c224bbb202200700fdb78b7f093fced0d5df35f0571e4b5ec4fe5345cb40c34d` |
+| `J03WPY__harder.parquet` | `30b524c3bfc6f5e741f89a979f573d1159bf724d0d9f7e18160e86ff2efef547` |
 | `J03WPY__harder_labels.npy` | `704c77b3d8de2ac63c5dae4b50b63311b67a3615147203f87e7e49edfdf0edc0` |
-| `J03WQQ__harder.parquet` | `bf206daf16e42a33f93477d7370d8ffc08f36d9dcfad3782206a58e06f34b097` |
+| `J03WQQ__harder.parquet` | `2708fd2cfd195a44b9335e4869651128a8919b52040f892bfcfa33328e191070` |
 | `J03WQQ__harder_labels.npy` | `eea603073d79ce275a40bcc4e173972af098b1eded3d68d1f4311c43bb7aacdc` |
-| `J03WR9__harder.parquet` | `4fa8f04f04c4da93c4f6c0fd43e70a170c750357def78b05df262ba7b50d0fa3` |
+| `J03WR9__harder.parquet` | `91a6153eb01ec3ce90bcdda8f03bfc2f2b7e656a9df047b6453767bd9ecf38f4` |
 | `J03WR9__harder_labels.npy` | `c2c39be67571923e9aeba01260b2edc10482579fc3b3bd0ebeafb51f5b2b1fa4` |
-| `J03WMX__easier.parquet` | `a665cc07554bc3678e8ea1be8f09ecff488b08312b969481b066ffa74faeacb1` |
+| `J03WMX__easier.parquet` | `9f2286a826adc8e2bd1d1da60bc1a8642675c929bac0e5a487c7f1ab7c535431` |
 | `J03WMX__easier_labels.npy` | `cbbac0011d2b7021600617149ed8907402e8ee14a6a7b5229aa142222cc2de82` |
-| `J03WN1__easier.parquet` | `4f8a480fd37d7efa4fd14951687a37648c71ad604c951b8a85edd2cd110a9180` |
+| `J03WN1__easier.parquet` | `655f6a6101f8ec5e1675036214bdd560d824713d2ef1abcf2d9a07162933204f` |
 | `J03WN1__easier_labels.npy` | `25000b6d2f33b8b4e37275025c3608454b7c3c009586b3c1a0ca253a236f1686` |
-| `J03WOH__easier.parquet` | `71289df0b579d00af2f5dae68867cb330cb1bebd6cb5a46adbefe4705e159028` |
+| `J03WOH__easier.parquet` | `39ec0b2268da651687f5bc32807fc8d22c538f2c3737982785817f229a68495e` |
 | `J03WOH__easier_labels.npy` | `b0c547527fbb1d65074a84fe7d26da806e1ad5ad66ea80e5a8dc771265aaf8d2` |
-| `J03WOY__easier.parquet` | `89fa3ce870def43cca9aa3ee24bdfdf91dc846709e54996e22594af574c6e1ae` |
+| `J03WOY__easier.parquet` | `cd4d8cc37ec02128d01034bb3936bf903b6c787a50b30885c0d947aaff3f7f54` |
 | `J03WOY__easier_labels.npy` | `660199b59c77d50d86aa2f36c645241ef1b2598d0fa9aa6e83b49f0dd10155a0` |
-| `J03WPY__easier.parquet` | `3af2278ded28228b1bd9ed422d054847a61fbbc5af692f0bfd0e84823b23d183` |
+| `J03WPY__easier.parquet` | `53faa66b916ff579b6068139eabc8ea95a79e753a9e679bde1fb76c90be788ec` |
 | `J03WPY__easier_labels.npy` | `704c77b3d8de2ac63c5dae4b50b63311b67a3615147203f87e7e49edfdf0edc0` |
-| `J03WQQ__easier.parquet` | `8ffe2308ec0e497ed21b7b0264d6ace16897c9a5b5782f7f98ff60a8b67d33c8` |
+| `J03WQQ__easier.parquet` | `47cac8d7240b447f08d9cd8fc552c86756c2c6d26330169dfd395150bc54812f` |
 | `J03WQQ__easier_labels.npy` | `eea603073d79ce275a40bcc4e173972af098b1eded3d68d1f4311c43bb7aacdc` |
-| `J03WR9__easier.parquet` | `dacf01131a31d374b7f5b76fd0fc1df51fc2c58972c990db9a0baf473ea1f779` |
+| `J03WR9__easier.parquet` | `d237ae730fabaa0a81a70b9e168945382dfcfe7556cc59fb9dde81ac6c78b77e` |
 | `J03WR9__easier_labels.npy` | `c2c39be67571923e9aeba01260b2edc10482579fc3b3bd0ebeafb51f5b2b1fa4` |
 | `J03WMX__hidelo.parquet` | `1a4f05a39d983cba236d8ddf735c597ee8675e13833858fc2073773ff11df351` |
 | `J03WMX__hidelo_labels.npy` | `cbbac0011d2b7021600617149ed8907402e8ee14a6a7b5229aa142222cc2de82` |

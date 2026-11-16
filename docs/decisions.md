@@ -52,7 +52,8 @@ Modelo:
 | [D-013](#d-013--nome-da-equipe-formulário-e-envio-único) | 2026-11-13 | Nome da equipe, formulário e envio único | Vigente |
 | [D-014](#d-014--casos-de-borda-do-filtro-da-bola-como-são-contados) | 2026-11-13 | Casos de borda do filtro da bola: como são contados | Vigente |
 | [D-015](#d-015--diagnósticos-de-bola-morta-como-são-calculados) | 2026-11-13 | Diagnósticos de bola morta: como são calculados | Vigente |
-| [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente |
+| [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente (`harder`/`easier` substituídos pela D-017) |
+| [D-017](#d-017--harder-e-easier-pelo-apêndice-a6-e-estatísticas-originais-do-realismo-f4-04) | 2026-11-15 | `harder`/`easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04) | Vigente |
 
 ## Decisões
 
@@ -475,7 +476,7 @@ Modelo:
 
 - **Data:** 2026-11-15
 - **Autor:** Ahmed (revisão e fechamento da F4-04, #74, sobre a implementação do Antônio)
-- **Status:** Vigente
+- **Status:** Vigente. A definição de `harder` e `easier` foi substituída pela D-017.
 - **Decisão:** os mestres externos usam `configs/degrade_default.yaml` com os valores abaixo. As outras
   chaves não mudaram.
 
@@ -557,6 +558,49 @@ Modelo:
 - **Risco conhecido:** com esses valores, a bola do IDSSE degradado fica visível em ~30% dos frames de D e em
   ~80% dos de jogo. É o padrão que (f) mede no BAR-ATH (bola some com jogadores lentos), mas é uma pista forte
   para "bola invisível ⇒ D". A F3-04 e a F2-05 devem conferir a estabilidade em `hidelo` e `hidehi`.
+
+### D-017 — `harder` e `easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04)
+
+- **Data:** 2026-11-15
+- **Autor:** Ahmed (revisão da F4-04 depois do merge do #132)
+- **Status:** Vigente
+- **Decisão:**
+  1. **`harder` e `easier` seguem o Apêndice A.6** sobre o `default` da D-016. A D-016 tinha só multiplicado o
+     ruído da bola e dos jogadores, e os dois modos ficaram quase iguais ao `default`, o que esvaziava o teste de
+     estresse da F2-06. Agora:
+
+     | Chave | `default` | `harder` | `easier` | Origem |
+     | --- | ---: | ---: | ---: | --- |
+     | `target_ball_visible` | 0,593 | 0,50 | 0,68 | A.6 |
+     | `phantom_frac` | 0,01 | 0,02 | 0,005 | A.6 |
+     | `player_noise_m` | 0,01 | 0,0167 | 0,0067 | A.6 (0,25 e 0,10 sobre 0,15), reescalado para o `default` novo (item 6 de 11/11) |
+     | `target_tracked_mean` | 20,5 | **20,0** | **21,3** | A.6 pede 19,5 e 21,5; ver abaixo |
+     | `ball_noise_m` | 0,25 | 0,25 | 0,25 | o A.6 não muda o ruído da bola |
+
+     As outras chaves são as do `default`, inclusive `p_unfreeze_hide` = 0,5.
+  2. **Metas de jogadores viáveis nas 7 partidas.** O J03WN1 rastreia em média no máximo 21,05 jogadores, mesmo
+     sem esconder nenhum, então 21,5 ± 0,3 é inviável no `easier`. 21,3 é o maior valor viável. No `harder`, com
+     19,5 quase não sobram frames com 22 jogadores no J03WN1, e a fração de duplicatas (`dup_frac` 0,02) não é
+     alcançada nem com 200 mil tentativas. 20,0 é viável e continua abaixo do `default`.
+  3. **Estatísticas originais no script de realismo.** O item 3 original pedia comparar com o BAR-ATH as
+     estatísticas do relatório. A atualização de 11/11 acrescentou (a)–(f) sem tirar essas.
+     `tools/compare_external_realism.py` agora também tem (g) bola observada, (h) bola preenchida, (i) saltos da
+     bola removidos e (j) média de jogadores rastreados, todas com ±20%. O % de D não é comparado, porque o
+     BAR-ATH não tem rótulos fora da janela pública, que não pode ser usada.
+  4. **Divergências que ficam (sem novo ajuste):** (h) e (i) dão `FAIL` no `default`. São frações pequenas (bola
+     preenchida ~0,3% e saltos removidos 1–3% dos frames do IDSSE degradado) e vêm do pré-processamento, não de
+     um alvo da degradação. Não houve rodada de ajuste nova contra o BAR-ATH.
+- **Opções consideradas:**
+  - `harder` com `dup_frac` 0,01 e 19,5 jogadores: também viável no J03WN1. Descartada para manter as
+    duplicatas do `default` e fazer nos dois modos o mesmo tipo de ajuste (só a meta de jogadores);
+  - gerar `harder`/`easier` sem o J03WN1: descartada, porque o aceite pede os 42 mestres;
+  - ajustar a degradação para (h) e (i): descartada, pelo mesmo motivo da D-016 (regra dos organizadores e prazo).
+- **Evidência:** `tools/compare_external_realism.py --degrade default` (7 partidas, sem `--verbose`): (a) PASS,
+  (b) PASS, (c) PASS, (d) FAIL, (e) PASS, (f) PASS, (g) PASS, (h) FAIL, (i) FAIL, (j) PASS. Estatísticas por
+  partida dos modos novos em [`reports/external_masters.md`](../reports/external_masters.md); hashes em
+  [`docs/external_data.md`](external_data.md). Testes: `test_harder_and_easier_follow_appendix_a6_relative_to_the_new_default`
+  e `test_build_runs_the_real_degradation_on_the_synthetic_match` (o teste do build antes caía num fallback sem
+  degradar).
 
 ## Registro de envios
 

@@ -49,6 +49,10 @@ def _make_master(
             "ball_observed": np.asarray(ball_observed, dtype=np.int64),
             "ball_x": np.asarray(ball_x, dtype=np.float64),
             "ball_y": np.asarray(ball_y, dtype=np.float64),
+            "ball_filled": np.zeros(n_frames, dtype=np.int64),
+            "ball_jump_removed": np.zeros(n_frames, dtype=np.int64),
+            "n_tracked_home": np.full(n_frames, 10, dtype=np.int64),
+            "n_tracked_away": np.full(n_frames, 10, dtype=np.int64),
         }
     )
 
@@ -271,3 +275,42 @@ def test_stat_f_bin_threshold_small_bin_reporting_and_gating_on_a(
     assert not results_gated["a"].passed
     assert not results_gated["f"].passed
     assert "(a) failed" in results_gated["f"].detail
+
+def test_original_statistics_shares_and_mean_tracked_on_half_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cer, "predict_labels", lambda df, _cfg: np.full(len(df), "H"))
+    """(g)-(j): flag shares and mean tracked players over half frames only."""
+    half = np.array([0] * 20 + [1] * 40 + [2] * 40, dtype=np.int64)
+    df = _make_master(n_frames=100, half=half)
+    observed = np.zeros(100, dtype=np.int64)
+    observed[:20] = 1          # halftime-gap frames: ignored
+    observed[20:80] = 1        # 60 of the 80 half frames
+    df["ball_observed"] = observed
+    df.loc[80:83, "ball_filled"] = 1          # 4 of 80
+    df.loc[84:85, "ball_jump_removed"] = 1    # 2 of 80
+    df.loc[20:59, "n_tracked_home"] = 12      # mean (40 * 22 + 40 * 20) / 80 = 21
+
+    stats = cer.master_statistics(df, {})
+
+    assert stats["g"] == pytest.approx(60 / 80)
+    assert stats["h"] == pytest.approx(4 / 80)
+    assert stats["i"] == pytest.approx(2 / 80)
+    assert stats["j"] == pytest.approx(21.0)
+
+
+def test_original_statistics_are_checked_even_when_a_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cer, "predict_labels", lambda df, _cfg: np.full(len(df), "H"))
+    ref = _two_half_master(speed_home=5.0, speed_away=5.0)   # (a) far off -> FAIL, (f) gated
+    ext = _two_half_master()
+    ext["n_tracked_home"] = 8                                 # (j): 20 vs 18 -> +11% PASS
+    ref_stats, ext_stats = cer.master_statistics(ref, {}), cer.master_statistics(ext, {})
+
+    results = {r.key: r for r in cer.run_checks(ref_stats, [ext_stats])}
+
+    assert not results["a"].passed and not results["f"].passed
+    for key in "ghij":
+        assert key in results
+    assert results["g"].passed and results["j"].passed
+
+    ext["n_tracked_home"] = 5                                 # (j): 20 vs 15 -> +33% FAIL
+    results = {r.key: r for r in cer.run_checks(ref_stats, [cer.master_statistics(ext, {})])}
+    assert not results["j"].passed
