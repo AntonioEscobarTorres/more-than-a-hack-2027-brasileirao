@@ -1,0 +1,75 @@
+all:
+  H>A: -10
+  A>H: -12
+  H>D: 0
+  A>D: 0
+  D>H: -1
+  D>A: 0
+folds:
+  J03WMX:
+    H>A: -11
+    A>H: -13
+    H>D: 0
+    A>D: 0
+    D>H: -2
+    D>A: 0
+  J03WN1:
+    H>A: -9
+    A>H: -12
+    H>D: 0
+    A>D: 0
+    D>H: -1
+    D>A: 0
+  J03WOH:
+    H>A: -10
+    A>H: -11
+    H>D: 0
+    A>D: 0
+    D>H: -2
+    D>A: 0
+  J03WOY:
+    H>A: -9
+    A>H: -13
+    H>D: 0
+    A>D: 0
+    D>H: -1
+    D>A: 0
+  J03WPY:
+    H>A: -11
+    A>H: -12
+    H>D: 0
+    A>D: 0
+    D>H: -2
+    D>A: 0
+  J03WQQ:
+    H>A: -10
+    A>H: -11
+    H>D: 0
+    A>D: 0
+    D>H: -1
+    D>A: 0
+  J03WR9:
+    H>A: -10
+    A>H: -11
+    H>D: 0
+    A>D: 0
+    D>H: -2
+    D>A: 0
+meta:
+  degrade: default
+  tol: 50
+  min_pairs: 20
+  types:
+  - H>A
+  - A>H
+  - H>D
+  - A>D
+  - D>H
+  - D>A
+  n_pairs_all:
+    H>A: 313
+    A>H: 300
+    H>D: 129
+    A>D: 126
+    D>H: 149
+    D>A: 155
