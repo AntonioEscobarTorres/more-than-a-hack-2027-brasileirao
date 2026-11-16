@@ -120,11 +120,16 @@ def tracking_from_normalized(players, ball, teams, pitch, valid=None, half=None)
     )
 
 
+HOMOGRAPHY_FRAME_COLUMNS = ("frame", "video_frame")   # checked in this order
+
+
 def _read_valid_mask(path, n_frames) -> np.ndarray:
     """The ``valid`` column of a homography CSV as bool[n_frames].
 
-    Assumed layout (to be confirmed against DATA.md): one row per video frame, in order, with a
-    ``valid`` column; an optional ``video_frame`` column is used as the row index when present.
+    The raw CSV written by ``preprocessing/prep_homography.py`` has a ``frame`` column (0-based
+    video frame) next to ``valid``. Rows are placed by that column, looking for ``frame`` first and
+    ``video_frame`` as a fallback; frames with no row stay invalid. When neither column exists the
+    rows are taken as one per frame, in order.
     """
     table = pd.read_csv(path)
     columns = {str(c).strip().lower(): c for c in table.columns}
@@ -132,13 +137,18 @@ def _read_valid_mask(path, n_frames) -> np.ndarray:
         raise ValueError("homography CSV {} has no 'valid' column; columns are {}".format(
             path, list(table.columns)))
     values = table[columns["valid"]].to_numpy().astype(bool)
-    if "video_frame" in columns:
-        index = table[columns["video_frame"]].to_numpy()
-        if index.min() < 0 or index.max() >= n_frames:
-            raise ValueError("homography CSV {} has video_frame values outside 0..{}".format(
+    frame_column = next((columns[name] for name in HOMOGRAPHY_FRAME_COLUMNS if name in columns),
+                        None)
+    if frame_column is not None:
+        index = table[frame_column].to_numpy()
+        if index.size and (index.min() < 0 or index.max() >= n_frames):
+            raise ValueError("homography CSV {} has frame values outside 0..{}".format(
                 path, n_frames - 1))
+        index = index.astype(np.int64)
+        if np.unique(index).size != index.size:
+            raise ValueError("homography CSV {} has duplicated frame values".format(path))
         mask = np.zeros(n_frames, dtype=bool)
-        mask[index.astype(np.int64)] = values
+        mask[index] = values
         return mask
     if len(values) != n_frames:
         raise ValueError("homography CSV {} has {} rows, expected {}".format(
@@ -207,6 +217,14 @@ def _orient(players, ball, orientation, pitch):
     length, width = pitch
     flip = np.array([length, width], dtype=np.float64)
     return flip - players, flip - ball
+
+
+def orient_tracking(tracking: Tracking, orientation: str, pitch=None) -> Tracking:
+    """A copy of ``tracking`` in the given orientation (identity returns it unchanged)."""
+    pitch = tuple(games.GAMES[games.GAME]["pitch"]) if pitch is None else tuple(pitch)
+    players, ball = _orient(tracking.players, tracking.ball, orientation, pitch)
+    return Tracking(players=players, ball=ball, team=tracking.team, valid=tracking.valid,
+                    half=tracking.half)
 
 
 def _split_by_team(players, team, valid) -> list:
@@ -491,4 +509,5 @@ def align_broadcast(tactical: Tracking, broadcast: Tracking, cfg, pitch=None) ->
 
 
 __all__ = ["AlignDiagnostics", "IDENTITY", "Mapping", "ORIENTATIONS", "ROT180", "Tracking",
-           "align_broadcast", "load_broadcast_inputs", "tracking_from_normalized"]
+           "align_broadcast", "load_broadcast_inputs", "orient_tracking",
+           "tracking_from_normalized"]

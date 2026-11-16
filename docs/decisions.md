@@ -56,6 +56,7 @@ Modelo:
 | [D-017](#d-017--harder-e-easier-pelo-apêndice-a6-e-estatísticas-originais-do-realismo-f4-04) | 2026-11-15 | `harder`/`easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04) | Vigente |
 | [D-018](#d-018--hazard-de-troca-de-posse-ajuste-e-checagens-f1-08) | 2026-11-15 | Hazard de troca de posse: ajuste e checagens (F1-08) | Vigente |
 | [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente (R2 revisado) |
+| [D-020](#d-020--trilha-da-câmera-de-transmissão-descartada-no-go-f4-05) | 2026-11-16 | Trilha da câmera de transmissão descartada: NO-GO (F4-05) | Vigente |
 
 ## Decisões
 
@@ -705,6 +706,24 @@ Modelo:
   100 frames, inclinações efetivas, avaliação cruzada e AUC de cada feature sozinha. O ajuste é
   reprodutível: rodando de novo, os 4 arquivos e o relatório saem idênticos byte a byte. Testes:
   `tests/test_modeling_calibration_dead.py` (sintéticos).
+
+### D-020 — Trilha da câmera de transmissão descartada: NO-GO (F4-05)
+
+- **Data:** 2026-11-16
+- **Autor:** Antônio (F4, F4-05)
+- **Status:** Vigente
+- **Decisão:** a trilha exploratória do tracking da câmera de transmissão (TV) recebeu veredito **NO-GO** no portão de viabilidade da F4-05 e está descartada do pipeline do modelo. A tarefa dependente F4-06 (#84) não será feita, e o tracking da transmissão entra no relatório técnico ([`technical_report/report.md`](technical_report/report.md)) como estratégia testada e descartada.
+- **Opções consideradas:**
+  - **Descartar o tracking da transmissão e fechar a F4-06 (escolhida):** embora o alinhamento fino por blocos de 2 s e segmentos ao vivo atinja alta precisão espacial nos trechos mapeados (critérios ii e iv em `PASS`), a cobertura total dos frames avaliados ficou abaixo do mínimo exigido (critério i em `FAIL`) e a recuperação da bola nos frames em que o tracking tático a perde também ficou abaixo do limiar (critério iii em `FAIL`). O ganho potencial sobre os lances oclusos não compensa a complexidade adicional.
+  - Integrar a bola da transmissão ao pipeline mesmo com cobertura parcial (F4-06): descartada pelo critério explícito de aceite da F4-05 (exige `PASS` nos quatro critérios para `GO`).
+- **Evidência:** execução local (humano) de `tools/broadcast_feasibility.py` com `configs/broadcast.yaml`:
+  - `(i)` cobertura de mapeamento dos frames avaliados: `FAIL`;
+  - `(ii)` custo mediano de pareamento de jogadores nos frames mapeados: `PASS`;
+  - `(iii)` bola da transmissão observada nos frames táticos sem bola: `FAIL`;
+  - `(iv)` concordância da posição da bola quando ambas as câmeras a observam: `PASS`;
+  - veredito final: `NO-GO`.
+  - Código e testes sintéticos em `modeling/broadcast/align.py`, `tools/broadcast_feasibility.py` e `tests/test_modeling_broadcast_align.py` (issues #78 e #84).
+
 
 ## Registro de envios
 

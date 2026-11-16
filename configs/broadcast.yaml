@@ -2,7 +2,7 @@
 # Changing a parameter means creating a new config file, never editing the code.
 
 # -- source geometry -------------------------------------------------------------------------
-tactical_n_slots: 29          # track slots in the tactical ATD (checked against the data on load)
+tactical_n_slots: 46          # track slots in the tactical ATD (checked against the data on load)
 broadcast_n_slots: 51         # track slots in the broadcast ATD
 source_fps: 25                # frame rate of both video timelines
 
