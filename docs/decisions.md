@@ -60,6 +60,7 @@ Modelo:
 | [D-021](#d-021--team_logit-calibrado-com-a-variante-touch-e-o-config-v2-revisão-da-f1-05f1-06) | 2026-11-16 | `team_logit` calibrado com a variante `touch` e o config `v2` (F1-05/F1-06) | Vigente (toque substituído pela D-022) |
 | [D-022](#d-022--toque-só-por-persistência-e-o-config-v2_base-checagem-do-toque-no-bar-ath) | 2026-11-16 | Toque só por persistência e o config `v2_base` (checagem do toque no BAR-ATH) | Vigente |
 | [D-023](#d-023--team_logit-gbdt-e-o-config-v2_gbdt-revisão-da-f1-07) | 2026-11-16 | `team_logit` GBDT e o config `v2_gbdt` (revisão da F1-07) | Vigente |
+| [D-024](#d-024--transições-guiadas-pelo-hazard-io-hmm-f2-07) | 2026-11-16 | Transições guiadas pelo hazard (IO-HMM, F2-07) | Vigente |
 
 ## Decisões
 
@@ -900,6 +901,68 @@ Modelo:
 - **Envio:** o envio único (D-013) já foi feito com o `v2`. O `v2_gbdt` só substitui o `v2` se a equipe decidir
   reenviar e o formulário permitir; nesse caso, antes do envio, rodar `tools/gbdt_feature_shift.py` e
   `tools/check_public_window.py` e registrar o novo CSV no registro de envios.
+
+### D-024 — Transições guiadas pelo hazard (IO-HMM, F2-07)
+
+- **Data:** 2026-11-16
+- **Autor:** Ahmed (F2-07, #125)
+- **Status:** Vigente
+- **Decisão:**
+  1. **Contrato C5:** `decode_match(scores, half, force_d, params, *, exit_logit=None)`. Com `None`, o decodificador
+     roda o código de antes, sem nenhuma alteração (`_viterbi_block` não mudou; o caminho modulado é outra função).
+     Com um `exit_logit`, só as três saídas do subestado terminal de H e as três do de A mudam a cada frame:
+     `q_o' = q_o·e^{x_t}/Z_t`, `p' = p/Z_t`, `q_d' = q_d/Z_t`, `Z_t = p + q_d + q_o·e^{x_t}`, em log com `logaddexp`
+     em `float64`. D e a cadeia do `min_dwell` não mudam. Uma aresta com probabilidade 0 continua 0.
+  2. **Convenção de tempo:** a transição que **chega** ao frame `t` usa `x_t`. Então o primeiro frame de cada tempo e
+     os frames com `half == 0` não usam `exit_logit`, e nada atravessa o intervalo. Um pico em `t` faz de `t` o
+     primeiro frame do time novo (testado).
+  3. **Config:** seção obrigatória `hazard: {kind: none|calibrated, calibrated_file, beta >= 0}` em todo config `hmm`
+     (`calibrated_file` obrigatório se `kind` não for `none`). O pipeline passa `exit_logit = beta · h` (o hazard da
+     F1-08, com a dobra `holdout`), ou `None` com `kind: none` ou `beta == 0`; nesses casos o hazard nem é
+     calculado. Os configs existentes ganharam a seção desligada. **Os rótulos não mudaram** (mock e as 7 partidas do
+     IDSSE, `v1`, `v1s`, `v2`, `v2_base` e `v2_gbdt`, idênticos byte a byte ao `main` `185819a`), mas o **hash do
+     config** muda, porque a seção nova entra no JSON: `v2` passa de `6a992f35…` para `510ce74d…` e `v2_gbdt` de
+     `bbbb91ce…` para `f8d62dec…`. O registro de envios cita o commit `ffe5eae`, em que o hash antigo vale.
+  4. **`exit_logit` todo zero** dá os mesmos rótulos que `None` no mock e nas 7 partidas. Em princípio `Z_t` arredonda
+     para 1 com erro de 1e-16 e só mudaria um empate exato; não apareceu nenhum.
+  5. **Varredura** (`python -m modeling.scoring.hazard_sweep`, regra da F2-05: platô a 1 EP no `default`, depois o
+     melhor pior caso em `default`/`hidelo`/`hidehi`): `beta` em {0; 0,25; 0,5; 1}, depois só λ de novo, sempre com
+     `holdout = partida`. Pela especificação a base é o `v1s`. Rodei também nas candidatas atuais `v2` e `v2_gbdt`,
+     com a grade de `lam_team` da D-023 (0,2–0,5) e `lam_dead` 0,2.
+  6. **Fora da grade** (informativo, não entra na seleção): no `v2_gbdt` o melhor `beta` ficou na borda (1). Com o
+     λ da base, o spellF1 no `default` sobe até `beta` 2,5 (0,508) e cai em 3 (0,501) e em 4 (0,419), porque o
+     decodificador passa a trocar demais (razão de posses de 0,66 em `beta` 0 para 0,81 em 3 e 1,20 em 4). Qualquer
+     `beta` fora da grade só entra pela F2-06.
+- **Opções consideradas:**
+  - renormalizar sempre, com `x = 0` no lugar de `None`: descartada, porque a especificação exige o código antigo
+    intacto, e um empate decidido pelo arredondamento de `Z_t` mudaria rótulos;
+  - modular também as saídas para D: descartada pela especificação. O hazard mede troca entre times (F1-08, alvo só
+    H↔A), não bola morta;
+  - escolher `beta` numa grade estendida depois de ver a borda: não feito aqui (ver item 6).
+- **Evidência (spellF1 no IDSSE degradado, 7 partidas, delta pareado contra a mesma base sem hazard):**
+
+  | Base | `beta`, λ escolhidos | `default` | `hidelo` | `hidehi` | `harder` | `easier` |
+  | :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+  | `v1s` (0,360) | 1; λ igual | +0,003 ± 0,003 | +0,002 ± 0,003 | +0,002 ± 0,003 | +0,004 ± 0,004 | +0,008 ± 0,004 |
+  | `v2` (0,402) | 0,5; `lam_team` 0,35 → 0,3 | +0,001 ± 0,002 | +0,002 ± 0,002 | −0,001 ± 0,002 | +0,003 ± 0,003 | −0,001 ± 0,002 |
+  | **`v2_gbdt`** (0,4895) | **1; λ igual** | **+0,0065 ± 0,0024** (6/7) | +0,006 ± 0,002 (7/7) | +0,007 ± 0,002 (7/7) | +0,009 ± 0,003 | +0,005 ± 0,002 |
+
+  - Pela regra da F2-06 (ganho pareado > 1 EP no `default` e nenhum modo de estresse pior por mais de 1 EP), o passo
+    é aceito sobre o `v2_gbdt` (`configs/v2_gbdt_hz.yaml`, 0,4960/0,4722/0,5308 em `default`/`hidelo`/`hidehi`). No
+    `v1s` o ganho passa de 1 EP por pouco, e no `v2` não passa.
+  - No `v2_gbdt`, a latência mediana das fronteiras H↔A fica em −1 frame, e a mediana absoluta cai de 9 para 8
+    frames. A razão de posses vai de 0,657 a 0,661.
+  - Tempo: o hazard leva cerca de 0,1 s por partida, e o decodificador modulado gasta cerca de 20% a mais que o
+    constante (tabelas nos relatórios).
+  - Relatórios: [`reports/sensitivity_hazard.md`](../reports/sensitivity_hazard.md) (`v1s`),
+    [`reports/sensitivity_hazard_v2.md`](../reports/sensitivity_hazard_v2.md) e
+    [`reports/sensitivity_hazard_v2_gbdt.md`](../reports/sensitivity_hazard_v2_gbdt.md). Só IDSSE.
+- **Antes de enviar um config com o hazard** (execução local, só `PASS`/`FAIL` sai da máquina):
+  `python tools/hazard_feature_shift.py --degrade default hidelo hidehi`. A ferramenta compara as features e a
+  saída do hazard entre o IDSSE e o BAR-ATH: (a) features dentro da faixa do IDSSE e (b) probabilidade média de troca
+  a ±25% do IDSSE são eliminatórias; (c) fração de `h ≥ 1` é informativa. Com cada partida do IDSSE no lugar do
+  BAR-ATH, (a) e (b) dão `PASS` nas 35 combinações (7 partidas × 5 modos). Se der `FAIL`, envia-se o mesmo config com
+  o hazard desligado. Depois rodar também `tools/gbdt_feature_shift.py` e `tools/check_public_window.py`, como na D-023.
 
 ## Registro de envios
 

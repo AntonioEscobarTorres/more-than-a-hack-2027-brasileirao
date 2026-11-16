@@ -82,3 +82,8 @@ postprocess:
   d_bridge_frames: 0
   d_cross_frames: 0
   min_spell_frames: 0
+# F2-07 (D-024): possession-change hazard in the decoder transitions; off.
+hazard:
+  kind: none
+  calibrated_file: null
+  beta: 0.0

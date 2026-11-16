@@ -30,7 +30,7 @@ def team_params(**collective) -> dict:
     raw["collective"].update(collective)
     cfg = {"name": "t", "pipeline": "hmm", "ball_source": "tactical",
            "team": {"kind": "rules_v1", "params": raw, "calibrated_file": None},
-           "dead": _DEAD, "decoder": _DECODER, "postprocess": _POST}
+           "dead": _DEAD, "decoder": _DECODER, "postprocess": _POST, "hazard": _HAZARD}
     return validate_config(cfg)["team"]["params"]
 
 
@@ -57,6 +57,7 @@ _DECODER = {
 }
 _POST = {"midpoint_neutral_switch": False, "boundary_shift_file": None, "d_bridge_frames": 0,
          "d_cross_frames": 0, "min_spell_frames": 0}
+_HAZARD = {"kind": "none", "calibrated_file": None, "beta": 0.0}
 
 
 def dead_params(**overrides) -> dict:
@@ -71,7 +72,7 @@ def dead_params(**overrides) -> dict:
     cfg = {"name": "t", "pipeline": "hmm", "ball_source": "tactical",
            "team": {"kind": "none", "params": copy.deepcopy(_TEAM_PARAMS_RAW),
                     "calibrated_file": None},
-           "dead": dead, "decoder": _DECODER, "postprocess": _POST}
+           "dead": dead, "decoder": _DECODER, "postprocess": _POST, "hazard": _HAZARD}
     return validate_config(cfg)["dead"]["params"]
 
 
