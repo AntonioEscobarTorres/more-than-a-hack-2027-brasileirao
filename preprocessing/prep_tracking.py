@@ -94,12 +94,16 @@ def _kickoff_frames(data_dir=None, required=False, processed_dir=None):
     return dict(KICKOFF_FALLBACK)
 
 
-def read_atd(raw_path, meta_path, n_frames=N_FRAMES):
-    """Read raw ATD to normalized arrays; ``frame_id`` 1 maps to ``video_frame`` 0."""
+def read_atd(raw_path, meta_path, n_frames=N_FRAMES, n_slots=N_SLOTS):
+    """Read raw ATD to normalized arrays; ``frame_id`` 1 maps to ``video_frame`` 0.
+
+    ``n_slots`` is the number of track slots the file must contain. The default is the tactical
+    layout; the broadcast ATD has 51 slots, so its caller passes ``n_slots=51``.
+    """
     teams = team_of_each_track(meta_path)
-    if len(teams) != N_SLOTS:
-        raise ValueError(f"Expected {N_SLOTS} track slots in metadata, got {len(teams)}")
-    players = np.full((n_frames, N_SLOTS, 3), np.nan, dtype=np.float32)
+    if len(teams) != n_slots:
+        raise ValueError(f"Expected {n_slots} track slots in metadata, got {len(teams)}")
+    players = np.full((n_frames, n_slots, 3), np.nan, dtype=np.float32)
     ball = np.full((n_frames, 3), np.nan, dtype=np.float32)
     seen = np.zeros(n_frames, dtype=bool)
     with open(raw_path, encoding="utf-8") as stream:
@@ -119,8 +123,8 @@ def read_atd(raw_path, meta_path, n_frames=N_FRAMES):
             if frame != expected:
                 raise ValueError(f"ATD frames out of order at line {line_no}")
             groups = parts[1].split(GROUP_SEP)
-            if len(groups) != N_SLOTS:
-                raise ValueError(f"ATD line {line_no}: expected {N_SLOTS} slots, found {len(groups)}")
+            if len(groups) != n_slots:
+                raise ValueError(f"ATD line {line_no}: expected {n_slots} slots, found {len(groups)}")
             for slot, group in enumerate(groups):
                 values = _triple(group, line_no=line_no)
                 if values is not None:

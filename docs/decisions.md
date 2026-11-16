@@ -56,6 +56,7 @@ Modelo:
 | [D-017](#d-017--harder-e-easier-pelo-apêndice-a6-e-estatísticas-originais-do-realismo-f4-04) | 2026-11-15 | `harder`/`easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04) | Vigente |
 | [D-018](#d-018--hazard-de-troca-de-posse-ajuste-e-checagens-f1-08) | 2026-11-15 | Hazard de troca de posse: ajuste e checagens (F1-08) | Vigente |
 | [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente (R2 revisado; NaN na inferência, 16/11) |
+| [D-020](#d-020--trilha-da-câmera-de-transmissão-descartada-no-go-f4-05) | 2026-11-16 | Trilha da câmera de transmissão descartada: NO-GO (F4-05) | Vigente |
 
 ## Decisões
 
@@ -705,29 +706,24 @@ Modelo:
   100 frames, inclinações efetivas, avaliação cruzada e AUC de cada feature sozinha. O ajuste é
   reprodutível: rodando de novo, os 4 arquivos e o relatório saem idênticos byte a byte. Testes:
   `tests/test_modeling_calibration_dead.py` (sintéticos).
-- **Revisão da F5 (16/11):**
-  - **Falta na inferência (corrige o item 2).** Como `db_still_frac` e `db_mean_speed` nunca faltam no
-    IDSSE, imputar 0 na inferência lia uma velocidade NaN como "todos parados": `d_fit` de cerca de +4,2
-    no `dead.yaml` (−3 com a fração de parados NaN), contra a regra 4 (NaN é "sem evidência"). Agora, só na
-    inferência, a entrada cujo indicador nunca disparou no ajuste recebe a média do treino do próprio
-    modelo (`inference_fill`): o valor padronizado fica 0 e as interações usam esse mesmo valor. Uma
-    entrada que faltou no ajuste mantém a convenção ajustada (0 mais o indicador). O ajuste não muda: os 4
-    arquivos e o relatório saem idênticos. No BAR-ATH as duas features são finitas em todos os frames dos
-    tempos (`PASS`), então a submissão não muda; é uma proteção.
-  - **Deslocamento das entradas.** O modelo depende muito de `db_mean_speed` (inclinação de cerca de
-    −2,8 por m/s na média do treino), e a checagem (a) da F4-04 só compara a mediana bruta com ±20%. Nova
-    ferramenta `tools/dead_feature_shift.py` (execução local, só `PASS`/`FAIL`): finitude das duas
-    features, quantis 10/50/90 de `db_mean_speed` a até 0,25 m/s da referência IDSSE e, informativa, a
-    fração de `d_fit > 0`. Resultado no BAR-ATH: `PASS` em todas, com `default` e com os três modos, para
-    `dead.yaml` e `dead_pooled.yaml`.
-  - **Efeito no score (spellF1 no IDSSE, uma partida de fora por vez, decodificador de
-    `decoder_idsse.yaml`, melhor `lam_dead` de cada variante):** com o `team` `rules_v1`, o `calibrated`
-    piora (−0,007 `default`, −0,013 `hidehi`, ≈ 0 `hidelo`), apesar da AUC por frame maior (0,963 contra
-    0,937). Com o `team` calibrado (F1-05), ganha: `lam_dead` 0,2 contra `rules_v1` com 0,35 dá +0,011
-    no `default` (6/7 partidas), +0,029 no `hidelo` (7/7) e −0,008 no `hidehi` (3/7); média de 0,362 para
-    0,373. O `dead_pooled` fica igual. **Na F2-06, testar o `dead` calibrado junto com o `team`
-    calibrado**, nunca contra o `team` `rules_v1`. Ressalvas: 7 partidas, `lam_dead` escolhido nelas, e a
-    F2-06 decide.
+
+### D-020 — Trilha da câmera de transmissão descartada: NO-GO (F4-05)
+
+- **Data:** 2026-11-16
+- **Autor:** Antônio (F4, F4-05)
+- **Status:** Vigente
+- **Decisão:** a trilha exploratória do tracking da câmera de transmissão (TV) recebeu veredito **NO-GO** no portão de viabilidade da F4-05 e está descartada do pipeline do modelo. A tarefa dependente F4-06 (#84) não será feita, e o tracking da transmissão entra no relatório técnico ([`technical_report/report.md`](technical_report/report.md)) como estratégia testada e descartada.
+- **Opções consideradas:**
+  - **Descartar o tracking da transmissão e fechar a F4-06 (escolhida):** embora o alinhamento fino por blocos de 2 s e segmentos ao vivo atinja alta precisão espacial nos trechos mapeados (critérios ii e iv em `PASS`), a cobertura total dos frames avaliados ficou abaixo do mínimo exigido (critério i em `FAIL`) e a recuperação da bola nos frames em que o tracking tático a perde também ficou abaixo do limiar (critério iii em `FAIL`). O ganho potencial sobre os lances oclusos não compensa a complexidade adicional.
+  - Integrar a bola da transmissão ao pipeline mesmo com cobertura parcial (F4-06): descartada pelo critério explícito de aceite da F4-05 (exige `PASS` nos quatro critérios para `GO`).
+- **Evidência:** execução local (humano) de `tools/broadcast_feasibility.py` com `configs/broadcast.yaml`:
+  - `(i)` cobertura de mapeamento dos frames avaliados: `FAIL`;
+  - `(ii)` custo mediano de pareamento de jogadores nos frames mapeados: `PASS`;
+  - `(iii)` bola da transmissão observada nos frames táticos sem bola: `FAIL`;
+  - `(iv)` concordância da posição da bola quando ambas as câmeras a observam: `PASS`;
+  - veredito final: `NO-GO`.
+  - Código e testes sintéticos em `modeling/broadcast/align.py`, `tools/broadcast_feasibility.py` e `tests/test_modeling_broadcast_align.py` (issues #78 e #84).
+
 
 ### D-020 — `team_logit` calibrado com a variante `touch` e o config `v2` (revisão da F1-05/F1-06)
 
