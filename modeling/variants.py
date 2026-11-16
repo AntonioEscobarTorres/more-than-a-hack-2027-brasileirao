@@ -1,10 +1,12 @@
-"""Registries of evidence variants: ``team.kind`` -> TEAM_KINDS, ``dead.kind`` -> DEAD_KINDS.
+"""Registries of evidence variants: ``team.kind`` -> TEAM_KINDS, ``dead.kind`` -> DEAD_KINDS,
+``hazard.kind`` -> HAZARD_KINDS (F1-08; the config section arrives with F2-07).
 
 Every variant has the signature::
 
     fn(master: pd.DataFrame, params: dict, *, holdout: str | None) -> np.ndarray  # float32[n]
 
-and registers itself with ``@register_team("name")`` or ``@register_dead("name")`` in its own
+and registers itself with ``@register_team("name")``, ``@register_dead("name")`` or
+``@register_hazard("name")`` in its own
 module. ``params`` is the section's ``params``; when the section sets ``calibrated_file`` (the
 ``calibrated`` and ``gbdt`` kinds), it carries the extra key ``params["calibrated_file"]``, an
 absolute path (``modeling.pipeline.variant_params``, decision D-011). :func:`load_kinds` imports those modules so the registries are populated.
@@ -21,9 +23,10 @@ VariantFn = Callable[..., np.ndarray]
 
 TEAM_KINDS: Dict[str, VariantFn] = {}
 DEAD_KINDS: Dict[str, VariantFn] = {}
+HAZARD_KINDS: Dict[str, VariantFn] = {}
 
 # Modules that register variants; imported by load_kinds() when they exist.
-KIND_MODULES = ("modeling.evidence.team", "modeling.deadball.dead")
+KIND_MODULES = ("modeling.evidence.team", "modeling.deadball.dead", "modeling.evidence.hazard")
 
 
 def _register(registry: Dict[str, VariantFn], label: str, name: str):
@@ -51,6 +54,11 @@ def register_dead(name: str):
     return _register(DEAD_KINDS, "dead", name)
 
 
+def register_hazard(name: str):
+    """Decorator: register ``fn`` as the possession-change hazard variant ``name``."""
+    return _register(HAZARD_KINDS, "hazard", name)
+
+
 def _zeros(master: pd.DataFrame, params: dict, *, holdout: str | None = None) -> np.ndarray:
     """No evidence: 0 on every frame."""
     return np.zeros(len(master), dtype=np.float32)
@@ -58,6 +66,7 @@ def _zeros(master: pd.DataFrame, params: dict, *, holdout: str | None = None) ->
 
 register_team("none")(_zeros)
 register_dead("none")(_zeros)
+register_hazard("none")(_zeros)
 
 
 def load_kinds() -> None:
@@ -71,5 +80,5 @@ def load_kinds() -> None:
                 raise
 
 
-__all__ = ["DEAD_KINDS", "KIND_MODULES", "TEAM_KINDS", "load_kinds", "register_dead",
-           "register_team"]
+__all__ = ["DEAD_KINDS", "HAZARD_KINDS", "KIND_MODULES", "TEAM_KINDS", "load_kinds",
+           "register_dead", "register_hazard", "register_team"]

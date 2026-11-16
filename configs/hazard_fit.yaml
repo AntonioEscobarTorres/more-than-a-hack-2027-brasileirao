@@ -1,0 +1,29 @@
+# F1-08: fit settings of the possession-change hazard (IDSSE only; never the match data).
+# Read strictly by modeling.calibration.hazard.load_fit_config (unknown or missing key = error).
+# (window, C) are selected in window_grid x c_grid by nested leave-one-match-out log-loss on the
+# `default` masters. target_w_frames and bridge_d_frames define the target, so they are fixed.
+team_config: configs/v1.yaml        # team_logit_rules_v1 params used by the dlogit feature
+degrade_fit: default                # masters used to fit and to choose C (D-016)
+degrade_eval: [default, harder, easier, hidelo, hidehi]
+target_w_frames: 12                 # positive = less than 12 frames from a team change
+bridge_d_frames: 0                  # off: no IDSSE D run is shorter than 25 frames, and D between
+                                    # different teams lasts as long as D within a team (report)
+window_grid: [12, 25, 50]           # W of near_flip and dlogit, chosen with C
+acc_clip_mps2: 100.0
+dist_clip_m: 30.0
+gap_clip_frames: 1500
+h_clip: 8.0
+subsample_every: 5
+c_grid: [0.01, 0.1, 1.0]
+max_iter: 1000
+still_speed_mps: 0.3                # "ball visible and stopped" slice of the report
+still_min_frames: 25                # stopped for more than 1 s
+min_slice_positives: 50             # fewer positives in a slice -> its AUC is not compared
+artifact_auc_margin: 0.10           # AUC gap that triggers dropping a feature group
+features: [ball_acc, ball_dir_change, abs_d_diff, d_min, near_flip, dlogit, gap_length,
+           since_last_obs, until_next_obs]
+still_ball_features: [ball_acc, ball_dir_change]
+gap_features: [gap_length, since_last_obs, until_next_obs]
+v1_config: configs/v1.yaml          # complementarity section of the report
+on_time_frames: 12                  # v1 change within 12 frames of the true one = on time
+match_tol_frames: 50                # beyond 50 frames = missed (as MATCH_TOL in F2-05)
