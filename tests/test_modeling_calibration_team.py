@@ -241,3 +241,103 @@ def test_tag_prior_is_antisymmetric_and_zero_by_default():
     swapped["sp_team"] = master["sp_team"].replace({"H": "A", "A": "H"})
     prior_swapped = team_tag_prior(swapped, p_on)
     assert np.allclose(prior_swapped, -prior, atol=1e-6)
+
+# -- review fixes (2026-11-16) ---------------------------------------------------------------
+
+def _three_matches():
+    return {"m1": _rich_synthetic_master(300, seed=10),
+            "m2": _rich_synthetic_master(300, seed=20),
+            "m3": _rich_synthetic_master(300, seed=30)}
+
+
+def _v1_raw() -> dict:
+    import yaml
+    from modeling import paths
+    with open(paths.repo_root() / "configs" / "v1.yaml", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def test_config_accepts_bridge_tau_frames_list_and_calibration_uses_it(tmp_path):
+    import yaml
+    from modeling.config import ConfigError, load_config
+
+    raw = _v1_raw()
+    raw["name"] = "taus"
+    raw["team"]["params"]["bridge_tau_frames"] = [10, 20]
+    path = tmp_path / "taus.yaml"
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg["team"]["params"]["bridge_tau_frames"] == [10.0, 20.0]
+
+    matches = _three_matches()
+    table = calibrate_team(cfg, variant="bridge", matches=list(matches),
+                           load_fn=lambda m, d: matches[m])
+    assert table["feature_params"]["bridge_tau_frames"] == [10, 20]
+    assert "f10_10" in table["ball"]["features"] and "f11_20" in table["gap"]["features"]
+
+    for bad in ({"bridge_tau_1": 10}, {"bridge_tau_frames": []}, {"bridge_tau_frames": [0]}):
+        raw_bad = _v1_raw()
+        raw_bad["name"] = "bad"
+        raw_bad["team"]["params"].update(bad)
+        bad_path = tmp_path / "bad.yaml"
+        bad_path.write_text(yaml.safe_dump(raw_bad, sort_keys=False), encoding="utf-8")
+        with pytest.raises(ConfigError):
+            load_config(bad_path)
+
+
+def test_select_touch_params_is_deterministic_and_picks_from_the_grid():
+    from modeling.calibration.team import select_touch_params
+
+    matches = _three_matches()
+    grid = {"r_touch_m": (1.5, 3.0), "touch_min_frames": (2, 5),
+            "touch_acc_mps2": (8.0,), "touch_dir_change_rad": (0.5,)}
+    kw = dict(matches=list(matches), grid=grid, load_fn=lambda m, d: matches[m])
+    s1 = select_touch_params(_dummy_cfg(), **kw)
+    s2 = select_touch_params(_dummy_cfg(), **kw)
+    assert s1 == s2
+    assert len(s1["results"]) == 4
+    best = min(s1["results"], key=lambda r: r["log_loss"])
+    for key, value in s1["selected"].items():
+        assert value == best[key]
+        assert value in grid[key]
+    assert isinstance(s1["selected"]["touch_min_frames"], int)
+
+    with pytest.raises(ValueError, match="forbidden"):
+        select_touch_params(_dummy_cfg(), degrade="none", **kw)
+    with pytest.raises(ValueError, match="exactly the keys"):
+        select_touch_params(_dummy_cfg(), **{**kw, "grid": {"r_touch_m": (2.0,)}})
+
+
+def test_touch_params_override_is_recorded_and_used():
+    matches = _three_matches()
+    kw = dict(variant="touch", matches=list(matches), load_fn=lambda m, d: matches[m])
+    override = {"r_touch_m": 3.0, "touch_min_frames": 5,
+                "touch_acc_mps2": 12.0, "touch_dir_change_rad": 0.8}
+    t_default = calibrate_team(_dummy_cfg(), **kw)
+    t_override = calibrate_team(_dummy_cfg(), touch_params=override, **kw)
+    for key, value in override.items():
+        assert t_override["feature_params"][key] == value
+    assert t_override["ball"]["all"]["weights"]["f9"] != t_default["ball"]["all"]["weights"]["f9"]
+
+
+def test_report_has_touch_selection_and_per_match_decoder_rows():
+    from modeling.calibration.team import render_calibration_report
+
+    matches = _three_matches()
+    table = calibrate_team(_dummy_cfg(), variant="touch", matches=list(matches),
+                           load_fn=lambda m, d: matches[m])
+    df = pd.DataFrame(
+        {"spell_f1_mean": [0.3, 0.4, 0.35, 0.05], "spell_count_ratio": [0.5, 0.6, 0.55, 0.05],
+         "boundary_shift_frames": [-1.0, 2.0, 0.5, 1.0]},
+        index=["m1", "m2", "mean", "se"])
+    selection = {"grid": {"r_touch_m": [2.0], "touch_min_frames": [3],
+                          "touch_acc_mps2": [8.0], "touch_dir_change_rad": [0.5]},
+                 "selected": {"r_touch_m": 2.0, "touch_min_frames": 3,
+                              "touch_acc_mps2": 8.0, "touch_dir_change_rad": 0.5},
+                 "results": [{"r_touch_m": 2.0, "touch_min_frames": 3, "touch_acc_mps2": 8.0,
+                              "touch_dir_change_rad": 0.5, "log_loss": 0.4}]}
+    md = render_calibration_report({"touch": table}, {"touch": {"default": df}},
+                                   touch_selection=selection, written_variant="touch")
+    assert "variant written to the calibration file: `touch`" in md
+    assert "## Touch thresholds" in md
+    assert "| m2 | 0.4000 | 0.6000 | +2.00 |" in md

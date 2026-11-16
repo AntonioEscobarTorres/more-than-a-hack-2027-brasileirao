@@ -163,13 +163,7 @@ def build_pass_bridge_features(
     c_filt = _centered_median_per_half(c, half, med_win)
 
     if taus is None:
-        if "bridge_tau_frames" in params:
-            taus = tuple(params["bridge_tau_frames"])
-        elif "bridge_tau_1" in params or "bridge_tau_2" in params:
-            taus = (params.get("bridge_tau_1", DEFAULT_BRIDGE_TAUS[0]),
-                    params.get("bridge_tau_2", DEFAULT_BRIDGE_TAUS[1]))
-        else:
-            taus = DEFAULT_BRIDGE_TAUS
+        taus = tuple(params.get("bridge_tau_frames", DEFAULT_BRIDGE_TAUS))
 
     cols = {}
     for tau in taus:
@@ -212,19 +206,17 @@ def _window_sum_per_half(mask: np.ndarray, half: np.ndarray, win_frames: int) ->
     return out
 
 
-def build_touch_feature(
+def touch_components(
     master: pd.DataFrame,
     params: Mapping,
     *,
     ev: pd.DataFrame | None = None,
-) -> pd.Series:
-    """Antisymmetric controlled-touch feature ``f9 = f1 * touch`` (F1-05 Update 4).
+) -> dict[str, np.ndarray]:
+    """The two conditions of the touch feature, frame by frame (F1-05 Update 4).
 
-    ``touch`` is even under team swap and requires:
-      1. Abrupt ball change: ``|ball_dir_change| >= touch_dir_change_rad`` or
-         ``|ball_acc| >= touch_acc_mps2`` inside the centered window.
-      2. Persistence: the closer team is within ``r_touch_m`` for at least ``touch_min_frames``
-         frames of the centered window inside the same half block.
+    Returns boolean arrays ``valid`` (ball valid inside a half), ``abrupt`` (an abrupt ball change
+    inside the centered window) and ``persist`` (the closer team within ``r_touch_m`` on at least
+    ``touch_min_frames`` frames of the window), plus ``f1`` (float64).
     """
     require_columns(master, ("d_diff", "d_near_home", "d_near_away", "half"))
     if ev is None:
@@ -266,8 +258,26 @@ def build_touch_feature(
 
     persist = ((home_ctrl & (count_home >= min_frames))
                | (away_ctrl & (count_away >= min_frames)))
-    touch = (abrupt_win & persist).astype("float64")
-    f9 = np.where(valid, f1 * touch, np.nan) + 0.0
+    return {"valid": valid, "abrupt": abrupt_win, "persist": persist, "f1": f1}
+
+
+def build_touch_feature(
+    master: pd.DataFrame,
+    params: Mapping,
+    *,
+    ev: pd.DataFrame | None = None,
+) -> pd.Series:
+    """Antisymmetric controlled-touch feature ``f9 = f1 * touch`` (F1-05 Update 4).
+
+    ``touch`` is even under team swap and requires both conditions of :func:`touch_components`:
+      1. Abrupt ball change: ``|ball_dir_change| >= touch_dir_change_rad`` or
+         ``|ball_acc| >= touch_acc_mps2`` inside the centered window.
+      2. Persistence: the closer team is within ``r_touch_m`` for at least ``touch_min_frames``
+         frames of the centered window inside the same half block.
+    """
+    comp = touch_components(master, params, ev=ev)
+    touch = (comp["abrupt"] & comp["persist"]).astype("float64")
+    f9 = np.where(comp["valid"], comp["f1"] * touch, np.nan) + 0.0
     return pd.Series(f9.astype(np.float32), index=master.index, name="f9")
 
 
@@ -481,4 +491,5 @@ __all__ = [
     "team_logit_calibrated",
     "team_logit_rules_v1",
     "team_tag_prior",
+    "touch_components",
 ]
