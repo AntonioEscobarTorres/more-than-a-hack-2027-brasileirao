@@ -819,4 +819,11 @@ Preenchido pela F5 (F5-09; envio único, ver D-013). O CSV enviado tem de ser o 
 
 | Data | Envio | Config (nome e hash) | Commit ou tag | SHA-256 do CSV | `validate_submission` | Autor |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| _pendente_ | Envio final (F5-09) | | | | | |
+| 2026-11-16 | Envio final (F5-09) | `v2` (`6a992f351783382f2532c34d5299307ce61ea20326ecf1e002aee5b95d2b241b`) | `ffe5eae` (merge do #142) | `50b12bb537f1c62b6dd033da1efc6e03ab243cf2f77dfd44709c90201f0ae66a` | `PASS` (`tools/check_public_window.py`, check (i)) | Ahmed |
+
+Checagens locais do CSV acima: `tools/touch_feature_shift.py` `PASS` (a informativa (c) deu `FAIL`, sem efeito
+no resultado, D-022), `tools/dead_feature_shift.py --config configs/v2.yaml` `PASS` em todas e as 7 de
+`tools/check_public_window.py --pred outputs/v2.csv` `PASS`. Rótulos previstos: 158.857
+frames avaliados, H 0,3216, A 0,2051, D 0,4732; 164 posses no 1º tempo e 174 no 2º. Comando:
+`python -m modeling.make_submission --config configs/v2.yaml` (o CSV foi gerado no branch do #142, com a mesma
+árvore de arquivos do `ffe5eae`).
