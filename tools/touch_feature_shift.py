@@ -1,6 +1,6 @@
 """Shift of the calibrated team_logit touch inputs between the degraded IDSSE and the BAR-ATH.
 
-Local execution only (a person runs it on the match data; F1-05 review, decision D-020):
+Local execution only (a person runs it on the match data; F1-05 review, decisions D-021 and D-022):
 
     python tools/touch_feature_shift.py
     python tools/touch_feature_shift.py --degrade default hidelo hidehi --verbose
@@ -25,7 +25,7 @@ Checks (which ones are eliminatory depends on the calibration file):
        requires the condition (``touch_require_abrupt``, default true); otherwise reported as
        PASS "not used".
   (b)  share of valid-ball frames where ``f9 != 0`` within ``TOUCH_SHARE_TOL_REL`` (relative).
-       Eliminatory when the touch uses persistence only (``touch_require_abrupt: false``, D-021):
+       Eliminatory when the touch uses persistence only (``touch_require_abrupt: false``, D-022):
        ``f9`` then depends on nothing else; informative otherwise (it follows (a)).
   (c)  share of half frames with ``|team_logit| >= STRONG_LOGIT`` within
        ``STRONG_SHARE_TOL_REL`` (relative). Always informative (play styles differ).

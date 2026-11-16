@@ -1,4 +1,4 @@
-# HMM pipeline v2 (review of F1-05/F1-06, 2026-11-16, decisions D-020, D-021): team_logit and dead_logit
+# HMM pipeline v2 (review of F1-05/F1-06, 2026-11-16, decisions D-021, D-022): team_logit and dead_logit
 # calibrated on degraded IDSSE (F1-05 touch variant, F3-04), decoder durations from IDSSE labels
 # (configs/decoder_idsse.yaml) and lam_team chosen on degraded IDSSE (leave-one-match-out weights).
 # Nothing here was fitted or chosen on BAR-ATH. Schema: docs/plano/plano_5_frentes.md, A.7.
@@ -18,7 +18,7 @@ team:
     ball_conf_filled: 0.6
     contest_factor: 0.5
     rel_w_when_nan: 0.5
-    # D-021: the abrupt ball-change condition of the touch feature fails the transfer check
+    # D-022: the abrupt ball-change condition of the touch feature fails the transfer check
     # (tools/touch_feature_shift.py); the touch is persistence only.
     touch_require_abrupt: false
     collective:

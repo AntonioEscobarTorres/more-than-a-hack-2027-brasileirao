@@ -272,7 +272,7 @@ def build_touch_feature(
     ``touch`` is even under team swap and uses the conditions of :func:`touch_components`:
       1. Abrupt ball change: ``|ball_dir_change| >= touch_dir_change_rad`` or
          ``|ball_acc| >= touch_acc_mps2`` inside the centered window. Required only when
-         ``touch_require_abrupt`` is true (the default); see decision D-021.
+         ``touch_require_abrupt`` is true (the default); see decision D-022.
       2. Persistence: the closer team is within ``r_touch_m`` for at least ``touch_min_frames``
          frames of the centered window inside the same half block.
     """

@@ -57,6 +57,8 @@ Modelo:
 | [D-018](#d-018--hazard-de-troca-de-posse-ajuste-e-checagens-f1-08) | 2026-11-15 | Hazard de troca de posse: ajuste e checagens (F1-08) | Vigente |
 | [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente (R2 revisado; NaN na inferência, 16/11) |
 | [D-020](#d-020--trilha-da-câmera-de-transmissão-descartada-no-go-f4-05) | 2026-11-16 | Trilha da câmera de transmissão descartada: NO-GO (F4-05) | Vigente |
+| [D-021](#d-021--team_logit-calibrado-com-a-variante-touch-e-o-config-v2-revisão-da-f1-05f1-06) | 2026-11-16 | `team_logit` calibrado com a variante `touch` e o config `v2` (F1-05/F1-06) | Vigente (toque substituído pela D-022) |
+| [D-022](#d-022--toque-só-por-persistência-e-o-config-v2_base-checagem-do-toque-no-bar-ath) | 2026-11-16 | Toque só por persistência e o config `v2_base` (checagem do toque no BAR-ATH) | Vigente |
 
 ## Decisões
 
@@ -725,11 +727,11 @@ Modelo:
   - Código e testes sintéticos em `modeling/broadcast/align.py`, `tools/broadcast_feasibility.py` e `tests/test_modeling_broadcast_align.py` (issues #78 e #84).
 
 
-### D-020 — `team_logit` calibrado com a variante `touch` e o config `v2` (revisão da F1-05/F1-06)
+### D-021 — `team_logit` calibrado com a variante `touch` e o config `v2` (revisão da F1-05/F1-06)
 
-- **Data:** 2026-11-16
+- **Data:** 2026-11-16 (renumerada de D-020, que colidiu com a D-020 da F4-05)
 - **Autor:** Ahmed (revisão da F5 das tarefas F1-05, #79, e F1-06, #87)
-- **Status:** Vigente
+- **Status:** Vigente, exceto o toque e o item 3, substituídos pela D-022
 - **Decisão:**
   1. **`configs/calib/team.yaml` passa a usar a variante `touch`** (f1–f8 + f9), não a `bridge_touch`, que era o
      padrão do comando. A ponte de passe (f10/f11) sobe muito a AUC por frame (0,92 contra 0,85), mas junta
@@ -769,6 +771,44 @@ Modelo:
   [`reports/error_analysis.md`](../reports/error_analysis.md). **Ressalvas:** `lam_team` e o conjunto de
   variantes foram escolhidos nas mesmas 7 partidas (os pesos não: cada partida usa a dobra sem ela), o IDSSE
   degradado não é o BAR-ATH (D-016), e nada foi medido no BAR-ATH.
+
+### D-022 — Toque só por persistência e o config `v2_base` (checagem do toque no BAR-ATH)
+
+- **Data:** 2026-11-16
+- **Autor:** Ahmed (revisão da F5 da F1-05, #79)
+- **Status:** Vigente
+- **Contexto:** a checagem local `python tools/touch_feature_shift.py` (D-021, item 3) deu `FAIL` na
+  eliminatória (a) no BAR-ATH. A fração de frames com "mudança brusca" da bola fica a mais de 0,10 da
+  referência do IDSSE degradado (~0,99). A informativa (b) também deu `FAIL`; a (c), `PASS`. Só esses
+  `PASS`/`FAIL` saíram da máquina local.
+- **Decisão:**
+  1. **O toque passa a ser só persistência** (`touch_require_abrupt: false` em `configs/v2.yaml`, gravado em
+     `feature_params` de `configs/calib/team.yaml`): "o mesmo time a até `r_touch_m` da bola em pelo menos
+     `touch_min_frames` frames da janela". No IDSSE a condição brusca já era verdadeira em ~99% dos frames,
+     então o modelo ajustado praticamente não muda, e a feature deixa de depender do ruído da bola, que é
+     diferente no BAR-ATH. O padrão do código continua `true` (a especificação da atualização 4).
+  2. **Limiares escolhidos de novo** pela mesma regra da D-021 (log-loss com uma partida de fora), agora só em
+     `r_touch_m` × `touch_min_frames` (9 pontos; os de aceleração e direção ficam no valor inicial, sem uso):
+     1,5 m e 5 frames, os mesmos de antes.
+  3. **A checagem muda com o arquivo:** sem a condição brusca, a (a) sai como `PASS` "not used" e a (b) — a
+     fração de frames com toque, tolerância relativa de ±30%, fixada na D-021 antes deste resultado — passa a
+     ser **eliminatória**, porque o f9 passa a depender só dela.
+  4. **Alternativa pronta, `configs/v2_base.yaml`:** o `v2` sem o toque (variante `base`,
+     `configs/calib/team_base.yaml`), com `lam_team = 0,3` (o melhor ponto da `base` nos três modos, entre
+     0,3, 0,35 e 0,4). Vale **se a (b) der `FAIL`** com o `v2`. Sem toque, a checagem dá `PASS` (nada a
+     verificar).
+- **Evidência (spellF1 médio no IDSSE degradado, 7 partidas, `dead` calibrado):**
+
+  | Config | `default` | `hidelo` | `hidehi` |
+  | :--- | ---: | ---: | ---: |
+  | `v2` com o toque antigo (D-021, `lam_team` 0,35) | 0,400 | 0,383 | 0,425 |
+  | **`v2`, toque só por persistência (`lam_team` 0,35)** | **0,402** | **0,385** | **0,426** |
+  | `v2_base`, sem toque (`lam_team` 0,3) | 0,389 | 0,375 | 0,412 |
+  | `v1` + `decoder_idsse` | 0,343 | 0,309 | 0,383 |
+
+  O `lam_team` do `v2` continua 0,35: a varredura deu um platô (0,4015–0,4019 no `default` entre 0,3 e 0,4).
+- **Ordem de execução local antes do envio:** `python tools/touch_feature_shift.py`. Com `PASS`, enviar o
+  `v2`; com `FAIL`, enviar o `v2_base`.
 
 ## Registro de envios
 
