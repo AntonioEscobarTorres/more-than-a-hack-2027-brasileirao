@@ -54,6 +54,7 @@ Modelo:
 | [D-015](#d-015--diagnósticos-de-bola-morta-como-são-calculados) | 2026-11-13 | Diagnósticos de bola morta: como são calculados | Vigente |
 | [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente (`harder`/`easier` substituídos pela D-017) |
 | [D-017](#d-017--harder-e-easier-pelo-apêndice-a6-e-estatísticas-originais-do-realismo-f4-04) | 2026-11-15 | `harder`/`easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04) | Vigente |
+| [D-018](#d-018--hazard-de-troca-de-posse-ajuste-e-checagens-f1-08) | 2026-11-15 | Hazard de troca de posse: ajuste e checagens (F1-08) | Vigente |
 
 ## Decisões
 
@@ -601,6 +602,29 @@ Modelo:
   [`docs/external_data.md`](external_data.md). Testes: `test_harder_and_easier_follow_appendix_a6_relative_to_the_new_default`
   e `test_build_runs_the_real_degradation_on_the_synthetic_match` (o teste do build antes caía num fallback sem
   degradar).
+
+### D-018 — Hazard de troca de posse: ajuste e checagens (F1-08)
+
+- **Data:** 2026-11-15
+- **Autor:** Ahmed (F1-08, #124)
+- **Status:** Vigente
+- **Decisão:**
+  1. **`bridge_d_frames = 0`.** Nos rótulos do IDSSE nenhum D entre dois times dura menos de 41 frames, e o D
+     entre times diferentes dura o mesmo que o D dentro de um time (medianas 476 e 551 frames). É bola parada,
+     não passagem de posse, então o alvo conta só trocas diretas H↔A.
+  2. **`W` escolhido junto com `C`** em {12, 25, 50} × {0,01; 0,1; 1}, pela log-loss deixando uma partida de
+     fora, aninhada em cada dobra. `W` não muda o alvo. Os 8 modelos escolheram 50, a borda da grade, com ganho
+     pequeno por degrau. A grade não foi estendida depois de ver o resultado.
+  3. **Checagem nova da "bola invisível" (risco da D-016):** se o AUC isolado de uma feature de lacuna mudar mais
+     que 0,10 entre `hidelo` e `hidehi`, as três saem do ajuste. A margem também vale para a checagem de bola
+     parada do item 7. Nenhuma disparou: as maiores diferenças foram 0,005 (lacunas) e −0,38 (bola parada, no
+     sentido oposto ao artefato).
+- **Opções consideradas:** `bridge_d_frames = 25` (o valor inicial) não juntava nada e foi trocado por 0 para
+  deixar isso explícito; escolher `target_w_frames` pela log-loss foi descartado, porque ele muda o alvo e as
+  log-losses deixam de ser comparáveis (fica para a F2-07).
+- **Evidência:** [`reports/calibration_hazard.md`](../reports/calibration_hazard.md): AUC fora da dobra 0,71
+  no `default` (0,68–0,74 nos outros modos). Nas trocas que o v1 perde, o pico do hazard tem AUC 0,72 contra
+  janelas sem troca. Só IDSSE.
 
 ## Registro de envios
 
