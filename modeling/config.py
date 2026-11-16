@@ -234,6 +234,27 @@ PIPELINE_SCHEMAS = {
 }
 
 
+BROADCAST_SCHEMA = {
+    "tactical_n_slots": Int(ge=1),
+    "broadcast_n_slots": Int(ge=1),
+    "source_fps": Int(ge=1),
+    "coarse_fps": Int(ge=1),
+    "block_seconds": _POS,
+    "block_frames": Int(ge=1),
+    "min_visible_players": Int(ge=1),
+    "refine_search_radius_frames": Int(ge=1),
+    "align_max_cost_m": _POS,
+    "second_best_min_offset_frames": Int(ge=0),
+    "second_best_cost_ratio": Float(ge=1.0),
+    "segment_max_offset_diff_frames": Int(ge=0),
+    "segment_min_blocks": Int(ge=1),
+    "min_coverage_ratio": _UNIT,
+    "max_player_median_cost_m": _POS,
+    "min_ball_recovery_ratio": _UNIT,
+    "max_ball_median_dist_m": _POS,
+}
+
+
 # -- cross-field rules --------------------------------------------------------------------------
 
 def _check_hmm(cfg: dict) -> None:
@@ -275,6 +296,24 @@ def validate_config(raw: dict, expected_name: str | None = None) -> dict:
     return cfg
 
 
+def validate_broadcast_config(raw: dict) -> dict:
+    """Validate a broadcast-feasibility config (F4-05) and return a normalised copy."""
+    if not isinstance(raw, dict):
+        raise ConfigError("config must be a mapping, got {!r}".format(type(raw).__name__))
+    cfg = _check_mapping(BROADCAST_SCHEMA, raw, "")
+    if cfg["source_fps"] != games.GAMES[games.GAME]["fps"]:
+        raise ConfigError("source_fps ({}) must match the game fps ({})".format(
+            cfg["source_fps"], games.GAMES[games.GAME]["fps"]))
+    if cfg["source_fps"] % cfg["coarse_fps"] != 0:
+        raise ConfigError("coarse_fps ({}) must divide source_fps ({})".format(
+            cfg["coarse_fps"], cfg["source_fps"]))
+    expected_frames = cfg["block_seconds"] * cfg["source_fps"]
+    if abs(cfg["block_frames"] - expected_frames) > EXIT_SPLIT_TOL:
+        raise ConfigError("block_frames ({}) must equal block_seconds * source_fps ({})".format(
+            cfg["block_frames"], expected_frames))
+    return cfg
+
+
 class _StrictLoader(yaml.SafeLoader):
     """SafeLoader that rejects duplicated keys instead of keeping the last one."""
 
@@ -308,6 +347,11 @@ def load_config(path) -> dict:
             return cfg
         except (ConfigError, ValueError) as exc:
             raise ConfigError("{}: {}".format(path, exc)) from None
+    if path.name.startswith("broadcast"):
+        try:
+            return validate_broadcast_config(raw)
+        except ConfigError as exc:
+            raise ConfigError("{}: {}".format(path, exc)) from None
     try:
         return validate_config(raw, expected_name=path.stem)
     except ConfigError as exc:
@@ -321,4 +365,4 @@ def config_hash(cfg: dict) -> str:
 
 
 __all__ = ["BALL_SOURCES", "ConfigError", "DEAD_KIND_NAMES", "PIPELINES", "TEAM_KIND_NAMES",
-           "config_hash", "load_config", "validate_config"]
+           "config_hash", "load_config", "validate_broadcast_config", "validate_config"]

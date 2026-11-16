@@ -1,0 +1,29 @@
+# Broadcast-camera feasibility gate (F4-05). Every key is required; unknown keys are an error.
+# Changing a parameter means creating a new config file, never editing the code.
+
+# -- source geometry -------------------------------------------------------------------------
+tactical_n_slots: 29          # track slots in the tactical ATD (checked against the data on load)
+broadcast_n_slots: 51         # track slots in the broadcast ATD
+source_fps: 25                # frame rate of both video timelines
+
+# -- coarse alignment ------------------------------------------------------------------------
+coarse_fps: 5                 # ball series are subsampled to this rate for the cross-correlation
+
+# -- block refinement ------------------------------------------------------------------------
+block_seconds: 2              # block length in seconds
+block_frames: 50              # block length in broadcast frames (must equal block_seconds * source_fps)
+min_visible_players: 6        # a block needs at least this many visible players (median over its frames)
+refine_search_radius_frames: 25   # integer shifts searched around the coarse / previous shift
+align_max_cost_m: 1.5         # accept a block only if its best median pairing cost is <= this
+second_best_min_offset_frames: 10 # the runner-up shift must be farther than this from the best
+second_best_cost_ratio: 1.5   # ... and cost at least this multiple of the best cost
+
+# -- live segments ---------------------------------------------------------------------------
+segment_max_offset_diff_frames: 2 # consecutive blocks join a segment if their shifts differ by <= this
+segment_min_blocks: 5         # shorter segments are discarded (replays, cuts)
+
+# -- GO / NO-GO thresholds -------------------------------------------------------------------
+min_coverage_ratio: 0.50      # (i)   share of evaluated frames covered by the mapping
+max_player_median_cost_m: 1.0 # (ii)  median player pairing cost
+min_ball_recovery_ratio: 0.15 # (iii) share of ball-less tactical frames where broadcast sees the ball
+max_ball_median_dist_m: 2.0   # (iv)  median ball distance where both cameras see it
