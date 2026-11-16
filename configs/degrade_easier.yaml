@@ -1,8 +1,8 @@
-# ---- configs/degrade_easier.yaml (ball_noise_m and player_noise_m = 0.5x default) ----
+# ---- configs/degrade_easier.yaml: A.6 stress variant: target_ball_visible 0.68, phantom_frac 0.005, target_tracked_mean 21.5 (21.3 here, see below); player_noise_m = default x 0.10/0.15. Other keys = default. ----
 name: easier
-target_ball_visible: 0.593
+target_ball_visible: 0.68
 target_ball_visible_tolerance: 0.01
-target_tracked_mean: 20.5
+target_tracked_mean: 21.3  # A.6 asks 21.5; J03WN1 tracks at most 21.05, so 21.3 is the largest target feasible on all 7 matches (D-017)
 target_tracked_mean_tolerance: 0.3
 z_air_m: 1.5
 air_margin_frames: 3
@@ -14,14 +14,14 @@ bg_hazard_init: 0.01
 hazard_max: 1.0
 bisection_iterations: 30
 player_bisection_iterations: 30
-ball_noise_m: 0.125
+ball_noise_m: 0.25
 phantom_len_frames: [5, 60]
-phantom_frac: 0.01
+phantom_frac: 0.005
 phantom_margin_m: 5.0
 player_visible_mean_s: 30.0
 player_missing_mean_s_init: 3.0
 player_missing_mean_s_max: 120.0
-player_noise_m: 0.005
+player_noise_m: 0.0067
 dup_offset_m: 0.3
 dup_len_s: [1.0, 5.0]
 dup_frac: 0.02

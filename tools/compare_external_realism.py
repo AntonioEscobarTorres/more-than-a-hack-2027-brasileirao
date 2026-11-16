@@ -25,6 +25,14 @@ Statistics:
        every bin holding at least 2% of the half frames (smaller bins are reported, never
        failed). Only valid when (a) passes; otherwise it fails.
 
+Original statistics of the task (item 3; the six above were added on 11/11), within +/-20%:
+  (g)  share of half frames with ``ball_observed == 1``;
+  (h)  share of half frames with ``ball_filled == 1``;
+  (i)  share of half frames with ``ball_jump_removed == 1``;
+  (j)  mean of ``n_tracked_home + n_tracked_away``.
+The share of D frames, also in ``reports/external_masters.md``, is not compared: the BAR-ATH has no
+labels outside the public window, which may not be used.
+
 Exit code 0 if every statistic passes, 1 otherwise.
 """
 from __future__ import annotations
@@ -219,9 +227,35 @@ def stat_visibility_by_speed(master: pd.DataFrame) -> tuple[list[float | None], 
     return visibility, share
 
 
+def stat_flag_share(master: pd.DataFrame, column: str) -> float | None:
+    """Share of half frames where the 0/1 ``column`` is 1."""
+    graded = _column(master, "half") != 0
+    n_graded = int(graded.sum())
+    return float(np.sum(_column(master, column)[graded] == 1)) / n_graded if n_graded else None
+
+
+def stat_mean_tracked(master: pd.DataFrame) -> float | None:
+    graded = _column(master, "half") != 0
+    tracked = (_column(master, "n_tracked_home") + _column(master, "n_tracked_away"))[graded]
+    tracked = tracked[np.isfinite(tracked)]
+    return float(np.mean(tracked)) if tracked.size else None
+
+
+ORIGINAL_STATISTICS = (
+    ("g", "share of frames with the ball observed"),
+    ("h", "share of frames with the ball filled"),
+    ("i", "share of frames with a ball jump removed"),
+    ("j", "mean number of tracked players (home + away)"),
+)
+
+
 def master_statistics(master: pd.DataFrame, config: dict) -> dict:
     visibility, share = stat_visibility_by_speed(master)
     return {
+        "g": stat_flag_share(master, "ball_observed"),
+        "h": stat_flag_share(master, "ball_filled"),
+        "i": stat_flag_share(master, "ball_jump_removed"),
+        "j": stat_mean_tracked(master),
         "a": stat_speed_median(master),
         "b": stat_ball_speed_median(master),
         "c": stat_stationary_fraction(master),
@@ -249,7 +283,17 @@ def _scalar_check(
 
 
 def run_checks(reference: dict, degraded: list[dict]) -> list[CheckResult]:
-    """All six statistics. ``reference`` is the BAR-ATH master, ``degraded`` the external ones."""
+    """All statistics. ``reference`` is the BAR-ATH master, ``degraded`` the external ones."""
+    results = _update_checks(reference, degraded)
+    results.extend(
+        _scalar_check(key, title, reference[key], [s[key] for s in degraded])
+        for key, title in ORIGINAL_STATISTICS
+    )
+    return results
+
+
+def _update_checks(reference: dict, degraded: list[dict]) -> list[CheckResult]:
+    """Statistics (a)-(f) of the 11/11 update."""
     results = [
         _scalar_check(
             "a",
