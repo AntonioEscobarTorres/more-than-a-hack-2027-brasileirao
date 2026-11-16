@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import copy
 from pathlib import Path
 
 import yaml
@@ -93,19 +94,35 @@ class Str(_Field):
                 where, list(self.choices), value))
         return value
 
+class Opt(_Field):
+    """Optional field or sub-mapping with a default when omitted from the YAML."""
+
+    def __init__(self, inner, default=None):
+        self.inner = inner
+        self.default = default
+
+    def check(self, value, where):
+        if isinstance(self.inner, dict):
+            return _check_mapping(self.inner, value, where)
+        return self.inner.check(value, where)
+
 
 def _check_mapping(schema: dict, value, where: str) -> dict:
-    """Check that ``value`` has exactly the keys of ``schema`` and validate each one."""
+    """Check that value has the required keys of schema and validate each one."""
     if not isinstance(value, dict):
         raise ConfigError("{}: expected a mapping, got {!r}".format(where or "<root>", value))
     unknown = sorted(set(value) - set(schema), key=str)
     if unknown:
         raise ConfigError("{}: unknown keys {}".format(where or "<root>", unknown))
-    missing = [k for k in schema if k not in value]
+    missing = [k for k, spec in schema.items() if not isinstance(spec, Opt) and k not in value]
     if missing:
         raise ConfigError("{}: missing keys {}".format(where or "<root>", missing))
     out = {}
     for key, spec in schema.items():
+        if isinstance(spec, Opt) and key not in value:
+            if spec.default is not None:
+                out[key] = copy.deepcopy(spec.default)
+            continue
         sub = "{}.{}".format(where, key) if where else key
         out[key] = _check_mapping(spec, value[key], sub) if isinstance(spec, dict) \
             else spec.check(value[key], sub)
@@ -143,6 +160,17 @@ TEAM_SCHEMA = {
             "w_spread": _ANY,
             "w_speed": _ANY,
         },
+        "bridge_median_frames": Opt(Int(ge=1)),
+        "bridge_tau_1": Opt(_POS),
+        "bridge_tau_2": Opt(_POS),
+        "r_touch_m": Opt(_POS),
+        "touch_min_frames": Opt(Int(ge=1)),
+        "touch_win_frames": Opt(Int(ge=1)),
+        "touch_dir_change_rad": Opt(_POS),
+        "touch_acc_mps2": Opt(_POS),
+        "w_tag_phase": Opt(_ANY),
+        "w_sp_team": Opt(_ANY),
+        "tau_sp_team": Opt(_POS),
     },
     "calibrated_file": Str(nullable=True),
 }
