@@ -483,21 +483,28 @@ def test_hide_variants_differ_from_default_only_in_name_and_hide_probability(nam
         {k: v for k, v in default.items() if k not in ("name", "p_unfreeze_hide")}
 
 
-def test_harder_and_easier_scale_only_the_noise_relative_to_default():
-    default = _load_config("default")
-    harder, easier = _load_config("harder"), _load_config("easier")
-    noise_keys = ("ball_noise_m", "player_noise_m")
+# Appendix A.6: the stress variants change only these keys. The player noise keeps the A.6 ratio
+# to the default (0.25 / 0.15 and 0.10 / 0.15), rescaled to the new default (11/11 update, item 6).
+A6_VARIANTS = {
+    "harder": {"target_ball_visible": 0.50, "phantom_frac": 0.02, "target_tracked_mean": 20.0,  # A.6: 19.5, infeasible on J03WN1 (D-017)
+               "noise_ratio": 0.25 / 0.15},
+    "easier": {"target_ball_visible": 0.68, "phantom_frac": 0.005, "target_tracked_mean": 21.3,  # A.6: 21.5, infeasible on J03WN1 (D-017)
+               "noise_ratio": 0.10 / 0.15},
+}
 
-    for key in noise_keys:
-        assert harder[key] > default[key] > easier[key]
-    # One common scale factor per variant for both noise sources.
-    assert math.isclose(harder["ball_noise_m"] / default["ball_noise_m"],
-                        harder["player_noise_m"] / default["player_noise_m"])
-    assert math.isclose(easier["ball_noise_m"] / default["ball_noise_m"],
-                        easier["player_noise_m"] / default["player_noise_m"])
-    for variant in (harder, easier):
-        assert {k: v for k, v in variant.items() if k not in ("name",) + noise_keys} == \
-            {k: v for k, v in default.items() if k not in ("name",) + noise_keys}
+
+@pytest.mark.parametrize("name", sorted(A6_VARIANTS))
+def test_harder_and_easier_follow_appendix_a6_relative_to_the_new_default(name):
+    default, variant = _load_config("default"), _load_config(name)
+    spec = A6_VARIANTS[name]
+    changed = ("target_ball_visible", "phantom_frac", "target_tracked_mean", "player_noise_m")
+
+    for key in changed[:3]:
+        assert variant[key] == spec[key]
+    assert variant["player_noise_m"] == pytest.approx(
+        default["player_noise_m"] * spec["noise_ratio"], abs=1e-4)
+    assert {k: v for k, v in variant.items() if k not in ("name",) + changed} == \
+        {k: v for k, v in default.items() if k not in ("name",) + changed}
 
 
 @pytest.mark.parametrize("key", CONFIG_KEYS)

@@ -286,6 +286,16 @@ and dropped and the reason for each.*
   (`tools/jump_filter_edge_cases.py`) counts the footprint of both cases in each half.
   On the provided match the check passes in both halves (fewer than 10 occurrences of each case
   per half), so the filter was left unchanged.
+- **Degradation realism (F4-04, D-016, D-017).** The degraded IDSSE matches label-free statistics of the
+  provided match within the tolerances of the task (player and ball speed, stationary ball, long ball
+  gaps, ball visibility overall and by player speed, tracked players), with three remaining divergences:
+  the rule-based baseline makes more possessions per minute on degraded IDSSE than on the provided match,
+  and the small shares of interpolated ball frames and of removed ball jumps differ by more than 20%. To match the visibility
+  pattern, the ball is visible on about 30% of dead-ball frames and 80% of in-play frames of degraded
+  IDSSE, so "ball not tracked" is a strong dead-ball cue in the calibration data; models are checked for
+  stability on the `hidelo`/`hidehi` variants. As an independent check, the organizers' starter
+  (`baseline_smooth50`) scores macroF1 0.629 / spellF1 0.254 on degraded IDSSE against the published
+  0.672 / 0.243 on the provided match (0.416 / 0.219 with the previous degradation).
 - **What we would fix with more time.** *(All fronts.)*
 
 ## 7. Reproduction

@@ -616,3 +616,36 @@ def test_build_one_summary_matches_written_artifacts(degrade_calls: list[dict]) 
             assert expected[key] is None
         else:
             assert np.isclose(row[key], expected[key]), key
+
+@pytest.mark.parametrize("mode", ["default", "harder", "easier", "hidelo", "hidehi"])
+def test_build_runs_the_real_degradation_on_the_synthetic_match(
+    mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No fallback: the shipped config degrades the fixture for real. Only the target
+    tolerances and the player target are adapted: a 2 x 80-frame match cannot hit full-match targets."""
+    match_id = IDSSE_MATCHES[0]
+    _make_synthetic_external_match(match_id=match_id).save(arrays_path(match_id))
+    shipped = build._load_degrade_config(mode)
+
+    def widened(name: str) -> dict:
+        cfg = dict(shipped)
+        cfg["target_ball_visible_tolerance"] = 1.0
+        # Player calibration is covered by the degrade tests; the random fixture players carry
+        # no orientation structure, so removing many of them breaks the preprocessing instead.
+        cfg["target_tracked_mean"] = float(N_SLOTS)
+        cfg["target_tracked_mean_tolerance"] = float(N_SLOTS)
+        cfg["dup_frac"] = 0.0
+        return cfg
+
+    monkeypatch.setattr(build, "_load_degrade_config", widened)
+
+    row = build.build_one(match_id, mode, seed=0)
+    clean_row = build.build_one(match_id, "none", seed=0)
+
+    master = pd.read_parquet(master_path(match_id, mode))
+    labels = np.load(labels_path(match_id, mode))
+    validate_master(master)
+    assert np.array_equal(labels == X_CODE, master["half"].to_numpy() == 0)
+    assert row["bg_hazard"] is not None and np.isfinite(row["bg_hazard"])
+    # The degradation really ran: the ball is hidden on more frames than in the clean build.
+    assert row["pct_ball_observed"] < clean_row["pct_ball_observed"]

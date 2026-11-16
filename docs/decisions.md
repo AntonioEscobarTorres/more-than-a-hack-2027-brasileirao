@@ -52,8 +52,10 @@ Modelo:
 | [D-013](#d-013--nome-da-equipe-formulário-e-envio-único) | 2026-11-13 | Nome da equipe, formulário e envio único | Vigente |
 | [D-014](#d-014--casos-de-borda-do-filtro-da-bola-como-são-contados) | 2026-11-13 | Casos de borda do filtro da bola: como são contados | Vigente |
 | [D-015](#d-015--diagnósticos-de-bola-morta-como-são-calculados) | 2026-11-13 | Diagnósticos de bola morta: como são calculados | Vigente |
-| [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente |
-| [D-017](#d-017--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente |
+| [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente (`harder`/`easier` substituídos pela D-017) |
+| [D-017](#d-017--harder-e-easier-pelo-apêndice-a6-e-estatísticas-originais-do-realismo-f4-04) | 2026-11-15 | `harder`/`easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04) | Vigente |
+| [D-018](#d-018--hazard-de-troca-de-posse-ajuste-e-checagens-f1-08) | 2026-11-15 | Hazard de troca de posse: ajuste e checagens (F1-08) | Vigente |
+| [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente |
 
 ## Decisões
 
@@ -476,7 +478,7 @@ Modelo:
 
 - **Data:** 2026-11-15
 - **Autor:** Ahmed (revisão e fechamento da F4-04, #74, sobre a implementação do Antônio)
-- **Status:** Vigente
+- **Status:** Vigente. A definição de `harder` e `easier` foi substituída pela D-017.
 - **Decisão:** os mestres externos usam `configs/degrade_default.yaml` com os valores abaixo. As outras
   chaves não mudaram.
 
@@ -559,7 +561,73 @@ Modelo:
   ~80% dos de jogo. É o padrão que (f) mede no BAR-ATH (bola some com jogadores lentos), mas é uma pista forte
   para "bola invisível ⇒ D". A F3-04 e a F2-05 devem conferir a estabilidade em `hidelo` e `hidehi`.
 
-### D-017 — Calibração do `dead_logit` no IDSSE: features e o R2
+### D-017 — `harder` e `easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04)
+
+- **Data:** 2026-11-15
+- **Autor:** Ahmed (revisão da F4-04 depois do merge do #132)
+- **Status:** Vigente
+- **Decisão:**
+  1. **`harder` e `easier` seguem o Apêndice A.6** sobre o `default` da D-016. A D-016 tinha só multiplicado o
+     ruído da bola e dos jogadores, e os dois modos ficaram quase iguais ao `default`, o que esvaziava o teste de
+     estresse da F2-06. Agora:
+
+     | Chave | `default` | `harder` | `easier` | Origem |
+     | --- | ---: | ---: | ---: | --- |
+     | `target_ball_visible` | 0,593 | 0,50 | 0,68 | A.6 |
+     | `phantom_frac` | 0,01 | 0,02 | 0,005 | A.6 |
+     | `player_noise_m` | 0,01 | 0,0167 | 0,0067 | A.6 (0,25 e 0,10 sobre 0,15), reescalado para o `default` novo (item 6 de 11/11) |
+     | `target_tracked_mean` | 20,5 | **20,0** | **21,3** | A.6 pede 19,5 e 21,5; ver abaixo |
+     | `ball_noise_m` | 0,25 | 0,25 | 0,25 | o A.6 não muda o ruído da bola |
+
+     As outras chaves são as do `default`, inclusive `p_unfreeze_hide` = 0,5.
+  2. **Metas de jogadores viáveis nas 7 partidas.** O J03WN1 rastreia em média no máximo 21,05 jogadores, mesmo
+     sem esconder nenhum, então 21,5 ± 0,3 é inviável no `easier`. 21,3 é o maior valor viável. No `harder`, com
+     19,5 quase não sobram frames com 22 jogadores no J03WN1, e a fração de duplicatas (`dup_frac` 0,02) não é
+     alcançada nem com 200 mil tentativas. 20,0 é viável e continua abaixo do `default`.
+  3. **Estatísticas originais no script de realismo.** O item 3 original pedia comparar com o BAR-ATH as
+     estatísticas do relatório. A atualização de 11/11 acrescentou (a)–(f) sem tirar essas.
+     `tools/compare_external_realism.py` agora também tem (g) bola observada, (h) bola preenchida, (i) saltos da
+     bola removidos e (j) média de jogadores rastreados, todas com ±20%. O % de D não é comparado, porque o
+     BAR-ATH não tem rótulos fora da janela pública, que não pode ser usada.
+  4. **Divergências que ficam (sem novo ajuste):** (h) e (i) dão `FAIL` no `default`. São frações pequenas (bola
+     preenchida ~0,3% e saltos removidos 1–3% dos frames do IDSSE degradado) e vêm do pré-processamento, não de
+     um alvo da degradação. Não houve rodada de ajuste nova contra o BAR-ATH.
+- **Opções consideradas:**
+  - `harder` com `dup_frac` 0,01 e 19,5 jogadores: também viável no J03WN1. Descartada para manter as
+    duplicatas do `default` e fazer nos dois modos o mesmo tipo de ajuste (só a meta de jogadores);
+  - gerar `harder`/`easier` sem o J03WN1: descartada, porque o aceite pede os 42 mestres;
+  - ajustar a degradação para (h) e (i): descartada, pelo mesmo motivo da D-016 (regra dos organizadores e prazo).
+- **Evidência:** `tools/compare_external_realism.py --degrade default` (7 partidas, sem `--verbose`): (a) PASS,
+  (b) PASS, (c) PASS, (d) FAIL, (e) PASS, (f) PASS, (g) PASS, (h) FAIL, (i) FAIL, (j) PASS. Estatísticas por
+  partida dos modos novos em [`reports/external_masters.md`](../reports/external_masters.md); hashes em
+  [`docs/external_data.md`](external_data.md). Testes: `test_harder_and_easier_follow_appendix_a6_relative_to_the_new_default`
+  e `test_build_runs_the_real_degradation_on_the_synthetic_match` (o teste do build antes caía num fallback sem
+  degradar).
+
+### D-018 — Hazard de troca de posse: ajuste e checagens (F1-08)
+
+- **Data:** 2026-11-15
+- **Autor:** Ahmed (F1-08, #124)
+- **Status:** Vigente
+- **Decisão:**
+  1. **`bridge_d_frames = 0`.** Nos rótulos do IDSSE nenhum D entre dois times dura menos de 41 frames, e o D
+     entre times diferentes dura o mesmo que o D dentro de um time (medianas 476 e 551 frames). É bola parada,
+     não passagem de posse, então o alvo conta só trocas diretas H↔A.
+  2. **`W` escolhido junto com `C`** em {12, 25, 50} × {0,01; 0,1; 1}, pela log-loss deixando uma partida de
+     fora, aninhada em cada dobra. `W` não muda o alvo. Os 8 modelos escolheram 50, a borda da grade, com ganho
+     pequeno por degrau. A grade não foi estendida depois de ver o resultado.
+  3. **Checagem nova da "bola invisível" (risco da D-016):** se o AUC isolado de uma feature de lacuna mudar mais
+     que 0,10 entre `hidelo` e `hidehi`, as três saem do ajuste. A margem também vale para a checagem de bola
+     parada do item 7. Nenhuma disparou: as maiores diferenças foram 0,005 (lacunas) e −0,38 (bola parada, no
+     sentido oposto ao artefato).
+- **Opções consideradas:** `bridge_d_frames = 25` (o valor inicial) não juntava nada e foi trocado por 0 para
+  deixar isso explícito; escolher `target_w_frames` pela log-loss foi descartado, porque ele muda o alvo e as
+  log-losses deixam de ser comparáveis (fica para a F2-07).
+- **Evidência:** [`reports/calibration_hazard.md`](../reports/calibration_hazard.md): AUC fora da dobra 0,71
+  no `default` (0,68–0,74 nos outros modos). Nas trocas que o v1 perde, o pico do hazard tem AUC 0,72 contra
+  janelas sem troca. Só IDSSE.
+
+### D-019 — Calibração do `dead_logit` no IDSSE: features e o R2
 
 - **Data:** 2026-11-15
 - **Autor:** Bernardo (F3, F3-04)
