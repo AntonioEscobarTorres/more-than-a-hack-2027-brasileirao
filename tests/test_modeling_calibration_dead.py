@@ -439,6 +439,78 @@ def test_holdout_selects_the_right_fold(toy_calibration):
         dead_logit_calibrated(master, params_with(path), holdout="J03WMX")
 
 
+def _one_row(**values):
+    row = {"has_ball": 1.0, "out_of_pitch": 0.0, "db_gap_kind": 0.0, "gap_length": 0.0,
+           "db_still_frac": 0.2, "db_mean_speed": 2.5, "db_fast_in_pitch": 0.0}
+    row.update(values)
+    return pd.DataFrame([row])
+
+
+def test_design_matrix_fill_replaces_the_zero_and_keeps_the_indicator():
+    raw = pd.concat([_one_row(db_mean_speed=np.nan, db_still_frac=np.nan, has_ball=0.0,
+                              out_of_pitch=np.nan, db_gap_kind=GAP_EXIT, gap_length=50.0)])
+    X = pd.DataFrame(cd.design_matrix(raw, cd.ALL_FEATURES,
+                                      fill={"mean_speed": 2.0, "still_frac": 0.3}),
+                     columns=cd.ALL_FEATURES)
+    assert X["mean_speed"][0] == 2.0 and X["mean_speed_missing"][0] == 1.0
+    assert X["still_frac"][0] == 0.3 and X["still_frac_missing"][0] == 1.0
+    assert X["exit_x_speed"][0] == 2.0
+    assert X["speed_x_log_gap"][0] == pytest.approx(2.0 * np.log1p(50.0))
+    with pytest.raises(ValueError, match="fill only takes"):
+        cd.design_matrix(raw, cd.ALL_FEATURES, fill={"log_gap": 1.0})
+    with pytest.raises(ValueError, match="finite"):
+        cd.design_matrix(raw, cd.ALL_FEATURES, fill={"mean_speed": np.nan})
+
+
+def test_missing_input_never_seen_in_the_fit_is_no_evidence(toy_calibration):
+    """Rule 4: a NaN player speed or still fraction must not read as 0 (everyone standing)."""
+    _, path = toy_calibration
+    doc = cd.load_calibration(path)
+    features = doc["features"]
+    for model in [doc["all"], *doc["folds"].values()]:
+        assert model["mean"]["mean_speed_missing"] == 0.0     # the toy fit never sees a NaN
+        fill = cd.inference_fill(model, features)
+        assert fill == {"still_frac": model["mean"]["still_frac"],
+                        "mean_speed": model["mean"]["mean_speed"]}
+        for kind, gap in [(0.0, 0.0), (GAP_EXIT, 50.0), (GAP_LONG, 300.0)]:
+            base = dict(db_gap_kind=kind, gap_length=gap, has_ball=float(gap == 0.0),
+                        out_of_pitch=0.0 if gap == 0.0 else np.nan)
+            at_mean = cd.d_fit(cd.design_matrix(_one_row(
+                **base, db_mean_speed=fill["mean_speed"], db_still_frac=fill["still_frac"]),
+                features), model, features)
+            missing = cd.d_fit(cd.design_matrix(_one_row(
+                **base, db_mean_speed=np.nan, db_still_frac=np.nan), features, fill=fill),
+                model, features)
+            np.testing.assert_allclose(missing, at_mean, atol=1e-9)
+
+
+def test_missing_input_seen_in_the_fit_keeps_the_fitted_convention():
+    data = synthetic_data(seed=3)                     # random_raw has 5% NaN speeds and fractions
+    X, y = cd.training_rows(data, MATCHES, 1, cd._columns(cd.FULL_FEATURES))
+    model = cd.fit_model(X, y, cd.FULL_FEATURES, 1.0)
+    assert model["mean"]["mean_speed_missing"] > 0.0
+    assert cd.inference_fill(model, cd.FULL_FEATURES) == {}
+    reduced = [f for f in cd.FULL_FEATURES if f != "mean_speed_missing"]
+    model = cd.fit_model(X[:, cd._columns(reduced)], y, reduced, 1.0)
+    assert set(cd.inference_fill(model, reduced)) == {"mean_speed"}   # no indicator: never seen
+
+
+def test_calibrated_kind_treats_missing_player_speed_as_no_evidence(toy_calibration):
+    _, path = toy_calibration
+    master, _ = toy_match(42, n_cycles=4)
+    gone = slice(100, 300)                            # longer than smooth_frames: db_mean_speed NaN
+    master.loc[master.index[gone], ["mean_speed_home", "mean_speed_away"]] = np.nan
+    raw = cd.raw_features(master, P)
+    nan_rows = ~np.isfinite(raw["db_mean_speed"].to_numpy())
+    assert nan_rows.any()
+    doc = cd.load_calibration(path)
+    model = doc["all"]
+    d = cd.calibrated_d_fit(master, params_with(path), doc, None)
+    raw.loc[nan_rows, "db_mean_speed"] = model["mean"]["mean_speed"]
+    expected = cd.d_fit(cd.design_matrix(raw, doc["features"]), model, doc["features"])
+    np.testing.assert_allclose(d, expected, atol=1e-9)
+
+
 def test_calibrated_logit_signs_on_the_toy_matches(toy_calibration):
     result, path = toy_calibration
     w = result["all"]["weights"]

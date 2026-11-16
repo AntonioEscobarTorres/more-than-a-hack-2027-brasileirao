@@ -23,6 +23,14 @@ always with an indicator (rule 4):
     log_gap             log1p(min(gap_length, gap_log_clip_frames)); 0 and log_gap_missing = 1
                         where gap_length is NaN
 
+Missing values at inference. On IDSSE ``db_still_frac`` and ``db_mean_speed`` are never missing,
+so their indicators are constant in the fit and get weight 0. Imputing 0 at inference would then
+read a missing player speed as "every player stands still" (strong dead-ball evidence) instead of
+"no evidence" (rule 4). So, at inference only, an input whose indicator never fired in the fit is
+imputed with the training mean of that model (``inference_fill``): its standardised value is 0
+and the products that use it see that same value. An input that was missing in the fit keeps the
+fitted convention (0 plus the indicator). The fit itself is unchanged.
+
 ``db_ball_rest`` and ``ball_speed`` are never used (update of 11/11, item 3): on the external
 matches the ball freezes during dead balls, so they leak the label. The ``reduced`` set drops
 ``has_ball`` and ``log_gap`` (with its indicator) and is used when the live-play gap scenario R1
@@ -110,6 +118,10 @@ FALLBACK_SET = "reduced"                        # item 4, when R1 fails for ever
 # that feature (``effective_slopes``) at the training means and at every scenario.
 EXPECTED_SIGNS = {"out_of_pitch": 1, "fast_in_pitch": -1, "mean_speed": -1}
 
+# Inputs that can be missing on the provided match and are imputed with the training mean at
+# inference when the fit never saw them missing (``inference_fill``): feature -> indicator.
+FILLABLE = {"still_frac": "still_frac_missing", "mean_speed": "mean_speed_missing"}
+
 # Raw per-frame inputs of the design matrix.
 RAW_COLUMNS = ("has_ball", "out_of_pitch", "db_gap_kind", "gap_length", "db_still_frac",
                "db_mean_speed", "db_fast_in_pitch")
@@ -161,17 +173,29 @@ def raw_features(master: pd.DataFrame, params: dict) -> pd.DataFrame:
     }, index=master.index)
 
 
-def _fill(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _fill(x: np.ndarray, value: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     ok = np.isfinite(x)
-    return np.where(ok, x, 0.0), (~ok).astype("float64")
+    return np.where(ok, x, value), (~ok).astype("float64")
 
 
 def design_matrix(raw: pd.DataFrame, features: Sequence[str],
-                  gap_log_clip_frames: float = GAP_LOG_CLIP_FRAMES) -> np.ndarray:
-    """float64 (n, len(features)) design matrix, no NaN, columns in the order of ``features``."""
+                  gap_log_clip_frames: float = GAP_LOG_CLIP_FRAMES,
+                  fill: Mapping[str, float] | None = None) -> np.ndarray:
+    """float64 (n, len(features)) design matrix, no NaN, columns in the order of ``features``.
+
+    A missing input is imputed with 0 and flagged by its indicator. ``fill`` (keys of
+    ``FILLABLE``) replaces that 0 for ``still_frac`` and ``mean_speed``; the indicator still
+    flags the row. Only the inference uses it (:func:`inference_fill`).
+    """
     unknown = [f for f in features if f not in ALL_FEATURES]
     if unknown:
         raise ValueError("unknown features {}".format(unknown))
+    fill = {} if fill is None else {k: float(v) for k, v in fill.items()}
+    bad = sorted(set(fill) - set(FILLABLE))
+    if bad:
+        raise ValueError("fill only takes {}, got {}".format(sorted(FILLABLE), bad))
+    if not all(np.isfinite(v) for v in fill.values()):
+        raise ValueError("fill values must be finite, got {}".format(fill))
     missing = [c for c in RAW_COLUMNS if c not in raw.columns]
     if missing:
         raise ValueError("raw features are missing columns {}".format(missing))
@@ -182,8 +206,8 @@ def design_matrix(raw: pd.DataFrame, features: Sequence[str],
     has_ball = np.where(col("has_ball") == 1, 1.0, 0.0)
     out_of_pitch = np.where(col("out_of_pitch") == 1, 1.0, 0.0)          # NaN -> 0
     kind = col("db_gap_kind")
-    still, still_missing = _fill(col("db_still_frac"))
-    speed, speed_missing = _fill(col("db_mean_speed"))
+    still, still_missing = _fill(col("db_still_frac"), fill.get("still_frac", 0.0))
+    speed, speed_missing = _fill(col("db_mean_speed"), fill.get("mean_speed", 0.0))
     with np.errstate(invalid="ignore"):
         log_gap = np.log1p(np.minimum(col("gap_length"), gap_log_clip_frames))
     log_gap, log_gap_missing = _fill(log_gap)
@@ -572,6 +596,25 @@ def select_model(doc: Mapping, holdout: str | None) -> dict:
     return folds[holdout]
 
 
+def inference_fill(model: Mapping, features: Sequence[str]) -> dict:
+    """``fill`` of :func:`design_matrix` at inference: the training mean of every input of
+    ``FILLABLE`` in ``features`` whose indicator never fired in the fit of ``model``.
+
+    The indicator never fired when it is not a feature or its training mean is 0. Such an input
+    then has a standardised value of 0 where it is missing, as rule 4 asks of a missing value
+    ("no evidence"). An input that was missing in the fit keeps the fitted convention (0 plus the
+    indicator, which carries its own weight).
+    """
+    out = {}
+    for f, indicator in FILLABLE.items():
+        if f not in features:
+            continue
+        seen = indicator in features and float(model["mean"][indicator]) > 0.0
+        if not seen:
+            out[f] = float(model["mean"][f])
+    return out
+
+
 def check_feature_params(doc: Mapping, params: Mapping) -> None:
     """The features at inference must be built exactly as in the fit."""
     fitted = doc["feature_params"]
@@ -583,11 +626,15 @@ def check_feature_params(doc: Mapping, params: Mapping) -> None:
 
 def calibrated_d_fit(master: pd.DataFrame, params: Mapping, doc: Mapping,
                      holdout: str | None) -> np.ndarray:
-    """``d_fit`` of every master frame (float64), exactly 0 where ``half == 0``."""
+    """``d_fit`` of every master frame (float64), exactly 0 where ``half == 0``.
+
+    Missing inputs that the fit never saw missing take the training mean (:func:`inference_fill`).
+    """
     check_feature_params(doc, params)
     model = select_model(doc, holdout)
     features = doc["features"]
-    X = design_matrix(raw_features(master, dict(params)), features, doc["gap_log_clip_frames"])
+    X = design_matrix(raw_features(master, dict(params)), features, doc["gap_log_clip_frames"],
+                      fill=inference_fill(model, features))
     values = d_fit(X, model, features)
     return np.where(master["half"].to_numpy() != 0, values, 0.0) + 0.0
 
