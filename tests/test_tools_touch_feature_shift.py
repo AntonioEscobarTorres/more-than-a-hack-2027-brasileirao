@@ -70,3 +70,39 @@ def test_informative_checks_never_change_the_result():
     results = tfs.run_checks(ref, ext)
     assert [r.passed for r in results] == [True, False, False]
     assert tfs.report(results)[-1] == "PASS"
+
+
+def _calib(tmp_path_factory, variant, **params):
+    matches = {"m1": _rich_synthetic_master(300, seed=10),
+               "m2": _rich_synthetic_master(300, seed=20)}
+    cfg = {"name": "v1", "team": {"kind": "rules_v1", "params": {**P, **params},
+                                  "calibrated_file": None}}
+    table = calibrate_team(cfg, variant=variant, matches=list(matches),
+                           load_fn=lambda m, d: matches[m])
+    return str(write_team_yaml(table, tmp_path_factory.mktemp("calib") / "team.yaml"))
+
+
+def test_persistence_only_touch_ignores_a_and_makes_b_eliminatory(
+        monkeypatch, capsys, tmp_path_factory):
+    calib = _calib(tmp_path_factory, "touch", touch_require_abrupt=False)
+    assert tfs.calibration_mode(calib) == (True, False)
+    # A smooth ball no longer matters: the touch is persistence only.
+    code, lines = run_cli(monkeypatch, capsys, calib, master(0.0), master(20.0))
+    assert code == 0 and lines[0] == "PASS  (a) abrupt-change share (not used)"
+    assert tfs.master_statistics(master(0.0), P, calib)["touch_share"] > 0.9
+    # A touch share far from the reference fails (b), and (b) is eliminatory.
+    ref = {"abrupt_share": 0.0, "touch_share": 0.1, "strong_share": 0.1}
+    ext = [{"abrupt_share": 0.99, "touch_share": 0.5, "strong_share": 0.1}]
+    results = tfs.run_checks(ref, ext, uses_touch=True, require_abrupt=False)
+    assert [(r.key, r.passed, r.eliminatory) for r in results][:2] == [
+        ("a", True, False), ("b", False, True)]
+    assert tfs.report(results)[-1].startswith("FAIL")
+
+
+def test_calibration_without_touch_passes_a_and_b(monkeypatch, capsys, tmp_path_factory):
+    calib = _calib(tmp_path_factory, "base")
+    assert tfs.calibration_mode(calib)[0] is False
+    code, lines = run_cli(monkeypatch, capsys, calib, master(0.0), master(20.0))
+    assert code == 0
+    assert lines[:2] == ["PASS  (a) abrupt-change share (not used)",
+                         "PASS  (b) touch share (not used)"]
