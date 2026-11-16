@@ -30,6 +30,10 @@ FIELD_SEP = ":"
 GROUP_SEP = ";"
 LOGGER = logging.getLogger(__name__)
 
+BALL_SOURCES = ("tactical", "fused")
+DEFAULT_BROADCAST_CONFIG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "broadcast.yaml")
+
 
 def _data_root(data_dir=None):
     return data_dir or os.environ.get("MTAH_DATA_DIR") or os.path.join(
@@ -757,8 +761,53 @@ def prepare_tracking(players, ball, slot_team_ids, blocks=None, pitch=(PITCH_L, 
     return frame, slot_teams
 
 
-def build(game=GAME, data_dir=None):
-    """Load raw frame-aligned tracking arrays for A2/A3; writing is done by ``main``."""
+def _check_ball_source(ball_source):
+    if ball_source not in BALL_SOURCES:
+        raise ValueError(f"ball_source must be one of {BALL_SOURCES}, got {ball_source!r}")
+
+
+def fuse_broadcast_ball(ball, data_dir=None, broadcast_config=None):
+    """Fill missing tactical ball positions from the aligned broadcast camera (F4-06).
+
+    ``ball`` is the normalized 0..1 tactical ball as returned by ``read_atd`` (float32, (T, 3)).
+    The broadcast timeline is aligned to the tactical one with the F4-05 alignment, its ball is put
+    in the orientation chosen there and masked where the broadcast homography is invalid, then
+    converted to the same normalized units as ``ball``. Observed tactical positions are never
+    overwritten; filled frames get a NaN speed channel.
+
+    This runs on the raw normalized arrays, i.e. BEFORE the per-half orientation, the jump filter
+    (A4) and every derived feature of ``prepare_tracking``, so those steps treat the fused ball
+    exactly like an observed one, half by half. Opens match data: human-run only.
+    """
+    # Imported lazily: modeling.broadcast.align imports read_atd from this module.
+    from games import GAMES
+    from modeling.broadcast.align import align_broadcast, load_broadcast_inputs
+    from modeling.broadcast.fuse import fused_ball, orient_broadcast_ball
+    from modeling.config import load_config
+
+    cfg = load_config(broadcast_config or DEFAULT_BROADCAST_CONFIG)
+    pitch = tuple(GAMES[GAME]["pitch"])
+    tactical, broadcast = load_broadcast_inputs(cfg, data_dir=data_dir)
+    mapping = align_broadcast(tactical, broadcast, cfg, pitch=pitch)
+    LOGGER.info("Broadcast alignment: orientation=%s", mapping.orientation)
+
+    # Metres, oriented, NaN where the broadcast homography is invalid; then back to 0..1 units.
+    broadcast_m = orient_broadcast_ball(
+        broadcast.ball, mapping.orientation, pitch, valid=broadcast.valid)
+    broadcast_norm = broadcast_m / np.asarray(pitch, dtype=np.float64)
+    fused = fused_ball(ball, broadcast_norm, mapping.tactical_frame)
+    filled = int((np.isfinite(fused[:, 0]) & ~(np.isfinite(ball[:, 0]) & np.isfinite(ball[:, 1]))).sum())
+    LOGGER.info("Fused ball: %d tactical frames filled from the broadcast", filled)
+    return fused.astype(np.float32)
+
+
+def build(game=GAME, data_dir=None, ball_source="tactical", broadcast_config=None):
+    """Load raw frame-aligned tracking arrays for A2/A3; writing is done by ``main``.
+
+    With ``ball_source="fused"`` the ball is the tactical ball completed with the broadcast ball
+    (see ``fuse_broadcast_ball``); ``"tactical"`` returns the tactical arrays untouched.
+    """
+    _check_ball_source(ball_source)
     if game != GAME:
         raise ValueError(f"This preprocessing module currently supports only {GAME}, got {game!r}")
     paths = asset_paths(game=game, data_dir=data_dir, source="tactical")
@@ -766,7 +815,10 @@ def build(game=GAME, data_dir=None):
     missing = [paths[name] for name in required if not os.path.isfile(paths[name])]
     if missing:
         raise FileNotFoundError("Required ATD assets not found:\n  " + "\n  ".join(missing))
-    return read_atd(paths["atd_raw"], paths["atd_meta"])
+    players, ball, teams = read_atd(paths["atd_raw"], paths["atd_meta"])
+    if ball_source == "fused":
+        ball = fuse_broadcast_ball(ball, data_dir=data_dir, broadcast_config=broadcast_config)
+    return players, ball, teams
 
 
 def main(argv=None):
@@ -776,12 +828,19 @@ def main(argv=None):
     parser.add_argument("--output-dir", help="processed output directory (defaults to <data-dir>/processed)")
     parser.add_argument("--stage", choices=("V0", "V1"), default="V0",
                         help="tracking feature stage (default: V0)")
+    parser.add_argument("--ball-source", choices=BALL_SOURCES, default="tactical",
+                        help="ball series: tactical only (default) or completed with the aligned "
+                             "broadcast ball (F4-06)")
+    parser.add_argument("--broadcast-config",
+                        help="F4-05 alignment config used by --ball-source fused "
+                             "(defaults to configs/broadcast.yaml)")
     parser.add_argument("--report-sensitivity", action="store_true",
                         help="run the optional eps/K ball-filter sensitivity report")
     args = parser.parse_args(argv)
     root = _data_root(args.data_dir)
     output_dir = args.output_dir or os.path.join(root, "processed")
-    players, ball, teams = build(data_dir=args.data_dir)
+    players, ball, teams = build(data_dir=args.data_dir, ball_source=args.ball_source,
+                                 broadcast_config=args.broadcast_config)
     paths = asset_paths(game=GAME, data_dir=args.data_dir, source="tactical")
     # All 46 ATD slots belong to the two clubs. The flag means player vs
     # non-player and therefore includes goalkeepers for this match.
