@@ -2,7 +2,7 @@
 # External data only; the provided match is never read. Do not edit by hand.
 format_version: 1
 description: dead_logit calibrated on the default masters
-feature_set: full
+feature_set: interactions
 features:
 - has_ball
 - out_of_pitch
@@ -16,6 +16,11 @@ features:
 - fast_in_pitch
 - log_gap
 - log_gap_missing
+- exit_x_log_gap
+- long_x_log_gap
+- exit_x_speed
+- long_x_speed
+- speed_x_log_gap
 gap_log_clip_frames: 1500
 train_modes:
 - default
@@ -24,11 +29,11 @@ c_grid:
 - 0.01
 - 0.1
 - 1.0
-C: 0.1
+C: 1.0
 cv_log_loss:
-  0.01: 0.25177970567882324
-  0.1: 0.25174635023322417
-  1.0: 0.2517609575676648
+  0.01: 0.24888949595426535
+  0.1: 0.2478419669332436
+  1.0: 0.24764383240446491
 feature_params:
   long_gap_frames: 12
   exit_line_m: 3.0
@@ -48,44 +53,75 @@ feature_params:
   goal_window_frames: 1500
 robustness:
   r1_pass: true
-  r2_pass: false
+  r2_pass: true
   values:
     all:
-      R1: -2.0184189724350095
-      R2: -1.1463195444035252
-      R3: 0.3492808942539265
+      R1: -2.4397347106354816
+      R2: 1.034630416472754
+      R3: -0.555941307893963
     fold J03WMX:
-      R1: -2.1265789708995664
-      R2: -1.2185445230058156
-      R3: 0.21864469691315502
+      R1: -2.566835220439966
+      R2: 0.8092555346550442
+      R3: -0.6230779868235429
     fold J03WN1:
-      R1: -1.8054184432168736
-      R2: -0.9330163282109207
-      R3: 0.5484783821105759
+      R1: -2.284164228339952
+      R2: 1.0069491038260403
+      R3: -0.3652172839004346
     fold J03WOH:
-      R1: -1.9289639978159867
-      R2: -1.1292469066654194
-      R3: 0.42397184426213774
+      R1: -2.415990640192282
+      R2: 1.172970499142652
+      R3: -0.5840593078789852
     fold J03WOY:
-      R1: -2.195045411736093
-      R2: -1.3188053759285814
-      R3: 0.21923310183266775
+      R1: -2.579539871274837
+      R2: 0.9007659152466311
+      R3: -0.6727831920813699
     fold J03WPY:
-      R1: -1.9582605762356189
-      R2: -1.0901600941601886
-      R3: 0.3894365117515838
+      R1: -2.357762467960066
+      R2: 0.9982555117332204
+      R3: -0.46483767915525176
     fold J03WQQ:
-      R1: -2.151190124892269
-      R2: -1.174244342780125
-      R3: 0.2425402508763772
+      R1: -2.6775114916505833
+      R2: 0.9958876405592615
+      R3: -0.6753571344566144
     fold J03WR9:
-      R1: -1.8718194792601186
-      R2: -1.0867721609859018
-      R3: 0.4891980061846558
+      R1: -2.296532226134285
+      R2: 1.2103411414658556
+      R3: -0.47845296273923676
   tried:
   - feature_set: full
+    C: 0.1
+    cv_log_loss: 0.25174635023322417
+    cv_log_loss_by_match:
+      J03WMX: 0.2586979088353072
+      J03WN1: 0.23531500507436748
+      J03WOH: 0.2223774843993155
+      J03WOY: 0.26151135399384234
+      J03WPY: 0.2209945865538292
+      J03WQQ: 0.2887196763797135
+      J03WR9: 0.27460843639619403
     r1_pass: true
     r2_pass: false
+    scenarios_all:
+      R1: -2.018418972435042
+      R2: -1.1463195444035656
+      R3: 0.34928089425388675
+  - feature_set: interactions
+    C: 1.0
+    cv_log_loss: 0.24764383240446491
+    cv_log_loss_by_match:
+      J03WMX: 0.25081721043399197
+      J03WN1: 0.22766884196703177
+      J03WOH: 0.22337996530621237
+      J03WOY: 0.257228502158229
+      J03WPY: 0.21571068724741022
+      J03WQQ: 0.2863699749354131
+      J03WR9: 0.27233164478296573
+    r1_pass: true
+    r2_pass: true
+    scenarios_all:
+      R1: -2.4397347106354816
+      R2: 1.034630416472754
+      R3: -0.555941307893963
 all:
   mean:
     has_ball: 0.5780623541379929
@@ -100,6 +136,11 @@ all:
     fast_in_pitch: 0.24685835677098916
     log_gap: 2.7119619299633255
     log_gap_missing: 0.0
+    exit_x_log_gap: 1.5422825272114222
+    long_x_log_gap: 1.1506339763614977
+    exit_x_speed: 0.3130517591435164
+    long_x_speed: 0.2550414818724579
+    speed_x_log_gap: 3.6550376353969805
   std:
     has_ball: 0.4938686757291199
     out_of_pitch: 0.19610801296087518
@@ -113,20 +154,30 @@ all:
     fast_in_pitch: 0.43118361339841765
     log_gap: 3.2137026446031873
     log_gap_missing: 1.0
+    exit_x_log_gap: 2.790614132394024
+    long_x_log_gap: 2.475607602257567
+    exit_x_speed: 0.671266097000484
+    long_x_speed: 0.6675620172544059
+    speed_x_log_gap: 5.498979005807195
   weights:
-    has_ball: -0.1638203345555178
-    out_of_pitch: 1.1336521823057781
-    gap_exit: 0.27868806381232797
-    gap_air: -0.11608594672592154
-    gap_long: -0.08362280657052193
-    still_frac: 0.3250468746631821
+    has_ball: 1.040828477770202
+    out_of_pitch: 1.157370640402652
+    gap_exit: 0.2264569743577463
+    gap_air: -0.07190029061618931
+    gap_long: -1.6590726946728998
+    still_frac: 0.28083529715125805
     still_frac_missing: 0.0
-    mean_speed: -2.645941738598992
+    mean_speed: -2.697296009776471
     mean_speed_missing: 0.0
-    fast_in_pitch: -1.3659039211104742
-    log_gap: 0.433169633753625
+    fast_in_pitch: -1.3695689173699648
+    log_gap: 3.743532229185228
     log_gap_missing: 0.0
-  intercept: -1.039994377068657
+    exit_x_log_gap: -1.952486440635579
+    long_x_log_gap: 0.31417022752425605
+    exit_x_speed: 2.1687856725127688
+    long_x_speed: 1.6543812319050857
+    speed_x_log_gap: -2.5482764860348857
+  intercept: -1.0517083983853435
   pi_d: 0.44838728980910775
   n_train: 200532
 folds:
@@ -144,6 +195,11 @@ folds:
       fast_in_pitch: 0.244855198496539
       log_gap: 2.722748885570216
       log_gap_missing: 0.0
+      exit_x_log_gap: 1.5245615424153265
+      long_x_log_gap: 1.1796379907983054
+      exit_x_speed: 0.31075208268657944
+      long_x_speed: 0.25896241302130196
+      speed_x_log_gap: 3.666441576006496
     std:
       has_ball: 0.49413057230999957
       out_of_pitch: 0.1962942307700527
@@ -157,20 +213,30 @@ folds:
       fast_in_pitch: 0.43000131426050253
       log_gap: 3.214677410548539
       log_gap_missing: 1.0
+      exit_x_log_gap: 2.775886748052034
+      long_x_log_gap: 2.5027967934617172
+      exit_x_speed: 0.6705917351762094
+      long_x_speed: 0.670390371046476
+      speed_x_log_gap: 5.511388828974747
     weights:
-      has_ball: -0.11839346118310999
-      out_of_pitch: 1.1332160765432553
-      gap_exit: 0.25629812570101534
-      gap_air: -0.10556316679210025
-      gap_long: -0.11795289348468121
-      still_frac: 0.2909591404077788
+      has_ball: 0.9869505413597789
+      out_of_pitch: 1.145431393630854
+      gap_exit: 0.200429145677331
+      gap_air: -0.06825139320852248
+      gap_long: -1.5638389900868073
+      still_frac: 0.2621552868243561
       still_frac_missing: 0.0
-      mean_speed: -2.6902926574347172
+      mean_speed: -2.6929370640734556
       mean_speed_missing: 0.0
-      fast_in_pitch: -1.3606247462581504
-      log_gap: 0.5418667840281008
+      fast_in_pitch: -1.3593710924674909
+      log_gap: 3.672396450805127
       log_gap_missing: 0.0
-    intercept: -0.9986300245688194
+      exit_x_log_gap: -1.8327442085081893
+      long_x_log_gap: 0.2642678412937333
+      exit_x_speed: 1.996872806244337
+      long_x_speed: 1.4903346829804967
+      speed_x_log_gap: -2.3886302070210217
+    intercept: -0.9895223265985462
     pi_d: 0.4540440532748135
     n_train: 171338
   J03WN1:
@@ -187,6 +253,11 @@ folds:
       fast_in_pitch: 0.25040210429743526
       log_gap: 2.7086610585892394
       log_gap_missing: 0.0
+      exit_x_log_gap: 1.5470795572912541
+      long_x_log_gap: 1.1426972180781854
+      exit_x_speed: 0.31714551086640885
+      long_x_speed: 0.2597739109422771
+      speed_x_log_gap: 3.7115301655826434
     std:
       has_ball: 0.4937499939847082
       out_of_pitch: 0.18962676633279663
@@ -200,20 +271,30 @@ folds:
       fast_in_pitch: 0.433244608115152
       log_gap: 3.2155245715352683
       log_gap_missing: 1.0
+      exit_x_log_gap: 2.797317860215338
+      long_x_log_gap: 2.467560295450392
+      exit_x_speed: 0.6834084902199233
+      long_x_speed: 0.6822658120863607
+      speed_x_log_gap: 5.616971593543955
     weights:
-      has_ball: -0.23025431864839577
-      out_of_pitch: 1.0773660661526578
-      gap_exit: 0.3218505496903269
-      gap_air: -0.11505584625520976
-      gap_long: -0.04473488046696968
-      still_frac: 0.3541764178598786
+      has_ball: 0.8740681027932417
+      out_of_pitch: 1.0846350040509793
+      gap_exit: 0.2815609567411076
+      gap_air: -0.10500907853462971
+      gap_long: -1.5112160671200532
+      still_frac: 0.3069989771676088
       still_frac_missing: 0.0
-      mean_speed: -2.578430112194769
+      mean_speed: -2.6013213212359876
       mean_speed_missing: 0.0
-      fast_in_pitch: -1.3788568727153745
-      log_gap: 0.2807498278351741
+      fast_in_pitch: -1.3777961470747706
+      log_gap: 3.78939003740147
       log_gap_missing: 0.0
-    intercept: -1.125217373485101
+      exit_x_log_gap: -2.1775583949075843
+      long_x_log_gap: -0.022328050454935838
+      exit_x_speed: 1.979171565167271
+      long_x_speed: 1.5065145441093746
+      speed_x_log_gap: -2.3683310219975597
+    intercept: -1.1287350286818987
     pi_d: 0.4371062426329267
     n_train: 172219
   J03WOH:
@@ -230,6 +311,11 @@ folds:
       fast_in_pitch: 0.2482884527612962
       log_gap: 2.7177877523543827
       log_gap_missing: 0.0
+      exit_x_log_gap: 1.5241286298135353
+      long_x_log_gap: 1.1753943804299793
+      exit_x_speed: 0.31139160903473556
+      long_x_speed: 0.25501883331698977
+      speed_x_log_gap: 3.644573880117833
     std:
       has_ball: 0.49397163649892645
       out_of_pitch: 0.1930096055720924
@@ -243,20 +329,30 @@ folds:
       fast_in_pitch: 0.4320200191966778
       log_gap: 3.215736365228999
       log_gap_missing: 1.0
+      exit_x_log_gap: 2.775170121729359
+      long_x_log_gap: 2.5021850657487215
+      exit_x_speed: 0.6694091970830298
+      long_x_speed: 0.6603530614229317
+      speed_x_log_gap: 5.458666872982099
     weights:
-      has_ball: -0.17757481722406926
-      out_of_pitch: 1.1014641400235479
-      gap_exit: 0.2723275180272104
-      gap_air: -0.09442312523102646
-      gap_long: -0.061090193245607265
-      still_frac: 0.3449583621427094
+      has_ball: 1.0704230766784457
+      out_of_pitch: 1.101771928542421
+      gap_exit: 0.3499782365392679
+      gap_air: -0.04017663709852098
+      gap_long: -1.8187319886229203
+      still_frac: 0.3060073792326406
       still_frac_missing: 0.0
-      mean_speed: -2.567767035851004
+      mean_speed: -2.5821975189626456
       mean_speed_missing: 0.0
-      fast_in_pitch: -1.3644403191907442
-      log_gap: 0.4047603884609682
+      fast_in_pitch: -1.3645932356333605
+      log_gap: 3.788968605736191
       log_gap_missing: 0.0
-    intercept: -1.0714258192638868
+      exit_x_log_gap: -2.0312733642099103
+      long_x_log_gap: 0.49170186639466534
+      exit_x_speed: 2.200973553065212
+      long_x_speed: 1.716779024960316
+      speed_x_log_gap: -2.6634639719854807
+    intercept: -1.0590742527941222
     pi_d: 0.4440201283732646
     n_train: 173089
   J03WOY:
@@ -273,6 +369,11 @@ folds:
       fast_in_pitch: 0.24653536715807098
       log_gap: 2.6960783998049886
       log_gap_missing: 0.0
+      exit_x_log_gap: 1.5294820665404953
+      long_x_log_gap: 1.1468744306679441
+      exit_x_speed: 0.3070009506024243
+      long_x_speed: 0.255793364674119
+      speed_x_log_gap: 3.6207651208958214
     std:
       has_ball: 0.49349419649881615
       out_of_pitch: 0.19794017905939368
@@ -286,20 +387,30 @@ folds:
       fast_in_pitch: 0.4309938281441001
       log_gap: 3.2111359944101365
       log_gap_missing: 1.0
+      exit_x_log_gap: 2.784491735176687
+      long_x_log_gap: 2.4709282839984286
+      exit_x_speed: 0.6638770784724379
+      long_x_speed: 0.6703284414152721
+      speed_x_log_gap: 5.485054050024311
     weights:
-      has_ball: -0.10392433168974402
-      out_of_pitch: 1.1709210517097617
-      gap_exit: 0.24345679724850117
-      gap_air: -0.13551835571221046
-      gap_long: -0.1162870108803433
-      still_frac: 0.33368448228685105
+      has_ball: 1.1470131006883002
+      out_of_pitch: 1.1926034420252627
+      gap_exit: 0.18130193388051383
+      gap_air: -0.06720803464403866
+      gap_long: -1.717692054108685
+      still_frac: 0.2947402222486044
       still_frac_missing: 0.0
-      mean_speed: -2.706977786010303
+      mean_speed: -2.820999266841127
       mean_speed_missing: 0.0
-      fast_in_pitch: -1.3539319732217903
-      log_gap: 0.5371306164259102
+      fast_in_pitch: -1.3592618983303157
+      log_gap: 3.5063034452814064
       log_gap_missing: 0.0
-    intercept: -1.0700320564928052
+      exit_x_log_gap: -1.6825626132922413
+      long_x_log_gap: 0.5673186889873504
+      exit_x_speed: 2.1973989135382674
+      long_x_speed: 1.7185603015076467
+      speed_x_log_gap: -2.5076194664317497
+    intercept: -1.1128737427423117
     pi_d: 0.4456587452913547
     n_train: 172024
   J03WPY:
@@ -316,6 +427,11 @@ folds:
       fast_in_pitch: 0.24393860668227382
       log_gap: 2.7104647026157025
       log_gap_missing: 0.0
+      exit_x_log_gap: 1.5436538223383132
+      long_x_log_gap: 1.1484443925741354
+      exit_x_speed: 0.313817689968078
+      long_x_speed: 0.2614384877311241
+      speed_x_log_gap: 3.693406898454291
     std:
       has_ball: 0.493954850930763
       out_of_pitch: 0.19701707771156907
@@ -329,20 +445,30 @@ folds:
       fast_in_pitch: 0.42945612447860687
       log_gap: 3.2086766984339747
       log_gap_missing: 1.0
+      exit_x_log_gap: 2.791164380613366
+      long_x_log_gap: 2.467612186029552
+      exit_x_speed: 0.6706378839104391
+      long_x_speed: 0.6789581449617952
+      speed_x_log_gap: 5.53134382869824
     weights:
-      has_ball: -0.14614419593200273
-      out_of_pitch: 1.129210068561359
-      gap_exit: 0.2664342838356423
-      gap_air: -0.12113369911769842
-      gap_long: -0.09335788057414549
-      still_frac: 0.3380449255480093
+      has_ball: 1.0183525469206303
+      out_of_pitch: 1.1533348960040786
+      gap_exit: 0.18472980861142474
+      gap_air: -0.07637559939443807
+      gap_long: -1.5910449078494158
+      still_frac: 0.3015612068603059
       still_frac_missing: 0.0
-      mean_speed: -2.554889159973874
+      mean_speed: -2.645344424283469
       mean_speed_missing: 0.0
-      fast_in_pitch: -1.3562848434091814
-      log_gap: 0.4674910808823247
+      fast_in_pitch: -1.3530492242816499
+      log_gap: 3.582105395348515
       log_gap_missing: 0.0
-    intercept: -0.996333206220576
+      exit_x_log_gap: -1.8539528523415498
+      long_x_log_gap: 0.2955286289820886
+      exit_x_speed: 2.091626507865813
+      long_x_speed: 1.6085678958697889
+      speed_x_log_gap: -2.3907185121291277
+    intercept: -1.027828536896681
     pi_d: 0.4493224900606577
     n_train: 171289
   J03WQQ:
@@ -359,6 +485,11 @@ folds:
       fast_in_pitch: 0.24613077768026828
       log_gap: 2.7145345784417745
       log_gap_missing: 0.0
+      exit_x_log_gap: 1.6088615580346137
+      long_x_log_gap: 1.0862918419082916
+      exit_x_speed: 0.31982498560939654
+      long_x_speed: 0.23825964847918962
+      speed_x_log_gap: 3.596158677095259
     std:
       has_ball: 0.4938301628900256
       out_of_pitch: 0.20159931457496114
@@ -372,20 +503,30 @@ folds:
       fast_in_pitch: 0.4307556360151016
       log_gap: 3.2185094786536244
       log_gap_missing: 1.0
+      exit_x_log_gap: 2.839832565000136
+      long_x_log_gap: 2.414232428823908
+      exit_x_speed: 0.6680126750804573
+      long_x_speed: 0.6406079320124989
+      speed_x_log_gap: 5.373100549372986
     weights:
-      has_ball: -0.15470406078418344
-      out_of_pitch: 1.2215428595943658
-      gap_exit: 0.29118113706293813
-      gap_air: -0.12337111666325683
-      gap_long: -0.11360257150871315
-      still_frac: 0.3236517882211996
+      has_ball: 1.0344489080472656
+      out_of_pitch: 1.2379046419746462
+      gap_exit: -0.00806267147134396
+      gap_air: -0.14672960808281782
+      gap_long: -1.5629600541963833
+      still_frac: 0.26272653381793676
       still_frac_missing: 0.0
-      mean_speed: -2.6699922475585502
+      mean_speed: -2.731309460401527
       mean_speed_missing: 0.0
-      fast_in_pitch: -1.365897376679228
-      log_gap: 0.4893362703971537
+      fast_in_pitch: -1.3660091338615004
+      log_gap: 4.801738777757875
       log_gap_missing: 0.0
-    intercept: -0.9714831878635622
+      exit_x_log_gap: -2.6623616508613623
+      long_x_log_gap: -0.42571867308507094
+      exit_x_speed: 2.2878558607297728
+      long_x_speed: 1.543520414355574
+      speed_x_log_gap: -2.6069454650384096
+    intercept: -0.9937632268274039
     pi_d: 0.45518211352818444
     n_train: 172063
   J03WR9:
@@ -402,6 +543,11 @@ folds:
       fast_in_pitch: 0.2478296430449261
       log_gap: 2.7134693258125493
       log_gap_missing: 0.0
+      exit_x_log_gap: 1.5181175988437898
+      long_x_log_gap: 1.1751961166639668
+      exit_x_speed: 0.3114195861988322
+      long_x_speed: 0.25609047111245026
+      speed_x_log_gap: 3.6525985283239413
     std:
       has_ball: 0.4939404262210758
       out_of_pitch: 0.1970417924733409
@@ -415,19 +561,29 @@ folds:
       fast_in_pitch: 0.4317523724001417
       log_gap: 3.211537317180694
       log_gap_missing: 1.0
+      exit_x_log_gap: 2.768682902997622
+      long_x_log_gap: 2.5015131025626163
+      exit_x_speed: 0.6726801939442404
+      long_x_speed: 0.6690048766990506
+      speed_x_log_gap: 5.512859198356174
     weights:
-      has_ball: -0.24641430213173446
-      out_of_pitch: 1.1258562872510547
-      gap_exit: 0.3169432053335192
-      gap_air: -0.12427712350282769
-      gap_long: -0.014406190240621218
-      still_frac: 0.3018762085514338
+      has_ball: 0.9744323048967339
+      out_of_pitch: 1.1285641292145376
+      gap_exit: 0.2663954381292328
+      gap_air: -0.17314572318984925
+      gap_long: -1.7630221036141311
+      still_frac: 0.24993827295361035
       still_frac_missing: 0.0
-      mean_speed: -2.7199389113349848
+      mean_speed: -2.7666873587502967
       mean_speed_missing: 0.0
-      fast_in_pitch: -1.370682460899768
-      log_gap: 0.2548179289017953
+      fast_in_pitch: -1.370395646656527
+      log_gap: 5.005414694320252
       log_gap_missing: 0.0
-    intercept: -1.0217585855549727
+      exit_x_log_gap: -3.1379729394439346
+      long_x_log_gap: -0.6205499013361814
+      exit_x_speed: 2.2799762720754337
+      long_x_speed: 1.7835136545129961
+      speed_x_log_gap: -2.727520938859875
+    intercept: -1.027817665604465
     pi_d: 0.4534673131974061
     n_train: 171170

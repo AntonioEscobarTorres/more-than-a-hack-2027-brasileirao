@@ -44,8 +44,8 @@ def synthetic_data(seed=0, n=4000, weights=TRUE_WEIGHTS, intercept=0.5, matches=
     rng = np.random.default_rng(seed)
     data = {}
     for m in matches:
-        X = cd.design_matrix(random_raw(n, rng), cd.FULL_FEATURES)
-        logit = intercept + sum(w * X[:, cd.FULL_FEATURES.index(f)] for f, w in weights.items())
+        X = cd.design_matrix(random_raw(n, rng), cd.ALL_FEATURES)
+        logit = intercept + sum(w * X[:, cd.ALL_FEATURES.index(f)] for f, w in weights.items())
         y = rng.random(n) < 1.0 / (1.0 + np.exp(-logit))
         data[m] = [(X, y)]
     return data
@@ -121,6 +121,37 @@ def test_ball_rest_and_ball_speed_are_never_features():
                                                                "log_gap_missing"}
 
 
+def test_interactions_are_products_of_the_imputed_factors():
+    raw = pd.DataFrame({"has_ball": [0.0, 0.0, 1.0], "out_of_pitch": [np.nan, np.nan, 0.0],
+                        "db_gap_kind": [GAP_EXIT, GAP_LONG, 0.0],
+                        "gap_length": [50.0, 400.0, 0.0],
+                        "db_still_frac": [0.2, 0.2, 0.2], "db_mean_speed": [2.5, np.nan, 1.0],
+                        "db_fast_in_pitch": [0.0, 0.0, 1.0]})
+    X = pd.DataFrame(cd.design_matrix(raw, cd.ALL_FEATURES), columns=cd.ALL_FEATURES)
+    assert np.isfinite(X.to_numpy()).all()
+    lg = np.log1p([50.0, 400.0, 0.0])
+    assert X["exit_x_log_gap"].tolist() == pytest.approx([lg[0], 0.0, 0.0])
+    assert X["long_x_log_gap"].tolist() == pytest.approx([0.0, lg[1], 0.0])
+    assert X["exit_x_speed"].tolist() == [2.5, 0.0, 0.0]
+    assert X["long_x_speed"].tolist() == [0.0, 0.0, 0.0]            # missing speed -> 0
+    assert X["mean_speed_missing"].tolist() == [0.0, 1.0, 0.0]      # ... flagged by its indicator
+    assert X["speed_x_log_gap"].tolist() == pytest.approx([2.5 * lg[0], 0.0, 0.0])
+    for name, (a, b) in cd.INTERACTIONS.items():
+        np.testing.assert_array_equal(X[name], X[a] * X[b])
+
+
+def test_feature_sets_and_interactions_are_consistent():
+    assert cd.ALL_FEATURES == cd.FULL_FEATURES + cd.INTERACTION_FEATURES
+    assert cd.FEATURE_SETS["interactions"] == cd.ALL_FEATURES
+    assert cd.CANDIDATE_SETS[0] == "full" and cd.FALLBACK_SET == "reduced"
+    for a, b in cd.INTERACTIONS.values():
+        assert a in cd.FULL_FEATURES and b in cd.FULL_FEATURES
+    # The reduced set (item 4) has no gap length, so no interaction either.
+    assert not set(cd.REDUCED_FEATURES) & set(cd.INTERACTION_FEATURES)
+    # The full set keeps the order of the base columns, so a full-feature design is a prefix.
+    assert cd._columns(cd.FULL_FEATURES) == list(range(len(cd.FULL_FEATURES)))
+
+
 def test_raw_features_follow_the_master():
     master, _ = toy_match(0, n_cycles=3)
     raw = cd.raw_features(master, P)
@@ -137,7 +168,7 @@ def test_match_design_uses_only_labelled_frames_inside_the_halves():
     labels[:10] = X
     labels[20:25] = X
     X_full, y = cd.match_design(master, labels, P)
-    assert X_full.shape == (len(master) - 15, len(cd.FULL_FEATURES))
+    assert X_full.shape == (len(master) - 15, len(cd.ALL_FEATURES))
     assert y.dtype == bool and y.sum() == (labels == D).sum()
 
 
@@ -204,7 +235,7 @@ def test_c_is_chosen_by_held_out_log_loss_and_ties_go_to_the_smaller_c(monkeypat
 
 def test_subsampling_keeps_one_frame_in_step():
     data = synthetic_data(seed=8, n=1000)
-    X_tr, y_tr = cd.training_rows(data, ["M1", "M2"], 5, list(range(len(cd.FULL_FEATURES))))
+    X_tr, y_tr = cd.training_rows(data, ["M1", "M2"], 5, list(range(len(cd.ALL_FEATURES))))
     assert X_tr.shape[0] == 2 * 200
     assert np.array_equal(X_tr[:200], data["M1"][0][0][::5])
 
@@ -287,26 +318,82 @@ def test_robustness_checks_r1_and_r2_on_every_model():
     assert set(check["values"]) == {"all", "fold M1", "fold M2"}
 
 
-def test_fallback_to_the_reduced_set_when_r1_fails(monkeypatch):
+SCEN_VALUES = {"R1": -1.0, "R2": 1.0, "R3": 0.0}
+
+
+def fake_robustness_by_set(r1_by_set):
+    """A robustness stub: R1 holds for the sets mapped to True; records the sets it sees."""
     seen = []
 
-    def fake_robustness(calib, features, gap_log_clip_frames=cd.GAP_LOG_CLIP_FRAMES):
-        seen.append(tuple(features))
-        ok = tuple(features) == cd.REDUCED_FEATURES
-        return {"values": {}, "r1_pass": ok, "r2_pass": True}
-    monkeypatch.setattr(cd, "robustness", fake_robustness)
+    def fake(calib, features, gap_log_clip_frames=cd.GAP_LOG_CLIP_FRAMES):
+        name = next(n for n, f in cd.FEATURE_SETS.items() if tuple(f) == tuple(features))
+        seen.append(name)
+        return {"values": {"all": dict(SCEN_VALUES)}, "r1_pass": r1_by_set[name],
+                "r2_pass": True}
+    return fake, seen
+
+
+def test_fallback_to_the_reduced_set_when_r1_fails_for_every_candidate(monkeypatch):
+    fake, seen = fake_robustness_by_set({"full": False, "interactions": False, "reduced": True})
+    monkeypatch.setattr(cd, "robustness", fake)
     result = cd.calibrate_with_fallback(synthetic_data(n=600), step=1)
-    assert seen == [cd.FULL_FEATURES, cd.REDUCED_FEATURES]
+    assert seen == ["full", "interactions", "reduced"]
     assert result["feature_set"] == "reduced" and result["features"] == list(cd.REDUCED_FEATURES)
     assert set(result["all"]["weights"]) == set(cd.REDUCED_FEATURES)
-    assert [t["feature_set"] for t in result["tried"]] == ["full", "reduced"]
+    assert [t["feature_set"] for t in result["tried"]] == ["full", "interactions", "reduced"]
 
 
-def test_no_fallback_when_r1_passes(monkeypatch):
-    monkeypatch.setattr(cd, "robustness", lambda *a, **k: {"values": {}, "r1_pass": True,
-                                                           "r2_pass": True})
+def test_the_set_with_the_lowest_log_loss_among_r1_passes_is_kept(monkeypatch):
+    # True model with an exit x speed interaction: the interactions set fits it better.
+    weights = {**TRUE_WEIGHTS, "exit_x_speed": 1.5}
+    data = synthetic_data(seed=21, n=3000, weights=weights)
+    fake, seen = fake_robustness_by_set({"full": True, "interactions": True, "reduced": True})
+    monkeypatch.setattr(cd, "robustness", fake)
+    result = cd.calibrate_with_fallback(data, step=1)
+    losses = {t["feature_set"]: t["cv_log_loss"] for t in result["tried"]}
+    assert seen == ["full", "interactions"] and set(losses) == {"full", "interactions"}
+    assert losses["interactions"] < losses["full"]
+    assert result["feature_set"] == "interactions"
+    assert result["features"] == list(cd.ALL_FEATURES)
+    for t in result["tried"]:
+        assert set(t["cv_log_loss_by_match"]) == set(MATCHES)
+        assert t["cv_log_loss"] == pytest.approx(np.mean(list(t["cv_log_loss_by_match"].values())))
+        assert t["scenarios_all"] == SCEN_VALUES
+    # A candidate that fails R1 is never kept, whatever its log-loss.
+    fake, _ = fake_robustness_by_set({"full": True, "interactions": False, "reduced": True})
+    monkeypatch.setattr(cd, "robustness", fake)
+    assert cd.calibrate_with_fallback(data, step=1)["feature_set"] == "full"
+
+
+def test_ties_in_the_set_log_loss_go_to_the_simpler_set(monkeypatch):
+    fake, _ = fake_robustness_by_set({"full": True, "interactions": True, "reduced": True})
+    monkeypatch.setattr(cd, "robustness", fake)
+    monkeypatch.setattr(cd, "log_loss", lambda y, logit: 1.0)
     result = cd.calibrate_with_fallback(synthetic_data(n=600), step=1)
-    assert result["feature_set"] == "full" and len(result["tried"]) == 1
+    assert result["feature_set"] == "full" and len(result["tried"]) == 2
+
+
+def test_r2_is_never_a_selection_criterion(monkeypatch):
+    weights = {**TRUE_WEIGHTS, "exit_x_speed": 1.5}
+    data = synthetic_data(seed=21, n=3000, weights=weights)
+
+    def fake(calib, features, gap_log_clip_frames=cd.GAP_LOG_CLIP_FRAMES):
+        r2 = tuple(features) == cd.FULL_FEATURES          # only the worse set passes R2
+        return {"values": {"all": dict(SCEN_VALUES)}, "r1_pass": True, "r2_pass": r2}
+    monkeypatch.setattr(cd, "robustness", fake)
+    result = cd.calibrate_with_fallback(data, step=1)
+    assert result["feature_set"] == "interactions" and not result["robustness"]["r2_pass"]
+
+
+def test_interactions_are_recovered_on_synthetic_data():
+    weights = {**TRUE_WEIGHTS, "exit_x_speed": 1.5, "speed_x_log_gap": -0.3}
+    result = cd.calibrate(synthetic_data(seed=23, n=4000, weights=weights), cd.ALL_FEATURES,
+                          step=1)
+    w = result["all"]["weights"]
+    assert w["exit_x_speed"] > 0 and w["speed_x_log_gap"] < 0
+    for f, true_w in TRUE_WEIGHTS.items():
+        if f != "mean_speed":                   # its weight alone is not its effect here
+            assert np.sign(w[f]) == np.sign(true_w), f
 
 
 # -- calibration file and the calibrated variant ---------------------------------------------------
@@ -355,7 +442,8 @@ def test_holdout_selects_the_right_fold(toy_calibration):
 def test_calibrated_logit_signs_on_the_toy_matches(toy_calibration):
     result, path = toy_calibration
     w = result["all"]["weights"]
-    assert w["out_of_pitch"] > 0 and w["fast_in_pitch"] < 0 and w["mean_speed"] < 0
+    assert w["out_of_pitch"] > 0 and w["fast_in_pitch"] < 0
+    assert cd.signs_ok(result["all"], result["features"])
     master, labels = toy_match(99, n_cycles=10)
     d = dead_logit_calibrated(master, params_with(path))
     assert d[labels == D].mean() > 0 > d[labels != D].mean()
@@ -445,7 +533,8 @@ def test_run_writes_the_four_files_and_the_report(tmp_path, monkeypatch):
     report = written["report"].read_text(encoding="utf-8")
     for text in ("## `dead`", "## `dead_pooled`", "## `dead_hidelo`", "## `dead_hidehi`",
                  "R1", "default log-loss", "hidehi AUC", "AUC of each feature alone",
-                 "Expected sign", "Empirical P(D)", "2.3-2.7 m/s"):
+                 "Expected signs", "Empirical P(D)", "2.3-2.7 m/s", "Feature-set choice",
+                 "Gaps of at most", "The scenarios against the data", "`exit_x_speed`"):
         assert text in report
 
 
@@ -482,3 +571,109 @@ def test_dead_rate_by_speed_bins_and_gap_kinds():
     assert no_gap["> 3.5"] == (0.0, 1)                  # the NaN-speed frame is left out
     assert sum(n for _, n in rates["no long gap"]) == 1
     assert np.isnan(rates["air gap"][0][0]) and rates["air gap"][0][1] == 0
+
+
+# -- effective slopes, scenario cells -------------------------------------------------------------
+def test_effective_slopes_add_the_interaction_terms():
+    feats = cd.ALL_FEATURES
+    model = unit_model(feats, {"mean_speed": -2.0, "exit_x_speed": 1.5, "speed_x_log_gap": -0.1,
+                               "out_of_pitch": 1.0, "fast_in_pitch": -1.0})
+    model["std"]["mean_speed"] = 2.0                     # slopes are per raw unit
+    rows = {"exit": {f: 0.0 for f in feats}, "plain": {f: 0.0 for f in feats}}
+    rows["exit"].update({"gap_exit": 1.0, "log_gap": 3.0})
+    slopes = cd.effective_slopes(model, feats, rows)
+    assert set(slopes) == set(cd.EXPECTED_SIGNS)
+    assert slopes["mean_speed"]["plain"] == pytest.approx(-1.0)
+    assert slopes["mean_speed"]["exit"] == pytest.approx(-1.0 + 1.5 - 0.3)
+    assert slopes["out_of_pitch"] == {"exit": 1.0, "plain": 1.0}
+    # Without interactions the slope is w / std at every row, so the old check is unchanged.
+    base = unit_model(cd.FULL_FEATURES, {"mean_speed": -2.0, "out_of_pitch": 1.0,
+                                         "fast_in_pitch": -1.0})
+    assert cd.signs_ok(base, cd.FULL_FEATURES)
+    assert not cd.signs_ok({**base, "weights": {**base["weights"], "fast_in_pitch": 0.5}},
+                           cd.FULL_FEATURES)
+    # An interaction that flips the speed slope at a scenario fails the check.
+    flip = unit_model(feats, {"mean_speed": -1.0, "exit_x_speed": 2.0, "out_of_pitch": 1.0,
+                              "fast_in_pitch": -1.0})
+    assert not cd.signs_ok(flip, feats)
+
+
+def test_dead_rate_by_speed_can_keep_only_short_gaps():
+    raw = pd.DataFrame({
+        "has_ball": [0, 0, 0, 1], "out_of_pitch": np.nan,
+        "db_gap_kind": [GAP_EXIT, GAP_EXIT, GAP_LONG, 0],
+        "gap_length": [50.0, 900.0, 80.0, 0.0], "db_still_frac": 0.2,
+        "db_mean_speed": 2.5, "db_fast_in_pitch": 0.0})
+    X1 = cd.design_matrix(raw, cd.ALL_FEATURES)
+    y = np.array([True, False, False, True])
+    labels = cd.speed_bin_labels()
+    every = cd.dead_rate_by_speed({"M1": (X1, y)})
+    short = cd.dead_rate_by_speed({"M1": (X1, y)}, max_gap_frames=100)
+    assert dict(zip(labels, every["exit gap"]))["2.3-2.7"] == (0.5, 2)
+    assert dict(zip(labels, short["exit gap"]))["2.3-2.7"] == (1.0, 1)
+    assert dict(zip(labels, short["long gap"]))["2.3-2.7"] == (0.0, 1)
+    np.testing.assert_equal(short["no long gap"], every["no long gap"])     # NaN-aware
+    with pytest.raises(ValueError, match="below"):
+        cd.dead_rate_by_speed({"M1": (X1, y)}, max_gap_frames=cd.GAP_LOG_CLIP_FRAMES)
+
+
+def _gap_rows(kind, length, speed, n_dead, n_live):
+    n = n_dead + n_live
+    raw = pd.DataFrame({"has_ball": 0.0, "out_of_pitch": np.nan, "db_gap_kind": float(kind),
+                        "gap_length": float(length), "db_still_frac": 0.2,
+                        "db_mean_speed": speed, "db_fast_in_pitch": 0.0}, index=range(n))
+    return cd.design_matrix(raw, cd.ALL_FEATURES), np.r_[np.ones(n_dead), np.zeros(n_live)] == 1
+
+
+def _visible_rows(n):
+    raw = pd.DataFrame({"has_ball": 1.0, "out_of_pitch": 0.0, "db_gap_kind": 0.0,
+                        "gap_length": 0.0, "db_still_frac": 0.2, "db_mean_speed": 2.5,
+                        "db_fast_in_pitch": 0.0}, index=range(n))
+    return cd.design_matrix(raw, cd.ALL_FEATURES), np.zeros(n, dtype=bool)
+
+
+def test_gap_runs_split_gaps_at_observed_frames_and_length_changes():
+    parts = [_gap_rows(GAP_EXIT, 50, 2.5, 2, 1), _visible_rows(2),
+             _gap_rows(GAP_EXIT, 50, 2.5, 1, 1), _gap_rows(GAP_LONG, 60, 2.5, 0, 2)]
+    X1 = np.vstack([p[0] for p in parts])
+    assert cd._gap_runs(X1).tolist() == [0, 0, 0, -1, -1, 1, 1, 2, 2]
+
+
+def test_scenario_cells_estimate_d_and_resample_whole_gaps():
+    parts = [_gap_rows(GAP_EXIT, 50, 2.5, 30, 10), _visible_rows(3),
+             _gap_rows(GAP_EXIT, 60, 2.4, 20, 20), _visible_rows(3),
+             _gap_rows(GAP_EXIT, 900, 2.5, 0, 50),          # too long: outside the cell
+             _visible_rows(3),
+             _gap_rows(GAP_EXIT, 50, 1.0, 40, 0),           # too slow: outside the cell
+             _visible_rows(3),
+             _gap_rows(GAP_LONG, 40, 2.6, 2, 38)]
+    X1 = np.vstack([p[0] for p in parts])
+    y = np.concatenate([p[1] for p in parts])
+    cells = cd.scenario_cells({"M1": (X1, y)}, pi_d=0.5)
+    r2, r1 = cells["R2"], cells["R1"]
+    assert (r2["n_frames"], r2["n_gaps"]) == (80, 2)
+    assert r2["p_dead"] == pytest.approx(50 / 80)
+    assert r2["d"] == pytest.approx(np.log(50 / 30))
+    assert r2["low"] <= r2["d"] <= r2["high"]
+    assert (r1["n_frames"], r1["n_gaps"]) == (40, 1) and r1["d"] < 0
+    # One gap only: every bootstrap draw is that gap, so the interval collapses on d.
+    assert r1["low"] == pytest.approx(r1["d"]) and r1["high"] == pytest.approx(r1["d"])
+    again = cd.scenario_cells({"M1": (X1, y)}, pi_d=0.5)
+    assert again == cells
+    empty = cd.scenario_cells({"M1": _visible_rows(5)}, pi_d=0.5)
+    assert empty["R2"]["n_frames"] == 0 and np.isnan(empty["R2"]["d"])
+
+
+def test_files_with_interactions_validate_and_unknown_features_do_not(toy_calibration, tmp_path):
+    _, path = toy_calibration
+    doc = cd.load_calibration(path)
+    model = unit_model(cd.ALL_FEATURES, {"exit_x_speed": 0.5})
+    good = {**doc, "features": list(cd.ALL_FEATURES), "all": model,
+            "folds": {m: model for m in MATCHES}}
+    target = tmp_path / "inter.yaml"
+    target.write_text(yaml.safe_dump(good), encoding="utf-8")
+    assert cd.load_calibration(target)["features"] == list(cd.ALL_FEATURES)
+    bad = {**good, "features": list(cd.ALL_FEATURES) + ["ball_x_speed"]}
+    target.write_text(yaml.safe_dump(bad), encoding="utf-8")
+    with pytest.raises(ValueError, match="feature list"):
+        cd.load_calibration(target)

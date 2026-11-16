@@ -55,7 +55,7 @@ Modelo:
 | [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente (`harder`/`easier` substituídos pela D-017) |
 | [D-017](#d-017--harder-e-easier-pelo-apêndice-a6-e-estatísticas-originais-do-realismo-f4-04) | 2026-11-15 | `harder`/`easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04) | Vigente |
 | [D-018](#d-018--hazard-de-troca-de-posse-ajuste-e-checagens-f1-08) | 2026-11-15 | Hazard de troca de posse: ajuste e checagens (F1-08) | Vigente |
-| [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente |
+| [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente (R2 revisado) |
 
 ## Decisões
 
@@ -629,7 +629,7 @@ Modelo:
 
 ### D-019 — Calibração do `dead_logit` no IDSSE: features e o R2
 
-- **Data:** 2026-11-15
+- **Data:** 2026-11-15 (revisada no mesmo dia: R2)
 - **Autor:** Bernardo (F3, F3-04)
 - **Status:** Vigente
 - **Decisão:**
@@ -642,46 +642,69 @@ Modelo:
      de validação usa os frames subamostrados da partida de fora.
   4. **O arquivo guarda os `dead.params` que constroem as features**, e o tipo `calibrated` recusa um config
      com valores diferentes (os pesos das tags podem mudar).
-  5. **Resultado:** os 4 arquivos (`dead`, `dead_pooled`, `dead_hidelo`, `dead_hidehi`) usam o conjunto
-     completo de features, `C = 0,1`, e têm os três sinais esperados. **R1 passa** em todos os modelos
-     (`d_fit` ≈ −2), então o recuo para o conjunto reduzido não foi necessário. **R2 falha** em todos
-     (`d_fit` ≈ −1,1 no `dead.yaml`).
-  6. **O R2 fica como está, e o `calibrated` segue para a F2-06.** A tarefa só define o que fazer quando o
-     R1 falha. Os dados do IDSSE contradizem o R2 (abaixo), então nenhum ajuste fiel aos dados o faz
-     passar. O protocolo da Seção 6 decide pelo spellF1 se o `calibrated` substitui o `rules_v1`. Pela
-     regra 11, a falha e um pedido de revisão do R2 vão para a issue #81 (F5).
-- **Por que o R2 falha (diagnóstico, só com dados do IDSSE):** o R2 fixa a velocidade média dos jogadores em
-  2,5 m/s. No IDSSE degradado, nos frames de bola morta dentro de uma lacuna de saída, a mediana dessa
-  velocidade é ~1,0 m/s (quartil superior ~1,3), e 2,5 m/s é típico de bola viva. O modelo aprende isso: a
-  velocidade dos jogadores é a feature mais forte (AUC sozinha ≈ 0,93, no sentido "jogo vivo"), e a saída
-  de bola soma só ~+0,9 ao `d_fit`. O `d_fit` do R2 cruza zero com os jogadores a ~1,9 m/s. Efeito
-  esperado no BAR-ATH: a bola morta começa quando os jogadores desaceleram, não no frame em que a bola
-  sai. Em comparação, o `rules_v1` dá +3,0 no R2, mas também +0,5 no R1, ou seja, falha o R1.
-- **O R2 contradiz os dados:** nos frames de lacuna classificada como saída, com os jogadores entre 2,3 e
-  2,7 m/s, só 26% são bola morta (9.684 frames, 7 partidas, `default`). O detector de saída da F3-01 também
-  dispara em jogo corrido. Pelos dados, o valor fiel para o R2 é ≈ −0,85 (`logit(0,26) − logit(π_D)`); o
-  modelo dá −1,1. Tabela completa por tipo de lacuna e faixa de velocidade em `reports/calibration_dead.md`.
-  Um R2 coerente com os dados teria os jogadores a ~1,5 m/s, o estado típico logo depois de uma saída real
-  (89% de bola morta entre 1,0 e 1,5 m/s).
-- **Opções consideradas:**
-  - conjunto reduzido de features: não ajuda o R2, porque tira `has_ball` e `log_gap`, que hoje empurram o
-    R2 para cima;
-  - forçar o R2 a passar (peso mínimo para `gap_exit`, ou +3 fixo como no `rules_v1`): descartada. Marcaria
-    bola morta onde o IDSSE tem jogo vivo em 74% dos frames, e um D falso no meio de uma posse custa em dobro
-    no spellF1; seria também um número escolhido por nós contra os dados externos;
-  - interação `gap_exit` × velocidade: não resolve, porque mesmo restrito às saídas o IDSSE tem jogo vivo
-    na maioria dos frames a 2,5 m/s;
-  - melhorar o detector de saída da F3-01 para disparar menos em jogo vivo: é a correção de fundo, mas muda
-    features compartilhadas com o `rules_v1` e não cabe antes da entrega. Fica como melhoria futura no
-    relatório técnico;
-  - não entregar os arquivos: descartada. O protocolo da Seção 6 mede o efeito real (spellF1 no IDSSE), e
-    os arquivos marcam `robustness.r2_pass: false`.
-- **Evidência:** `reports/calibration_dead.md` (log-loss, AUC, R1–R3 por dobra, AUC de cada feature
-  sozinha). Avaliação cruzada: log-loss média do `dead` no `hidelo` +9,1% e no `hidehi` −15,0% em relação
-  ao `default`; no `dead_pooled`, `hidelo` fica em +10,0%, no limite do item 5 sem passar dele. Nenhuma
-  feature da bola tem AUC alta sozinha. O ajuste é reprodutível: rodando de novo, os 4 arquivos saem
-  idênticos byte a byte. Testes: `tests/test_modeling_calibration_dead.py` (30 testes sintéticos) e teste
-  de mutação manual (15 alterações, todas detectadas).
+  5. **Interações entre os três fatores de uma lacuna** (conjunto `interactions`): os produtos dois a dois do
+     tipo de lacuna (`gap_exit`, `gap_long`), do comprimento (`log_gap`) e da velocidade média dos jogadores
+     (`mean_speed`): `exit_x_log_gap`, `long_x_log_gap`, `exit_x_speed`, `long_x_speed` e `speed_x_log_gap`. Os
+     produtos usam os valores já imputados, e o indicador de cada fator continua marcando a falta (regra 4).
+     A lacuna aérea fica sem interação: é rara e nunca passa de `air_max_frames`.
+  6. **O conjunto é escolhido pela log-loss, nunca pelo R2.** O ajuste roda o `full` e o `interactions` e
+     fica com o de menor log-loss média com uma partida de fora entre os que passam no R1 em todos os
+     modelos; empate fica com o `full`, o mais simples. Se nenhum passar no R1, entra o `reduced` (item 4 da
+     atualização de 11/11). O R2 só é relatado. O relatório mostra os dois conjuntos lado a lado.
+  7. **Sinais esperados pela inclinação efetiva.** Com interações, o peso de `mean_speed` sozinho não é o
+     efeito da velocidade. A checagem usa a inclinação do `d_fit` em cada feature, na média do treino e em
+     cada cenário R1–R3. Sem interações ela coincide com a checagem antiga (sinal do peso).
+  8. **Resultado:** os 4 arquivos usam o `interactions`, com os três sinais esperados. No `dead.yaml`
+     (`C = 1,0`), a log-loss com uma partida de fora cai de 0,2517 (`full`) para 0,2476 e melhora em 6 das 7
+     partidas. **R1 e R2 passam nos 8 modelos**: R1 = −2,44 no `all` (dobras de −2,68 a −2,28), R2 = +1,03
+     (dobras de +0,81 a +1,21). O R3 vai de +0,35 para −0,56, ou seja, a posse cadenciada com lacuna agora
+     puxa para jogo vivo. `dead_pooled` e `dead_hidehi` também passam no R2 (+0,89 e +1,49). **O
+     `dead_hidelo` falha no R2** (−0,44; ver abaixo). O `calibrated` segue para a F2-06.
+- **Por que o R2 falhava no conjunto `full` (e por que a versão anterior desta decisão estava errada):** a
+  versão anterior dizia que os dados do IDSSE contradizem o R2, porque só 26% dos frames de lacuna de saída
+  com os jogadores entre 2,3 e 2,7 m/s são bola morta. Esse número junta lacunas de todos os comprimentos, e
+  o R2 fixa `gap_length = 50`. Só com as lacunas de até 100 frames, a mesma faixa de velocidade tem 0,56 de
+  bola morta (296 frames); com todas, 0,26, porque as lacunas de centenas de frames dominam a contagem. Uma
+  lacuna de saída longa com os jogadores correndo é quase sempre jogo vivo depois do reinício, com a bola
+  ainda invisível; uma curta é a bola morta que acabou de começar. Nos frames parecidos com cada cenário
+  (mesmo tipo de lacuna, lacuna ≤ 100 frames, jogadores a ±0,4 m/s), o valor fiel aos dados é
+  **R1 = −2,27 [−3,38; −1,59]** e **R2 = +0,70 [+0,07; +1,27]** (intervalo de 90%, bootstrap por lacuna,
+  39 lacunas no R2). O `full` acerta o R1 (−2,02),
+  mas dá −1,15 no R2, fora do intervalo. Com um único coeficiente para `log_gap`, ele aprende "lacuna longa ⇒
+  bola morta", que vale com os jogadores lentos e se inverte com eles correndo. O `interactions` fica dentro
+  dos dois intervalos (−2,44 e +1,03). O pedido de revisão do R2 (jogadores a ~1,5 m/s) feito na issue #81
+  fica sem efeito.
+- **Limite (`hidelo`):** no `hidelo` a bola fica escondida em menos bolas mortas (`p_unfreeze_hide` 0,25).
+  Duas coisas pioram ali. O dado do cenário fica fraco: R2 = +0,57 [−0,24; +1,27] (32 lacunas), com o
+  intervalo cruzando o zero. E o `dead_hidelo` fica abaixo dos dados nos dois cenários: R1 = −3,74 (dados
+  −2,24 [−3,61; −1,51]) e R2 = −0,44, negativo com qualquer `C` da grade (−0,59 a −0,41, exploração desta
+  revisão). Ou seja, o R2 depende de quanto a bola some na bola morta, a principal incerteza da D-016. O
+  `dead_hidelo` não entra na seleção (item 7 da atualização de 11/11), mas a checagem de estabilidade da
+  F2-06 deve olhar esse ponto. O `dead_pooled`, que vê os três modos, passa no R2 (+0,89).
+- **Avaliação cruzada (item 5):** log-loss média do `dead` com cada dobra na partida de fora: `default`
+  0,2479, `hidelo` 0,2733 e `hidehi` 0,2097, menores que as do `full` nos três modos (0,2519, 0,2750 e
+  0,2142). Em relação ao `default`, o `hidelo` fica +10,3% (+10,8% no `dead_pooled`), acima do limite de
+  10% do item 5: fica registrado aqui. A razão sobe porque o `default` melhora mais que o `hidelo`, não
+  porque o `hidelo` piora.
+- **Opções consideradas** (os números das variantes intermediárias vêm da exploração desta revisão, com o
+  mesmo ajuste e as mesmas dobras, e não estão no relatório):
+  - manter o `full` com o R2 falhando (versão anterior desta decisão): descartada, porque os dados apoiam o
+    R2 no comprimento de lacuna do cenário e o `interactions` tem log-loss menor;
+  - forçar o R2 a passar (peso mínimo para `gap_exit`, ou +3 fixo como no `rules_v1`): descartada. Seria um
+    número escolhido por nós, e o R2 nunca entra na escolha;
+  - só `gap_exit` × velocidade: log-loss quase igual à do `full` e R2 ainda negativo (−0,91);
+  - só os produtos com `log_gap`: R2 positivo, mas com margem de +0,01 a +0,02 na pior dobra e log-loss pior
+    que a do conjunto completo de interações;
+  - uma feature de posição dentro da lacuna (frames desde o início): é a descrição mais fiel (a evidência da
+    saída está no começo da lacuna), mas os cenários da tarefa não dizem a posição, então pediria uma
+    mudança da especificação (regra 11). Fica como melhoria futura;
+  - melhorar o detector de saída da F3-01: não ataca a causa principal (lacunas que atravessam o reinício) e
+    muda features compartilhadas com o `rules_v1`.
+- **Evidência:** `reports/calibration_dead.md`: escolha do conjunto (log-loss por partida e R1–R3 de cada
+  conjunto), cenários contra os dados com intervalo, tabela de P(D) com todas as lacunas e só com as de até
+  100 frames, inclinações efetivas, avaliação cruzada e AUC de cada feature sozinha. O ajuste é
+  reprodutível: rodando de novo, os 4 arquivos e o relatório saem idênticos byte a byte. Testes:
+  `tests/test_modeling_calibration_dead.py` (sintéticos).
 
 ## Registro de envios
 

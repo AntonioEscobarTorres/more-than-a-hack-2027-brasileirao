@@ -222,15 +222,19 @@ the rule and where it is implemented.*
   degraded IDSSE matches (dead vs live ball, one match left out at a time), turned into a likelihood
   ratio by subtracting the prior log-odds of the training data. Its inputs are ball availability,
   ball out of the pitch, the kind of ball gap, the share of still players, the mean player speed, a
-  fast ball inside the pitch and the gap length. The ball speed and a ball at rest are left out on
-  purpose: on the external matches the ball freezes during dead balls, so they would leak the label.
-  The tag terms keep the priors above, because IDSSE has no tags. The fitted model has the expected
-  signs, and a ball gap during live play pushes towards live play. It also shows the limit of the
-  data: the mean player speed is its strongest input, so a ball that leaves the pitch while the
-  players are still running is only marked dead once they slow down. On IDSSE that is what the data
-  says: with the players at 2.3–2.7 m/s, only 26% of the frames in a gap classified as an exit are
-  dead balls, because the exit detector also fires during live play. A sharper exit detector is the
-  improvement we would make with more time. Whether it replaces the rules
+  fast ball inside the pitch and the gap length, plus the pairwise products of the gap kind, the gap
+  length and the player speed. The ball speed and a ball at rest are left out on purpose: on the
+  external matches the ball freezes during dead balls, so they would leak the label. The tag terms
+  keep the priors above, because IDSSE has no tags. The products are there because the meaning of a
+  gap depends on its length and on the players: a short exit gap with the players still running is
+  mostly a dead ball that has just started, while a long one is mostly live play after the restart,
+  with the ball still unseen. Without them the fit treated both alike, so a ball that had just left
+  the pitch stayed live until the players slowed down. With them, the held-out log-loss is lower in
+  6 of the 7 matches and both robustness checks hold: a ball gap during live play pushes towards
+  live play, and a ball leaving the pitch with the players running pushes towards a dead ball, close
+  to what the IDSSE frames of each situation show. The inputs are chosen by the held-out log-loss,
+  never by these checks. The second check weakens when the degraded ball is hidden in fewer dead
+  balls, the main uncertainty of the degradation. Whether the calibrated variant replaces the rules
   is decided by the protocol of Section 5. Implemented in `modeling/calibration/dead.py`; results in
   `reports/calibration_dead.md`.
 - **Before kick-off.** The graded block of the second half opens before its kick-off: those 2,934
