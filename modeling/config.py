@@ -179,6 +179,7 @@ TEAM_SCHEMA = {
         "touch_win_frames": Opt(Int(ge=1)),
         "touch_dir_change_rad": Opt(_POS),
         "touch_acc_mps2": Opt(_POS),
+        "touch_require_abrupt": Opt(Bool()),
         "w_tag_phase": Opt(_ANY),
         "w_sp_team": Opt(_ANY),
         "tau_sp_team": Opt(_POS),

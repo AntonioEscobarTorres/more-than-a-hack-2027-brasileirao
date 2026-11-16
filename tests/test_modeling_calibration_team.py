@@ -341,3 +341,32 @@ def test_report_has_touch_selection_and_per_match_decoder_rows():
     assert "variant written to the calibration file: `touch`" in md
     assert "## Touch thresholds" in md
     assert "| m2 | 0.4000 | 0.6000 | +2.00 |" in md
+
+
+def test_touch_without_abrupt_condition_is_persistence_only():
+    n = 40
+    d_home = np.full(n, 8.0)
+    d_away = np.full(n, 8.0)
+    d_home[10:20] = 1.0
+    d_away[10:20] = 5.0
+    master = make_master(n, d_near_home=d_home, d_near_away=d_away,
+                         ball_acc=0.0, ball_dir_change=0.0)
+    with_abrupt = build_touch_feature(master, team_params()).to_numpy()
+    without = build_touch_feature(master, {**team_params(), "touch_require_abrupt": False})
+    assert np.all(np.nan_to_num(with_abrupt) == 0.0)
+    assert without.to_numpy()[14] > 0.0 and without.to_numpy()[30] == 0.0
+
+
+def test_touch_require_abrupt_is_recorded_and_shrinks_the_grid():
+    from modeling.calibration.team import select_touch_params
+
+    matches = _three_matches()
+    cfg = _dummy_cfg()
+    cfg["team"]["params"] = {**cfg["team"]["params"], "touch_require_abrupt": False}
+    kw = dict(matches=list(matches), load_fn=lambda m, d: matches[m])
+    table = calibrate_team(cfg, variant="touch", **kw)
+    assert table["feature_params"]["touch_require_abrupt"] is False
+    sel = select_touch_params(cfg, grid=None, **kw)
+    assert sel["require_abrupt"] is False
+    assert len(sel["grid"]["touch_acc_mps2"]) == 1 and len(sel["grid"]["touch_dir_change_rad"]) == 1
+    assert len(sel["results"]) == 9

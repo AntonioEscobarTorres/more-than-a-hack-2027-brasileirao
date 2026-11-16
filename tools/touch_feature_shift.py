@@ -18,19 +18,23 @@ than in training and the calibrated ``team_logit`` loses part of its evidence. A
 frames with a valid ball inside a half. The tested value is the BAR-ATH master; the reference is
 the mean over the degraded external masters (every selected match x degradation).
 
-Eliminatory check (decides the overall result and the exit code):
+Checks (which ones are eliminatory depends on the calibration file):
 
   (a)  share of valid-ball frames where the abrupt-change condition holds is within
-       ``ABRUPT_SHARE_TOL_ABS`` (absolute) of the reference.
-
-Informative checks (printed as PASS/FAIL, never change the overall result: play styles differ):
-
-  (b)  share of valid-ball frames where ``f9 != 0`` within ``TOUCH_SHARE_TOL_REL`` (relative);
+       ``ABRUPT_SHARE_TOL_ABS`` (absolute) of the reference. Eliminatory when the calibration
+       requires the condition (``touch_require_abrupt``, default true); otherwise reported as
+       PASS "not used".
+  (b)  share of valid-ball frames where ``f9 != 0`` within ``TOUCH_SHARE_TOL_REL`` (relative).
+       Eliminatory when the touch uses persistence only (``touch_require_abrupt: false``, D-021):
+       ``f9`` then depends on nothing else; informative otherwise (it follows (a)).
   (c)  share of half frames with ``|team_logit| >= STRONG_LOGIT`` within
-       ``STRONG_SHARE_TOL_REL`` (relative).
+       ``STRONG_SHARE_TOL_REL`` (relative). Always informative (play styles differ).
 
-If (a) FAILs, refit ``configs/calib/team.yaml`` without the touch feature (``--variant base``) or
-drop the abrupt-change condition, both on the IDSSE only.
+Without the touch feature (``f9`` absent, for example ``configs/calib/team_base.yaml``) (a) and
+(b) are reported as PASS "not used".
+
+If an eliminatory check FAILs, use a calibration without the touch (``configs/v2_base.yaml``),
+fitted on the IDSSE only.
 
 Exit code 0 on PASS, 1 on FAIL, 2 if the inputs could not be loaded.
 """
@@ -52,6 +56,7 @@ import games  # noqa: E402
 from modeling import io  # noqa: E402
 from modeling.config import load_config  # noqa: E402
 from modeling.evidence.team import (  # noqa: E402
+    build_touch_feature,
     load_team_calibration,
     team_logit_calibrated,
     touch_components,
@@ -89,7 +94,8 @@ def master_statistics(master: pd.DataFrame, params: dict, calibration_file: str)
     comp = touch_components(master, f_params)
     valid = comp["valid"]
     n_valid = int(valid.sum())
-    touch = comp["abrupt"] & comp["persist"] & np.isfinite(comp["f1"]) & (comp["f1"] != 0.0)
+    f9 = build_touch_feature(master, f_params).to_numpy(dtype="float64")
+    touch = np.isfinite(f9) & (f9 != 0.0)
     in_half = master["half"].to_numpy() != 0
     t = team_logit_calibrated(master, {**params, "calibrated_file": str(calibration_file)},
                               holdout=None).astype("float64")[in_half]
@@ -113,20 +119,37 @@ def _relative(key, title, tested, ref, tol, eliminatory) -> CheckResult:
                        "{:.4f} vs {:.4f} ({:+.1%})".format(tested, ref, rel))
 
 
-def run_checks(reference: dict, degraded: list[dict]) -> list[CheckResult]:
+def calibration_mode(calibration_file: str) -> tuple[bool, bool]:
+    """``(uses_touch, require_abrupt)`` of a team calibration file."""
+    calibration = load_team_calibration(calibration_file)
+    uses_touch = "f9" in calibration["ball"]["features"]
+    require_abrupt = bool(calibration.get("feature_params", {}).get("touch_require_abrupt", True))
+    return uses_touch, require_abrupt
+
+
+def run_checks(reference: dict, degraded: list[dict], *, uses_touch: bool = True,
+               require_abrupt: bool = True) -> list[CheckResult]:
     """``reference`` is the BAR-ATH; ``degraded`` holds one statistics dict per external master."""
-    tested, ref = reference["abrupt_share"], _mean(degraded, "abrupt_share")
-    if tested is None or ref is None:
-        results = [CheckResult("a", "abrupt-change share within tolerance", False, True,
-                               "no valid-ball frame")]
+    if not uses_touch:
+        results = [CheckResult("a", "abrupt-change share (not used)", True, False),
+                   CheckResult("b", "touch share (not used)", True, False)]
     else:
-        diff = tested - ref
-        results = [CheckResult("a", "abrupt-change share within tolerance",
-                               abs(diff) <= ABRUPT_SHARE_TOL_ABS, True,
-                               "{:.4f} vs {:.4f} ({:+.4f})".format(tested, ref, diff))]
-    results.append(_relative("b", "touch share within tolerance (informative)",
-                             reference["touch_share"], _mean(degraded, "touch_share"),
-                             TOUCH_SHARE_TOL_REL, False))
+        if not require_abrupt:
+            results = [CheckResult("a", "abrupt-change share (not used)", True, False)]
+        else:
+            tested, ref = reference["abrupt_share"], _mean(degraded, "abrupt_share")
+            if tested is None or ref is None:
+                results = [CheckResult("a", "abrupt-change share within tolerance", False, True,
+                                       "no valid-ball frame")]
+            else:
+                diff = tested - ref
+                results = [CheckResult("a", "abrupt-change share within tolerance",
+                                       abs(diff) <= ABRUPT_SHARE_TOL_ABS, True,
+                                       "{:.4f} vs {:.4f} ({:+.4f})".format(tested, ref, diff))]
+        title = "touch share within tolerance" + ("" if not require_abrupt else " (informative)")
+        results.append(_relative("b", title, reference["touch_share"],
+                                 _mean(degraded, "touch_share"), TOUCH_SHARE_TOL_REL,
+                                 not require_abrupt))
     results.append(_relative("c", "strong team_logit share within tolerance (informative)",
                              reference["strong_share"], _mean(degraded, "strong_share"),
                              STRONG_SHARE_TOL_REL, False))
@@ -177,7 +200,9 @@ def main(argv=None) -> int:
     except (OSError, ValueError, KeyError) as exc:  # ConfigError is a ValueError
         print("FAIL  could not load inputs: {}".format(type(exc).__name__))
         return 2
-    results = run_checks(reference, degraded)
+    uses_touch, require_abrupt = calibration_mode(args.calibration)
+    results = run_checks(reference, degraded, uses_touch=uses_touch,
+                         require_abrupt=require_abrupt)
     for line in report(results, verbose=args.verbose):
         print(line)
     return 0 if all(r.passed for r in results if r.eliminatory) else 1

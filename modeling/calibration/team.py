@@ -120,6 +120,7 @@ def default_feature_params(team_params: Mapping) -> dict:
         "touch_win_frames": int(team_params.get("touch_win_frames", DEFAULT_TOUCH_WIN_FRAMES)),
         "touch_dir_change_rad": float(team_params.get("touch_dir_change_rad", DEFAULT_TOUCH_DIR_CHANGE_RAD)),
         "touch_acc_mps2": float(team_params.get("touch_acc_mps2", DEFAULT_TOUCH_ACC_MPS2)),
+        "touch_require_abrupt": bool(team_params.get("touch_require_abrupt", True)),
     }
 
 
@@ -138,10 +139,19 @@ def select_touch_params(
     For every point of ``grid`` the ``touch`` ball model (f1..f8 + f9) is scored by its mean
     leave-one-match-out log-loss, minimised over ``c_grid``. The lowest loss wins; ties keep the
     first point in grid order. Returns ``{"selected", "grid", "results"}``.
+
+    When ``cfg``'s ``touch_require_abrupt`` is false the abrupt-change thresholds play no role, so
+    the default grid keeps only their start values (recorded, unused).
     """
     if degrade == "none":
         raise ValueError("selecting touch thresholds on degrade='none' is forbidden (label leak)")
-    grid = dict(TOUCH_GRID if grid is None else grid)
+    require_abrupt = bool(cfg["team"]["params"].get("touch_require_abrupt", True))
+    if grid is None:
+        grid = dict(TOUCH_GRID)
+        if not require_abrupt:
+            grid["touch_acc_mps2"] = (DEFAULT_TOUCH_ACC_MPS2,)
+            grid["touch_dir_change_rad"] = (DEFAULT_TOUCH_DIR_CHANGE_RAD,)
+    grid = dict(grid)
     keys = list(TOUCH_GRID)
     if sorted(grid) != sorted(keys):
         raise ValueError("touch grid must have exactly the keys {}".format(keys))
@@ -186,7 +196,8 @@ def select_touch_params(
         "touch_acc_mps2": float(best["touch_acc_mps2"]),
         "touch_dir_change_rad": float(best["touch_dir_change_rad"]),
     }
-    return {"selected": selected, "grid": {k: list(grid[k]) for k in keys}, "results": results}
+    return {"selected": selected, "grid": {k: list(grid[k]) for k in keys}, "results": results,
+            "require_abrupt": require_abrupt}
 
 
 def calibrate_team(
@@ -367,6 +378,7 @@ def _render_touch_selection(selection: Mapping, top: int = 5) -> list[str]:
     lines = [
         "## Touch thresholds (leave-one-match-out log-loss of the `touch` ball model)",
         "",
+        "- abrupt-change condition required: `{}`".format(selection.get("require_abrupt", True)),
         "- grid: {}".format(", ".join("`{}` {}".format(k, selection["grid"][k]) for k in keys)),
         "- selected: {}".format(", ".join(
             "`{}` = `{}`".format(k, selection["selected"][k]) for k in keys)),
@@ -451,7 +463,9 @@ def render_calibration_report(
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Calibrate team_logit on degraded IDSSE (F1-05)")
-    parser.add_argument("--config", default="configs/v1.yaml")
+    parser.add_argument("--config", default="configs/v2.yaml",
+                        help="config whose team.params build the features (and whose dead "
+                             "section is used in the decoder evaluation)")
     parser.add_argument("--decoder", default="configs/decoder_idsse.yaml")
     parser.add_argument("--degrade", default="default")
     parser.add_argument("--variant", default=DEFAULT_VARIANT, choices=VARIANT_NAMES,

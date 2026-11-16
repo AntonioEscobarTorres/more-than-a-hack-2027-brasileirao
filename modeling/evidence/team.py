@@ -269,14 +269,18 @@ def build_touch_feature(
 ) -> pd.Series:
     """Antisymmetric controlled-touch feature ``f9 = f1 * touch`` (F1-05 Update 4).
 
-    ``touch`` is even under team swap and requires both conditions of :func:`touch_components`:
+    ``touch`` is even under team swap and uses the conditions of :func:`touch_components`:
       1. Abrupt ball change: ``|ball_dir_change| >= touch_dir_change_rad`` or
-         ``|ball_acc| >= touch_acc_mps2`` inside the centered window.
+         ``|ball_acc| >= touch_acc_mps2`` inside the centered window. Required only when
+         ``touch_require_abrupt`` is true (the default); see decision D-021.
       2. Persistence: the closer team is within ``r_touch_m`` for at least ``touch_min_frames``
          frames of the centered window inside the same half block.
     """
     comp = touch_components(master, params, ev=ev)
-    touch = (comp["abrupt"] & comp["persist"]).astype("float64")
+    touch = comp["persist"]
+    if bool(params.get("touch_require_abrupt", True)):
+        touch = touch & comp["abrupt"]
+    touch = touch.astype("float64")
     f9 = np.where(comp["valid"], comp["f1"] * touch, np.nan) + 0.0
     return pd.Series(f9.astype(np.float32), index=master.index, name="f9")
 
