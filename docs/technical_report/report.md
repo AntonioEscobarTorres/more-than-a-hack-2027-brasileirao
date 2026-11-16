@@ -217,9 +217,22 @@ the rule and where it is implemented.*
   negative, and the decoder then switches to the team in control. The tag weights are low on
   purpose, because a tagged interval extends past the restart itself. Implemented in
   `modeling/deadball/dead.py`.
-  *To be completed by F3 (task F3-04): the weights calibrated on IDSSE, if that variant is selected
-  by the protocol of Section 5. The tag terms always keep the priors above, because IDSSE has no
-  tags.*
+
+  A calibrated alternative replaces the kinematic terms by a logistic regression fitted on the
+  degraded IDSSE matches (dead vs live ball, one match left out at a time), turned into a likelihood
+  ratio by subtracting the prior log-odds of the training data. Its inputs are ball availability,
+  ball out of the pitch, the kind of ball gap, the share of still players, the mean player speed, a
+  fast ball inside the pitch and the gap length. The ball speed and a ball at rest are left out on
+  purpose: on the external matches the ball freezes during dead balls, so they would leak the label.
+  The tag terms keep the priors above, because IDSSE has no tags. The fitted model has the expected
+  signs, and a ball gap during live play pushes towards live play. It also shows the limit of the
+  data: the mean player speed is its strongest input, so a ball that leaves the pitch while the
+  players are still running is only marked dead once they slow down. On IDSSE that is what the data
+  says: with the players at 2.3–2.7 m/s, only 26% of the frames in a gap classified as an exit are
+  dead balls, because the exit detector also fires during live play. A sharper exit detector is the
+  improvement we would make with more time. Whether it replaces the rules
+  is decided by the protocol of Section 5. Implemented in `modeling/calibration/dead.py`; results in
+  `reports/calibration_dead.md`.
 - **Before kick-off.** The graded block of the second half opens before its kick-off: those 2,934
   frames are forced to `D` by a mask that the decoder cannot override. The first half starts at the
   kick-off itself, so it has no such frames. The mask is the `pre_kickoff` column of the master

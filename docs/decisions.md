@@ -53,6 +53,7 @@ Modelo:
 | [D-014](#d-014--casos-de-borda-do-filtro-da-bola-como-são-contados) | 2026-11-13 | Casos de borda do filtro da bola: como são contados | Vigente |
 | [D-015](#d-015--diagnósticos-de-bola-morta-como-são-calculados) | 2026-11-13 | Diagnósticos de bola morta: como são calculados | Vigente |
 | [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente |
+| [D-017](#d-017--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente |
 
 ## Decisões
 
@@ -557,6 +558,62 @@ Modelo:
 - **Risco conhecido:** com esses valores, a bola do IDSSE degradado fica visível em ~30% dos frames de D e em
   ~80% dos de jogo. É o padrão que (f) mede no BAR-ATH (bola some com jogadores lentos), mas é uma pista forte
   para "bola invisível ⇒ D". A F3-04 e a F2-05 devem conferir a estabilidade em `hidelo` e `hidehi`.
+
+### D-017 — Calibração do `dead_logit` no IDSSE: features e o R2
+
+- **Data:** 2026-11-15
+- **Autor:** Bernardo (F3, F3-04)
+- **Status:** Vigente
+- **Decisão:**
+  1. **`db_ball_rest` e `ball_speed` ficam fora do ajuste, sempre** (atualização de 11/11, item 3). No IDSSE a
+     bola congela durante a bola morta, e as duas vazariam o rótulo. `db_fast_in_pitch` continua.
+  2. **Imputação só na matriz de desenho, sempre com indicador** (regra 4): `out_of_pitch` usa `has_ball`;
+     `db_still_frac`, `db_mean_speed` e `log1p(gap_length)` ganham uma coluna `*_missing`. No IDSSE elas nunca
+     faltam, então os indicadores ficam constantes e com peso 0.
+  3. **`C` escolhido pela log-loss média com uma partida de fora**, empate para o menor `C`. A log-loss
+     de validação usa os frames subamostrados da partida de fora.
+  4. **O arquivo guarda os `dead.params` que constroem as features**, e o tipo `calibrated` recusa um config
+     com valores diferentes (os pesos das tags podem mudar).
+  5. **Resultado:** os 4 arquivos (`dead`, `dead_pooled`, `dead_hidelo`, `dead_hidehi`) usam o conjunto
+     completo de features, `C = 0,1`, e têm os três sinais esperados. **R1 passa** em todos os modelos
+     (`d_fit` ≈ −2), então o recuo para o conjunto reduzido não foi necessário. **R2 falha** em todos
+     (`d_fit` ≈ −1,1 no `dead.yaml`).
+  6. **O R2 fica como está, e o `calibrated` segue para a F2-06.** A tarefa só define o que fazer quando o
+     R1 falha. Os dados do IDSSE contradizem o R2 (abaixo), então nenhum ajuste fiel aos dados o faz
+     passar. O protocolo da Seção 6 decide pelo spellF1 se o `calibrated` substitui o `rules_v1`. Pela
+     regra 11, a falha e um pedido de revisão do R2 vão para a issue #81 (F5).
+- **Por que o R2 falha (diagnóstico, só com dados do IDSSE):** o R2 fixa a velocidade média dos jogadores em
+  2,5 m/s. No IDSSE degradado, nos frames de bola morta dentro de uma lacuna de saída, a mediana dessa
+  velocidade é ~1,0 m/s (quartil superior ~1,3), e 2,5 m/s é típico de bola viva. O modelo aprende isso: a
+  velocidade dos jogadores é a feature mais forte (AUC sozinha ≈ 0,93, no sentido "jogo vivo"), e a saída
+  de bola soma só ~+0,9 ao `d_fit`. O `d_fit` do R2 cruza zero com os jogadores a ~1,9 m/s. Efeito
+  esperado no BAR-ATH: a bola morta começa quando os jogadores desaceleram, não no frame em que a bola
+  sai. Em comparação, o `rules_v1` dá +3,0 no R2, mas também +0,5 no R1, ou seja, falha o R1.
+- **O R2 contradiz os dados:** nos frames de lacuna classificada como saída, com os jogadores entre 2,3 e
+  2,7 m/s, só 26% são bola morta (9.684 frames, 7 partidas, `default`). O detector de saída da F3-01 também
+  dispara em jogo corrido. Pelos dados, o valor fiel para o R2 é ≈ −0,85 (`logit(0,26) − logit(π_D)`); o
+  modelo dá −1,1. Tabela completa por tipo de lacuna e faixa de velocidade em `reports/calibration_dead.md`.
+  Um R2 coerente com os dados teria os jogadores a ~1,5 m/s, o estado típico logo depois de uma saída real
+  (89% de bola morta entre 1,0 e 1,5 m/s).
+- **Opções consideradas:**
+  - conjunto reduzido de features: não ajuda o R2, porque tira `has_ball` e `log_gap`, que hoje empurram o
+    R2 para cima;
+  - forçar o R2 a passar (peso mínimo para `gap_exit`, ou +3 fixo como no `rules_v1`): descartada. Marcaria
+    bola morta onde o IDSSE tem jogo vivo em 74% dos frames, e um D falso no meio de uma posse custa em dobro
+    no spellF1; seria também um número escolhido por nós contra os dados externos;
+  - interação `gap_exit` × velocidade: não resolve, porque mesmo restrito às saídas o IDSSE tem jogo vivo
+    na maioria dos frames a 2,5 m/s;
+  - melhorar o detector de saída da F3-01 para disparar menos em jogo vivo: é a correção de fundo, mas muda
+    features compartilhadas com o `rules_v1` e não cabe antes da entrega. Fica como melhoria futura no
+    relatório técnico;
+  - não entregar os arquivos: descartada. O protocolo da Seção 6 mede o efeito real (spellF1 no IDSSE), e
+    os arquivos marcam `robustness.r2_pass: false`.
+- **Evidência:** `reports/calibration_dead.md` (log-loss, AUC, R1–R3 por dobra, AUC de cada feature
+  sozinha). Avaliação cruzada: log-loss média do `dead` no `hidelo` +9,1% e no `hidehi` −15,0% em relação
+  ao `default`; no `dead_pooled`, `hidelo` fica em +10,0%, no limite do item 5 sem passar dele. Nenhuma
+  feature da bola tem AUC alta sozinha. O ajuste é reprodutível: rodando de novo, os 4 arquivos saem
+  idênticos byte a byte. Testes: `tests/test_modeling_calibration_dead.py` (30 testes sintéticos) e teste
+  de mutação manual (15 alterações, todas detectadas).
 
 ## Registro de envios
 

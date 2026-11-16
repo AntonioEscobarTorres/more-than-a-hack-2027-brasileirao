@@ -29,12 +29,19 @@ The four ``tag_*`` terms are the Smart Tagging part. They are also available on 
 external matches have no tags, so the tag weights cannot be fitted and stay at this prior.
 
 The pre-kickoff segment is not part of the logit: it is the ``force_d`` mask (C4).
+
+Variant ``calibrated`` (F3-04): ``d = clip(d_fit + dead_tag_prior, +-DEAD_LOGIT_MAX)``, where
+``d_fit`` is the logistic model fitted on the external IDSSE masters
+(:mod:`modeling.calibration.dead`, file ``params["calibrated_file"]``). The tag weights stay at the
+prior of Appendix A.3 because the external matches have no tags. ``holdout`` selects the model
+fitted without that match.
 """
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
+from ..calibration.dead import calibrated_d_fit, load_calibration
 from ..contracts import DEAD_LOGIT_MAX
 from ..variants import register_dead
 from .features import GAP_AIR, GAP_EXIT, GAP_LONG, build_deadball_features
@@ -141,6 +148,29 @@ def dead_logit_rules_v1(master: pd.DataFrame, params: dict, *, holdout=None) -> 
     return d.astype(np.float32)
 
 
+@register_dead("calibrated")
+def dead_logit_calibrated(master: pd.DataFrame, params: dict, *, holdout=None) -> np.ndarray:
+    """C2 dead_logit, calibrated (F3-04): float32[n], |d| <= DEAD_LOGIT_MAX, 0 where half == 0.
+
+    ``params`` is ``cfg["dead"]["params"]`` plus ``calibrated_file`` (absolute path, injected by
+    ``modeling.pipeline.variant_params``). The features are rebuilt with these ``params``, which
+    must match the ones of the fit. ``holdout`` selects ``folds[holdout]``; without it the model
+    ``all`` is used. The sum is explicit, in float64.
+    """
+    path = params.get("calibrated_file")
+    if path is None:
+        raise ValueError("dead kind 'calibrated' needs params['calibrated_file']")
+    missing = [c for c in REQUIRED_COLUMNS if c not in master.columns]
+    if missing:
+        raise ValueError("master is missing columns {}".format(missing))
+    doc = load_calibration(path)
+    fitted = calibrated_d_fit(master, params, doc, holdout)
+    d = fitted + dead_tag_prior(master, params)
+    d = np.clip(d, -DEAD_LOGIT_MAX, DEAD_LOGIT_MAX)
+    d = np.where(master["half"].to_numpy() != 0, d, 0.0) + 0.0
+    return d.astype(np.float32)
+
+
 __all__ = ["KINEMATIC_TERMS", "REQUIRED_COLUMNS", "RULES_V1_TERMS", "SPEED_HIGH_RAMP",
-           "SPEED_LOW_RAMP", "STILL_RAMP", "TAG_TERMS", "dead_logit_rules_v1", "dead_logit_terms",
+           "SPEED_LOW_RAMP", "STILL_RAMP", "TAG_TERMS", "dead_logit_calibrated", "dead_logit_rules_v1", "dead_logit_terms",
            "dead_tag_prior"]
