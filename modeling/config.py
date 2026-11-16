@@ -94,6 +94,18 @@ class Str(_Field):
                 where, list(self.choices), value))
         return value
 
+class FloatList(_Field):
+    """A non-empty list of numbers, each checked by ``item``."""
+
+    def __init__(self, item):
+        self.item = item
+
+    def check(self, value, where):
+        if not isinstance(value, list) or not value:
+            raise ConfigError("{}: expected a non-empty list, got {!r}".format(where, value))
+        return [self.item.check(v, "{}[{}]".format(where, i)) for i, v in enumerate(value)]
+
+
 class Opt(_Field):
     """Optional field or sub-mapping with a default when omitted from the YAML."""
 
@@ -161,8 +173,7 @@ TEAM_SCHEMA = {
             "w_speed": _ANY,
         },
         "bridge_median_frames": Opt(Int(ge=1)),
-        "bridge_tau_1": Opt(_POS),
-        "bridge_tau_2": Opt(_POS),
+        "bridge_tau_frames": Opt(FloatList(_POS)),
         "r_touch_m": Opt(_POS),
         "touch_min_frames": Opt(Int(ge=1)),
         "touch_win_frames": Opt(Int(ge=1)),

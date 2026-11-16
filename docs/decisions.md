@@ -729,6 +729,51 @@ Modelo:
     calibrado**, nunca contra o `team` `rules_v1`. Ressalvas: 7 partidas, `lam_dead` escolhido nelas, e a
     F2-06 decide.
 
+### D-020 — `team_logit` calibrado com a variante `touch` e o config `v2` (revisão da F1-05/F1-06)
+
+- **Data:** 2026-11-16
+- **Autor:** Ahmed (revisão da F5 das tarefas F1-05, #79, e F1-06, #87)
+- **Status:** Vigente
+- **Decisão:**
+  1. **`configs/calib/team.yaml` passa a usar a variante `touch`** (f1–f8 + f9), não a `bridge_touch`, que era o
+     padrão do comando. A ponte de passe (f10/f11) sobe muito a AUC por frame (0,92 contra 0,85), mas junta
+     posses vizinhas: a razão posses previstas/verdadeiras cai e o spellF1 cai nos três modos (`default`,
+     `hidelo`, `hidehi`), com qualquer `lam_team` de 0,2 a 1,0. O padrão de `--variant` agora é `touch`.
+  2. **Limiares do toque escolhidos no IDSSE degradado** (atualização 4 da F1-05): grade de 81 pontos
+     (`r_touch_m` {1,5; 2; 3}, `touch_min_frames` {2; 3; 5}, `touch_acc_mps2` {5; 8; 12},
+     `touch_dir_change_rad` {0,3; 0,5; 0,8}), pela log-loss média do modelo "ball" com uma partida de fora,
+     minimizada sobre `C`; empate fica com o primeiro ponto da grade. Escolhido: 1,5 m, 5 frames, 5 m/s²,
+     0,3 rad. `r_touch_m` e `touch_min_frames` saíram na borda da grade; a grade não foi estendida depois de
+     ver o resultado.
+  3. **A condição de "mudança brusca" do toque é inerte no IDSSE degradado:** o ruído da posição da bola faz
+     `ball_acc`/`ball_dir_change` passarem do limiar em ~99% dos frames com bola válida, com qualquer ponto da
+     grade (por isso os limiares de aceleração e de direção empatam). Na prática, o f9 mede "o mesmo time a
+     até 1,5 m da bola em 5 dos 9 frames da janela". Se a bola do BAR-ATH for mais lisa, o f9 enfraquece
+     fora da amostra. Checagem local nova: `python tools/touch_feature_shift.py` (só `PASS`/`FAIL`). A
+     eliminatória (a) exige a fração de mudança brusca a até 0,10 da referência IDSSE. Se der `FAIL`, ajustar
+     de novo sem o toque (`--variant base`) ou sem a condição brusca, sempre no IDSSE.
+  4. **Config `configs/v2.yaml`:** o `v1` com `team` `calibrated` (`configs/calib/team.yaml`), `dead`
+     `calibrated` (`configs/calib/dead.yaml`, D-019), o decodificador de `configs/decoder_idsse.yaml` e
+     `lam_team = 0,35` (`lam_dead` 0,2). O `lam_team` foi escolhido antes da última varredura (com os limiares
+     antigos do toque); a varredura com o arquivo final deu um platô entre 0,3 e 0,4 (diferenças de até
+     0,0015 de spellF1, abaixo do ruído), e 0,35 é o centro dele. Pós-processamento desligado.
+- **Opções consideradas:** manter a `bridge_touch` (pior nos três modos); `lam_team` 0,4, o melhor ponto nos
+  três modos por menos de 0,002 (descartado: escolher de novo nas mesmas 7 partidas só acrescenta ruído);
+  estender a grade do toque (descartado pela regra da D-018).
+- **Evidência (spellF1 médio no IDSSE degradado, 7 partidas, pesos de cada partida ajustados nas outras 6):**
+
+  | Modo | `v1` + `decoder_idsse` | melhor `rules_v1` (dead calibrado, `lam_team` 0,35) | **`v2`** | `v2` − `v1`: partidas que ganham, pior caso |
+  | :--- | ---: | ---: | ---: | :--- |
+  | `default` | 0,343 | 0,359 | **0,400** | +0,057; 7/7; +0,035 |
+  | `hidelo` | 0,309 | 0,332 | **0,383** | +0,074; 7/7; +0,054 |
+  | `hidehi` | 0,383 | 0,392 | **0,425** | +0,042; 7/7; +0,013 |
+
+  Contra o melhor `rules_v1`, o `v2` ganha nas 7 partidas nos três modos (+0,041, +0,051, +0,033).
+  Relatórios: [`reports/calibration_team.md`](../reports/calibration_team.md) e
+  [`reports/error_analysis.md`](../reports/error_analysis.md). **Ressalvas:** `lam_team` e o conjunto de
+  variantes foram escolhidos nas mesmas 7 partidas (os pesos não: cada partida usa a dobra sem ela), o IDSSE
+  degradado não é o BAR-ATH (D-016), e nada foi medido no BAR-ATH.
+
 ## Registro de envios
 
 Preenchido pela F5 (F5-09; envio único, ver D-013). O CSV enviado tem de ser o arquivo validado, com o mesmo SHA-256.

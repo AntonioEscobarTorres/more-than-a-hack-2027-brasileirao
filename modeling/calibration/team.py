@@ -6,16 +6,22 @@ Fits two antisymmetric L2 logistic regressions without intercept:
 
 Never calibrates on ``degrade="none"`` (clean IDSSE freezes the ball on dead balls and leaks the label).
 
+Touch thresholds (``r_touch_m``, ``touch_min_frames``, ``touch_acc_mps2``,
+``touch_dir_change_rad``) are chosen on the same degraded matches by the mean leave-one-match-out
+log-loss of the ``touch`` ball model over ``TOUCH_GRID`` (F1-05 Update 4), never on BAR-ATH.
+
 Usage::
 
     python -m modeling.calibration.team --config configs/v1.yaml \\
-        --decoder configs/decoder_idsse.yaml --degrade default \\
+        --decoder configs/decoder_idsse.yaml --degrade default --variant touch \\
         --out configs/calib/team.yaml --report reports/calibration_team.md
 """
 from __future__ import annotations
 
 import argparse
 import copy
+import itertools
+import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -32,6 +38,7 @@ from modeling.calibration.common import (
     binary_auc,
     binary_log_loss,
     linear_logit,
+    lomo_log_loss_by_c,
     possession_boundary_shift,
     select_c_and_fit_folds,
     subsample_indices,
@@ -48,13 +55,26 @@ from modeling.evidence.team import (
     DEFAULT_TOUCH_WIN_FRAMES,
     GAP_BASE_FEATURES,
     build_team_calibration_features,
+    build_touch_feature,
 )
 from modeling.external.files import IDSSE_MATCHES, load_external
 from modeling.pipeline import predict_labels
 from modeling.scoring.metrics import score
 
 VARIANT_NAMES = ("base", "bridge", "touch", "bridge_touch")
+DEFAULT_VARIANT = "touch"
 EXPECTED_POSITIVE_FEATURES = ("f1", "f2", "f3", "f4", "f5", "f6")
+
+# Touch-threshold grid searched by ``select_touch_params``; the spec start values
+# (2.0 m, 3 frames, 8 m/s^2, 0.5 rad) are in the middle of each axis.
+TOUCH_GRID = {
+    "r_touch_m": (1.5, 2.0, 3.0),
+    "touch_min_frames": (2, 3, 5),
+    "touch_acc_mps2": (5.0, 8.0, 12.0),
+    "touch_dir_change_rad": (0.3, 0.5, 0.8),
+}
+_TOUCH_INPUT_COLUMNS = ("half", "d_diff", "d_near_home", "d_near_away",
+                        "ball_dir_change", "ball_acc")
 
 
 def variant_feature_names(
@@ -103,17 +123,88 @@ def default_feature_params(team_params: Mapping) -> dict:
     }
 
 
-def calibrate_team(
+def select_touch_params(
     cfg: dict,
     *,
-    variant: str = "bridge_touch",
     degrade: str = "default",
     matches: Sequence[str] | None = None,
     step: int = SUBSAMPLE_STEP,
     c_grid: Sequence[float] = DEFAULT_C_GRID,
+    grid: Mapping[str, Sequence] | None = None,
     load_fn=None,
 ) -> dict:
-    """Fit ``ball`` and ``gap`` L2 logistic models with leave-one-match-out CV."""
+    """Choose the touch thresholds by mean leave-one-match-out log-loss (F1-05 Update 4).
+
+    For every point of ``grid`` the ``touch`` ball model (f1..f8 + f9) is scored by its mean
+    leave-one-match-out log-loss, minimised over ``c_grid``. The lowest loss wins; ties keep the
+    first point in grid order. Returns ``{"selected", "grid", "results"}``.
+    """
+    if degrade == "none":
+        raise ValueError("selecting touch thresholds on degrade='none' is forbidden (label leak)")
+    grid = dict(TOUCH_GRID if grid is None else grid)
+    keys = list(TOUCH_GRID)
+    if sorted(grid) != sorted(keys):
+        raise ValueError("touch grid must have exactly the keys {}".format(keys))
+    matches = list(IDSSE_MATCHES if matches is None else matches)
+    if len(matches) < 2:
+        raise ValueError("need at least 2 matches to select touch thresholds")
+    if load_fn is None:
+        load_fn = load_external
+
+    team_params = dict(cfg["team"]["params"])
+    base_cols = list(BALL_BASE_FEATURES)
+    per_match = {}
+    for match in matches:
+        master, gt = load_fn(match, degrade)
+        half = master["half"].to_numpy()
+        feats = build_team_calibration_features(
+            master, team_params, include_bridge=False, include_touch=False)
+        idx = subsample_indices(alive_frames_mask(gt, half), step=step)
+        ball_idx = idx[feats["ev_ball_valid"].to_numpy()[idx]]
+        y_ball = (gt[ball_idx] == pm.H).astype(np.int8)
+        X_base = _design_matrix(feats, ball_idx, base_cols)
+        inputs = master[[c for c in _TOUCH_INPUT_COLUMNS if c in master.columns]].copy()
+        per_match[match] = (inputs, feats[["ev_ball_valid"]].copy(), ball_idx, X_base, y_ball)
+        del master, feats
+
+    results = []
+    for values in itertools.product(*(grid[k] for k in keys)):
+        combo = dict(zip(keys, values))
+        params = {**team_params, **combo}
+        data = {}
+        for match, (inputs, ev_valid, ball_idx, X_base, y_ball) in per_match.items():
+            f9 = build_touch_feature(inputs, params, ev=ev_valid).to_numpy(dtype=np.float64)
+            f9 = f9[ball_idx]
+            data[match] = (np.column_stack([X_base, np.where(np.isfinite(f9), f9, 0.0)]), y_ball)
+        losses = lomo_log_loss_by_c(data, c_grid=c_grid)
+        results.append({**combo, "log_loss": float(min(losses.values()))})
+
+    best = min(results, key=lambda r: r["log_loss"])
+    selected = {
+        "r_touch_m": float(best["r_touch_m"]),
+        "touch_min_frames": int(best["touch_min_frames"]),
+        "touch_acc_mps2": float(best["touch_acc_mps2"]),
+        "touch_dir_change_rad": float(best["touch_dir_change_rad"]),
+    }
+    return {"selected": selected, "grid": {k: list(grid[k]) for k in keys}, "results": results}
+
+
+def calibrate_team(
+    cfg: dict,
+    *,
+    variant: str = DEFAULT_VARIANT,
+    degrade: str = "default",
+    matches: Sequence[str] | None = None,
+    step: int = SUBSAMPLE_STEP,
+    c_grid: Sequence[float] = DEFAULT_C_GRID,
+    touch_params: Mapping | None = None,
+    load_fn=None,
+) -> dict:
+    """Fit ``ball`` and ``gap`` L2 logistic models with leave-one-match-out CV.
+
+    ``touch_params`` (for example ``select_touch_params(...)["selected"]``) overrides the touch
+    thresholds of ``cfg`` and is recorded in ``feature_params``.
+    """
     if degrade == "none":
         raise ValueError("calibrating team_logit on degrade='none' is forbidden (label leak)")
     matches = list(IDSSE_MATCHES if matches is None else matches)
@@ -123,7 +214,7 @@ def calibrate_team(
         load_fn = load_external
 
     team_params = cfg["team"]["params"]
-    f_params = default_feature_params(team_params)
+    f_params = default_feature_params({**team_params, **dict(touch_params or {})})
     taus = f_params["bridge_tau_frames"]
     ball_cols, gap_cols = variant_feature_names(variant, taus=taus)
     need_bridge = variant in ("bridge", "bridge_touch")
@@ -270,12 +361,39 @@ def evaluate_calibrated_table(
     return pd.concat([df.astype(np.float64), summary])
 
 
+def _render_touch_selection(selection: Mapping, top: int = 5) -> list[str]:
+    keys = list(selection["grid"])
+    ranked = sorted(selection["results"], key=lambda r: r["log_loss"])
+    lines = [
+        "## Touch thresholds (leave-one-match-out log-loss of the `touch` ball model)",
+        "",
+        "- grid: {}".format(", ".join("`{}` {}".format(k, selection["grid"][k]) for k in keys)),
+        "- selected: {}".format(", ".join(
+            "`{}` = `{}`".format(k, selection["selected"][k]) for k in keys)),
+        "",
+        "| Rank | " + " | ".join("`{}`".format(k) for k in keys) + " | LOMO log-loss |",
+        "|---:|" + "---:|" * len(keys) + "---:|",
+    ]
+    for rank, row in enumerate(ranked[:top], start=1):
+        lines.append("| {} | ".format(rank) + " | ".join(str(row[k]) for k in keys)
+                     + " | {:.5f} |".format(row["log_loss"]))
+    lines.append("")
+    return lines
+
+
 def render_calibration_report(
     tables: Mapping[str, Mapping],
     evals_by_variant: Mapping[str, Mapping[str, pd.DataFrame]] | None = None,
+    *,
+    touch_selection: Mapping | None = None,
+    written_variant: str | None = None,
 ) -> str:
     """Render ``reports/calibration_team.md`` covering all four F1-05 candidate variants."""
     lines = ["# Team Logit Calibration Report (F1-05)", ""]
+    if written_variant is not None:
+        lines.extend(["- variant written to the calibration file: `{}`".format(written_variant), ""])
+    if touch_selection is not None:
+        lines.extend(_render_touch_selection(touch_selection))
     for variant, table in tables.items():
         lines.extend([
             "## Variant: `{}`".format(variant),
@@ -317,7 +435,17 @@ def render_calibration_report(
                     "- mean `boundary_shift_frames`: `{:+.2f}`".format(
                         float(df.loc["mean", "boundary_shift_frames"])),
                     "",
+                    "| Match | spell_f1_mean | Count Ratio (Pred/GT) | Boundary Shift (frames) |",
+                    "|:---|---:|---:|---:|",
                 ])
+                for match in df.index:
+                    if match in ("mean", "se"):
+                        continue
+                    lines.append("| {} | {:.4f} | {:.4f} | {:+.2f} |".format(
+                        match, float(df.loc[match, "spell_f1_mean"]),
+                        float(df.loc[match, "spell_count_ratio"]),
+                        float(df.loc[match, "boundary_shift_frames"])))
+                lines.append("")
     return "\n".join(lines) + "\n"
 
 
@@ -326,11 +454,13 @@ def main(argv=None) -> int:
     parser.add_argument("--config", default="configs/v1.yaml")
     parser.add_argument("--decoder", default="configs/decoder_idsse.yaml")
     parser.add_argument("--degrade", default="default")
-    parser.add_argument("--variant", default="bridge_touch", choices=VARIANT_NAMES,
+    parser.add_argument("--variant", default=DEFAULT_VARIANT, choices=VARIANT_NAMES,
                         help="variant written to --out (all 4 are evaluated for the report)")
     parser.add_argument("--out", default="configs/calib/team.yaml")
     parser.add_argument("--report", default="reports/calibration_team.md")
     parser.add_argument("--extra-degrades", nargs="*", default=["hidelo", "hidehi"])
+    parser.add_argument("--no-select-touch", action="store_true",
+                        help="keep the touch thresholds of --config instead of searching TOUCH_GRID")
     args = parser.parse_args(argv)
 
     root = paths.repo_root()
@@ -338,31 +468,32 @@ def main(argv=None) -> int:
     with open(root / args.decoder, encoding="utf-8") as handle:
         decoder_cfg = yaml.safe_load(handle)
 
+    touch_selection = None if args.no_select_touch else select_touch_params(
+        cfg, degrade=args.degrade)
+    touch_params = touch_selection["selected"] if touch_selection is not None else None
+
     tables = {}
     evals = {}
-    tmp_dir = root / "configs" / "calib"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    for var in VARIANT_NAMES:
-        table = calibrate_team(cfg, variant=var, degrade=args.degrade)
-        tables[var] = table
-        var_path = tmp_dir / "team_{}.yaml".format(var)
-        write_team_yaml(table, var_path)
-        evals[var] = {
-            args.degrade: evaluate_calibrated_table(
-                cfg, var_path, decoder_cfg=decoder_cfg, degrade=args.degrade),
-        }
-        for extra_deg in args.extra_degrades:
-            try:
-                evals[var][extra_deg] = evaluate_calibrated_table(
-                    cfg, var_path, decoder_cfg=decoder_cfg, degrade=extra_deg)
-            except FileNotFoundError:
-                pass
-        if var != args.variant and var_path.is_file():
-            var_path.unlink()
+    with tempfile.TemporaryDirectory() as tmp:
+        for var in VARIANT_NAMES:
+            table = calibrate_team(cfg, variant=var, degrade=args.degrade,
+                                   touch_params=touch_params)
+            tables[var] = table
+            var_path = write_team_yaml(table, Path(tmp) / "team_{}.yaml".format(var))
+            evals[var] = {
+                args.degrade: evaluate_calibrated_table(
+                    cfg, var_path, decoder_cfg=decoder_cfg, degrade=args.degrade),
+            }
+            for extra_deg in args.extra_degrades:
+                try:
+                    evals[var][extra_deg] = evaluate_calibrated_table(
+                        cfg, var_path, decoder_cfg=decoder_cfg, degrade=extra_deg)
+                except FileNotFoundError:
+                    pass
 
     out_path = write_team_yaml(tables[args.variant], root / args.out)
-    report_text = render_calibration_report(tables, evals)
+    report_text = render_calibration_report(
+        tables, evals, touch_selection=touch_selection, written_variant=args.variant)
     report_path = root / args.report
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report_text, encoding="utf-8", newline="\n")
@@ -375,12 +506,15 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "DEFAULT_VARIANT",
     "EXPECTED_POSITIVE_FEATURES",
+    "TOUCH_GRID",
     "VARIANT_NAMES",
     "calibrate_team",
     "default_feature_params",
     "evaluate_calibrated_table",
     "render_calibration_report",
+    "select_touch_params",
     "variant_feature_names",
     "write_team_yaml",
 ]

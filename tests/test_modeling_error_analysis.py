@@ -42,16 +42,20 @@ def _synthetic_error_match() -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.n
     pred[50:90] = pm.A
 
     ball_obs = np.ones(n, dtype=float)
+    ball_fill = np.zeros(n, dtype=float)
     gap_len = np.zeros(n, dtype=float)
-    # Put a 5-frame short gap at 60..65 and a 20-frame long gap at 70..90 inside the missed spell
+    # Put a 5-frame short (interpolated) gap at 60..65 and a 20-frame long gap at 70..90
+    # inside the missed spell
     ball_obs[60:65] = 0.0
+    ball_fill[60:65] = 1.0
     gap_len[60:65] = 5.0
     ball_obs[70:90] = 0.0
     gap_len[70:90] = 20.0
     ball_obs[215:225] = 0.0
     gap_len[215:225] = np.nan
 
-    master = make_master(n, half=half, ball_observed=ball_obs, ball_filled=0.0, gap_length=gap_len)
+    master = make_master(n, half=half, ball_observed=ball_obs, ball_filled=ball_fill,
+                         gap_length=gap_len)
 
     # Team logit inside the missed H spell (50..90):
     # - 50..70 (20 frames): near zero (0.1)
@@ -66,7 +70,7 @@ def _synthetic_error_match() -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.n
 
 def test_frame_categories_and_missed_possession_diagnostics():
     master, gt, pred, t_logit = _synthetic_error_match()
-    res = analyze_match_errors(master, gt, pred, t_logit, long_gap_frames=12, fps=25.0)
+    res = analyze_match_errors(master, gt, pred, t_logit, fps=25.0)
 
     assert set(res["frame_categories"]) == set(FRAME_CATEGORIES)
     fc = res["frame_categories"]
@@ -112,14 +116,14 @@ def test_switch_and_restart_windows_never_cross_half():
     # Make an error at the start of half 2 (frames 225..235)
     pred2[225:235] = pm.A
 
-    res = analyze_match_errors(master, gt2, pred2, t_logit, long_gap_frames=12, fps=25.0)
+    res = analyze_match_errors(master, gt2, pred2, t_logit, fps=25.0)
     # The D at the end of half 1 must not trigger a restart window in half 2
     assert res["frame_categories"]["near_restart_3s"]["n_errors"] == 0
 
 
 def test_aggregate_and_render_markdown():
     master, gt, pred, t_logit = _synthetic_error_match()
-    m1 = analyze_match_errors(master, gt, pred, t_logit, long_gap_frames=12, fps=25.0)
+    m1 = analyze_match_errors(master, gt, pred, t_logit, fps=25.0)
     agg = aggregate_error_analysis({"m1": m1, "m2": m1})
 
     assert agg["summary"]["total_gt_spells"] == 6

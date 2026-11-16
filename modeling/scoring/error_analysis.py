@@ -4,11 +4,14 @@ Computes per-frame error rates by situation category, missed ground-truth posses
 duration bin (< 2 s, 2-10 s, > 10 s), predicted/true possession count ratio, and team_logit
 diagnostics inside missed possessions (ball visible vs gap, near-zero vs wrong sign).
 
+Frame categories follow the master schema: ``ball_visible`` is ``ball_observed == 1``,
+``short_gap`` is an interpolated gap (``ball_filled == 1``, at most ``MAX_GAP_FRAMES``) and
+``long_gap`` is everything else (ball position missing).
+
 Usage::
 
-    python -m modeling.scoring.error_analysis --config configs/v1.yaml \\
-        --decoder configs/decoder_idsse.yaml \\
-        --team-calib configs/calib/team.yaml \\
+    python -m modeling.scoring.error_analysis --config configs/v2.yaml \\
+        --baseline configs/v1.yaml --baseline-decoder configs/decoder_idsse.yaml \\
         --degrade default --out reports/error_analysis.md
 """
 from __future__ import annotations
@@ -67,20 +70,15 @@ def _compute_team_logit(master: pd.DataFrame, cfg: dict, *, holdout: str | None 
     ).astype(np.float64)
 
 
-def _ball_valid_and_gap_masks(
-    master: pd.DataFrame,
-    long_gap_frames: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return boolean masks ``(ball_visible, short_gap, long_gap)`` on all frames."""
-    bx = master["ball_x"].to_numpy(dtype=np.float64)
-    by = master["ball_y"].to_numpy(dtype=np.float64)
-    valid = np.isfinite(bx) & np.isfinite(by)
+def _ball_visibility_masks(master: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return disjoint boolean masks ``(ball_visible, short_gap, long_gap)`` on all frames.
 
-    gap_len = master["gap_length"].to_numpy(dtype=np.float64)
-    with np.errstate(invalid="ignore"):
-        is_long = (~valid) & np.isfinite(gap_len) & (gap_len > float(long_gap_frames))
-    is_short = (~valid) & (~is_long)
-    return valid, is_short, is_long
+    Short gaps are the ones preprocessing interpolates (``ball_filled == 1``), so their ball
+    position is finite; long gaps have no ball position.
+    """
+    observed = master["ball_observed"].to_numpy() == 1
+    filled = (master["ball_filled"].to_numpy() == 1) & ~observed
+    return observed, filled, ~observed & ~filled
 
 
 def _near_possession_switch_mask(
@@ -141,7 +139,6 @@ def analyze_match_errors(
     pred_codes: np.ndarray,
     team_logit: np.ndarray,
     *,
-    long_gap_frames: int = 12,
     fps: float | None = None,
     iou_threshold: float = pm.SPELL_IOU_HEADLINE,
     near_zero_thr: float = NEAR_ZERO_LOGIT_THR,
@@ -157,7 +154,7 @@ def analyze_match_errors(
     wrong = graded & (pred_codes != gt_codes)
 
     runs = pm.valid_runs(gt_codes)
-    valid, short_gap, long_gap = _ball_valid_and_gap_masks(master, long_gap_frames)
+    valid, short_gap, long_gap = _ball_visibility_masks(master)
     sw_win = int(round(SWITCH_WINDOW_S * fps))
     rs_win = int(round(RESTART_WINDOW_S * fps))
     near_switch = _near_possession_switch_mask(gt_codes, runs, sw_win)
@@ -343,7 +340,6 @@ def run_error_analysis(
     if load_fn is None:
         load_fn = load_external
 
-    long_gap = int(cfg.get("dead", {}).get("params", {}).get("long_gap_frames", 12))
     per_match = {}
     for match in matches:
         master, gt = load_fn(match, degrade)
@@ -353,10 +349,19 @@ def run_error_analysis(
             t_logit = _compute_team_logit(master, cfg, holdout=match)
         else:
             t_logit = np.zeros(len(master), dtype=np.float64)
-        per_match[match] = analyze_match_errors(
-            master, gt, pred_codes, t_logit, long_gap_frames=long_gap
-        )
+        per_match[match] = analyze_match_errors(master, gt, pred_codes, t_logit)
     return aggregate_error_analysis(per_match)
+
+
+def _repo_relative(path) -> str | None:
+    """``path`` relative to the repository root when it lies inside it (no local paths in reports)."""
+    if not path:
+        return None
+    p = Path(path)
+    try:
+        return p.resolve().relative_to(paths.repo_root().resolve()).as_posix()
+    except ValueError:
+        return p.name
 
 
 def render_error_analysis_report(
@@ -373,7 +378,13 @@ def render_error_analysis_report(
         "",
         "- config: `{}` (`{}`)".format(cfg.get("name", "unknown"), config_hash(cfg)),
         "- team.kind: `{}` (calibrated_file: `{}`)".format(
-            cfg.get("team", {}).get("kind"), cfg.get("team", {}).get("calibrated_file")
+            cfg.get("team", {}).get("kind"), _repo_relative(cfg.get("team", {}).get("calibrated_file"))
+        ),
+        "- dead.kind: `{}` (calibrated_file: `{}`)".format(
+            cfg.get("dead", {}).get("kind"), _repo_relative(cfg.get("dead", {}).get("calibrated_file"))
+        ),
+        "- decoder: `lam_team` = `{}`, `lam_dead` = `{}`".format(
+            cfg.get("decoder", {}).get("lam_team"), cfg.get("decoder", {}).get("lam_dead")
         ),
         "- degrade: `{}`".format(degrade),
         "- matches: `{}`".format(s["n_matches"]),
@@ -510,47 +521,45 @@ def render_error_analysis_report(
             fc_all["near_possession_switch_2s"]["pooled_error_rate"],
             fc_all["near_restart_3s"]["pooled_error_rate"],
         ),
-        "   - **Recommendations for F1-05 / F2-06:** (a) Include the controlled-touch feature (`f9`) which sharpens short-spell evidence without over-smoothing switches; (b) pair calibrated `team_logit` with a higher `lam_team` in the F2-06 sweep so correct-sign short possessions overcome the ~10.8-nat H<->A transition barrier; (c) evaluate dead-ball restart exit transitions carefully.".format(),
+        "   - **Candidates for F1-05 / F2-06:** (a) sharper evidence for possessions shorter than 2 s; (b) tune `lam_team` jointly with the calibrated `team_logit`, since frames with the right sign are still overridden by the transition cost; (c) dead-ball restart exits.",
         "",
     ])
     return "\n".join(lines)
 
 
+def _load_cfg_with_decoder(root: Path, config: str, decoder: str | None) -> dict:
+    """Load ``config`` and, when ``decoder`` is given, replace its ``decoder`` section."""
+    cfg = load_config(root / config)
+    if decoder:
+        with open(root / decoder, encoding="utf-8") as handle:
+            dec_raw = yaml.safe_load(handle)
+        cfg["decoder"] = copy.deepcopy(dec_raw.get("decoder", dec_raw))
+    return cfg
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Aggregated error analysis on IDSSE (F1-06)")
-    parser.add_argument("--config", default="configs/v1.yaml")
-    parser.add_argument("--decoder", default="configs/decoder_idsse.yaml")
-    parser.add_argument("--team-calib", default="configs/calib/team.yaml",
-                        help="optional calibrated team.yaml to evaluate alongside rules_v1")
+    parser.add_argument("--config", default="configs/v2.yaml",
+                        help="config analysed in the report, used as is")
+    parser.add_argument("--decoder", default=None,
+                        help="optional decoder YAML replacing the decoder of --config")
+    parser.add_argument("--baseline", default="configs/v1.yaml",
+                        help="config compared against --config in section 4 ('' to skip)")
+    parser.add_argument("--baseline-decoder", default="configs/decoder_idsse.yaml",
+                        help="decoder YAML replacing the decoder of --baseline ('' to keep it)")
     parser.add_argument("--degrade", default="default")
     parser.add_argument("--out", default="reports/error_analysis.md")
     args = parser.parse_args(argv)
 
     root = paths.repo_root()
-    base_cfg = load_config(root / args.config)
-    decoder_path = root / args.decoder
-    if decoder_path.is_file():
-        with open(decoder_path, encoding="utf-8") as handle:
-            dec_raw = yaml.safe_load(handle)
-        base_cfg["decoder"] = copy.deepcopy(dec_raw.get("decoder", dec_raw))
+    primary_cfg = _load_cfg_with_decoder(root, args.config, args.decoder)
+    primary_res = run_error_analysis(primary_cfg, degrade=args.degrade)
 
     extra = {}
-    rules_cfg = copy.deepcopy(base_cfg)
-    rules_cfg["name"] = "{}_rules_v1".format(base_cfg["name"])
-    extra["rules_v1"] = run_error_analysis(rules_cfg, degrade=args.degrade)
-
-    calib_path = root / args.team_calib if args.team_calib else None
-    if calib_path is not None and calib_path.is_file():
-        calib_cfg = copy.deepcopy(base_cfg)
-        calib_cfg["name"] = "{}_calibrated".format(base_cfg["name"])
-        calib_cfg["team"]["kind"] = "calibrated"
-        calib_cfg["team"]["calibrated_file"] = str(calib_path)
-        primary_res = run_error_analysis(calib_cfg, degrade=args.degrade)
-        extra["calibrated"] = primary_res
-        primary_cfg = calib_cfg
-    else:
-        primary_res = extra["rules_v1"]
-        primary_cfg = rules_cfg
+    if args.baseline:
+        base_cfg = _load_cfg_with_decoder(root, args.baseline, args.baseline_decoder)
+        extra[base_cfg["name"]] = run_error_analysis(base_cfg, degrade=args.degrade)
+    extra[primary_cfg["name"]] = primary_res
 
     report_text = render_error_analysis_report(
         primary_res, primary_cfg, args.degrade, extra_variants=extra

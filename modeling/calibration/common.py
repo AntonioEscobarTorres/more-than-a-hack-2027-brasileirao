@@ -193,23 +193,17 @@ def fit_logistic_l2(
     return weights, scales, intercept
 
 
-def select_c_and_fit_folds(
+def lomo_log_loss_by_c(
     match_data: Mapping[str, tuple[np.ndarray, np.ndarray]],
-    feature_names: Sequence[str],
     *,
     c_grid: Sequence[float] = DEFAULT_C_GRID,
     fit_intercept: bool = False,
-) -> dict:
-    """Select ``C`` by mean leave-one-match-out log-loss and fit ``all`` and ``folds``."""
+) -> dict[float, float]:
+    """Mean leave-one-match-out log-loss for each ``C`` of ``c_grid`` (ascending ``C``)."""
     matches = list(match_data.keys())
     if len(matches) < 2:
         raise ValueError("need at least 2 matches for leave-one-out calibration")
-    feat_names = list(feature_names)
-
-    best_c = None
-    best_loss = float("inf")
     c_losses = {}
-
     for c_val in sorted(float(c) for c in c_grid):
         fold_losses = []
         for holdout in matches:
@@ -221,11 +215,29 @@ def select_c_and_fit_folds(
             w, s, b = fit_logistic_l2(X_tr, y_tr, c_val, fit_intercept=fit_intercept)
             pred_logit = linear_logit(X_va, w, s, b)
             fold_losses.append(binary_log_loss(y_va, pred_logit))
-        mean_loss = float(np.nanmean(fold_losses)) if fold_losses else float("inf")
-        c_losses[float(c_val)] = mean_loss
+        c_losses[float(c_val)] = float(np.nanmean(fold_losses)) if fold_losses else float("inf")
+    return c_losses
+
+
+def select_c_and_fit_folds(
+    match_data: Mapping[str, tuple[np.ndarray, np.ndarray]],
+    feature_names: Sequence[str],
+    *,
+    c_grid: Sequence[float] = DEFAULT_C_GRID,
+    fit_intercept: bool = False,
+) -> dict:
+    """Select ``C`` by mean leave-one-match-out log-loss and fit ``all`` and ``folds``."""
+    matches = list(match_data.keys())
+    feat_names = list(feature_names)
+    c_losses = lomo_log_loss_by_c(match_data, c_grid=c_grid, fit_intercept=fit_intercept)
+
+    # Strictly lower loss wins; ties keep the smaller C (stronger regularisation).
+    best_c = None
+    best_loss = float("inf")
+    for c_val, mean_loss in c_losses.items():
         if mean_loss < best_loss:
             best_loss = mean_loss
-            best_c = float(c_val)
+            best_c = c_val
 
     assert best_c is not None
 
@@ -305,6 +317,7 @@ __all__ = [
     "compute_uncentered_scales",
     "fit_logistic_l2",
     "linear_logit",
+    "lomo_log_loss_by_c",
     "possession_boundary_shift",
     "select_c_and_fit_folds",
     "subsample_indices",
