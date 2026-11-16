@@ -60,6 +60,7 @@ Modelo:
 | [D-021](#d-021--team_logit-calibrado-com-a-variante-touch-e-o-config-v2-revisão-da-f1-05f1-06) | 2026-11-16 | `team_logit` calibrado com a variante `touch` e o config `v2` (F1-05/F1-06) | Vigente (toque substituído pela D-022) |
 | [D-022](#d-022--toque-só-por-persistência-e-o-config-v2_base-checagem-do-toque-no-bar-ath) | 2026-11-16 | Toque só por persistência e o config `v2_base` (checagem do toque no BAR-ATH) | Vigente |
 | [D-023](#d-023--team_logit-gbdt-e-o-config-v2_gbdt-revisão-da-f1-07) | 2026-11-16 | `team_logit` GBDT e o config `v2_gbdt` (revisão da F1-07) | Vigente |
+| [D-024](#d-024--bola-fundida-da-transmissão-f4-06-revisão-da-d-020) | 2026-11-16 | Bola fundida da transmissão (F4-06): revisão da D-020 | **Proposta (aguarda o time)** |
 
 ## Decisões
 
@@ -900,6 +901,29 @@ Modelo:
 - **Envio:** o envio único (D-013) já foi feito com o `v2`. O `v2_gbdt` só substitui o `v2` se a equipe decidir
   reenviar e o formulário permitir; nesse caso, antes do envio, rodar `tools/gbdt_feature_shift.py` e
   `tools/check_public_window.py` e registrar o novo CSV no registro de envios.
+
+### D-024 — Bola fundida da transmissão (F4-06): revisão da D-020
+
+- **Data:** 2026-11-16
+- **Autor:** Ahmed (revisão da F5 do PR #148, F4-06, #84)
+- **Status:** **Proposta, aguarda a decisão do time.** Enquanto não houver decisão, vale a D-020: a bola fundida fica fora da seleção.
+- **Contexto:** a F4-06 foi entregue no PR #148 depois do NO-GO da F4-05 (D-020). Três dos quatro critérios da própria F4-06 passam. O que falha é "as checagens da F4-05 dão `PASS`". Detalhes e números em [`tasks/F4-06.md`](tasks/F4-06.md), na seção "Execução e revisão".
+- **O fato novo:** os dois critérios da F4-05 que falham medem **quanto** a transmissão acrescenta: (i) a cobertura do mapeamento e (iii) a bola onde a tática falta. Os que medem **se ela está certa** passam: (ii) o pareamento dos jogadores e (iv) a concordância da bola. A D-020 descartou a trilha porque o ganho não compensaria. Agora o ganho foi medido no proxy da F4-06 com a melhor candidata, o `v2_gbdt`: **+0,0064 ± 0,0020** de spellF1 no IDSSE (3,2 EP, 6 de 7 partidas). Os limiares da F4-05 continuam como estão: nada foi ajustado no BAR-ATH.
+- **Opções:**
+  - **A. Manter a D-020:** a bola fundida fica fora. É a regra pré-registrada ao pé da letra, e o ganho é pequeno.
+  - **B. Rever a D-020 só para a bola** (recomendada pela revisão): `ball_source: fused` entra na escada da F2-06 como último passo de dados, com a regra de sempre (ganho pareado acima de 1 EP no `default`). Sustentam essa opção:
+    - os critérios de precisão passam;
+    - o ganho no proxy está bem acima de 1 EP;
+    - o master fundido passa nos testes de contrato, na janela pública e na checagem de transferência do GBDT, e muda só 0,69% dos rótulos previstos no BAR-ATH;
+    - o caminho tático continua bit a bit idêntico.
+
+    Riscos:
+    - é uma revisão feita depois de conhecido o resultado do portão;
+    - o proxy é otimista (posição exata no IDSSE) e não tem versões `fused` dos modos de estresse.
+- **Se a opção B for aprovada:**
+  - reabrir a #84 e fechá-la como feita;
+  - a candidata é `configs/v2_gbdt_fused.yaml` (o `v2_gbdt` com `ball_source: fused`);
+  - antes de qualquer envio com ela: rodar `make_submission` (que gera `processed_fused`), `tools/gbdt_feature_shift.py` e `tools/check_public_window.py` sobre o master fundido, e registrar o CSV.
 
 ## Registro de envios
 
