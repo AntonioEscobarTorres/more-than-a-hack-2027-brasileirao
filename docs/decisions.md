@@ -59,6 +59,7 @@ Modelo:
 | [D-020](#d-020--trilha-da-câmera-de-transmissão-descartada-no-go-f4-05) | 2026-11-16 | Trilha da câmera de transmissão descartada: NO-GO (F4-05) | Vigente |
 | [D-021](#d-021--team_logit-calibrado-com-a-variante-touch-e-o-config-v2-revisão-da-f1-05f1-06) | 2026-11-16 | `team_logit` calibrado com a variante `touch` e o config `v2` (F1-05/F1-06) | Vigente (toque substituído pela D-022) |
 | [D-022](#d-022--toque-só-por-persistência-e-o-config-v2_base-checagem-do-toque-no-bar-ath) | 2026-11-16 | Toque só por persistência e o config `v2_base` (checagem do toque no BAR-ATH) | Vigente |
+| [D-023](#d-023--team_logit-gbdt-e-o-config-v2_gbdt-revisão-da-f1-07) | 2026-11-16 | `team_logit` GBDT e o config `v2_gbdt` (revisão da F1-07) | Vigente |
 
 ## Decisões
 
@@ -809,6 +810,55 @@ Modelo:
   O `lam_team` do `v2` continua 0,35: a varredura deu um platô (0,4015–0,4019 no `default` entre 0,3 e 0,4).
 - **Ordem de execução local antes do envio:** `python tools/touch_feature_shift.py`. Com `PASS`, enviar o
   `v2`; com `FAIL`, enviar o `v2_base`.
+
+### D-023 — `team_logit` GBDT e o config `v2_gbdt` (revisão da F1-07)
+
+- **Data:** 2026-11-16
+- **Autor:** Ahmed (revisão da F5 da F1-07, #82 / PR #144)
+- **Status:** Vigente
+- **Contexto:** o PR #144 entregou só a inferência e o módulo de janelas. A inferência chamava uma função
+  inexistente (`swap_teams_master`), as janelas tinham um frame a mais, e faltavam o treino, os modelos, o YAML,
+  o relatório e os testes. A revisão completou a tarefa pela especificação de `docs/tasks/F1-07.md`.
+- **Decisão:**
+  1. **Troca de times na matriz de features.** Toda feature do GBDT é par casa/fora, ímpar (muda de sinal) ou
+     par (não muda). A troca `S` é uma permutação com sinais, então `S S X == X` bit a bit e
+     `t = clip((g(X) − g(S X)) / 2, ±8)` é exatamente antissimétrico. `S X(m)` é igual a `X(swap(m))` (a
+     definição da especificação) a menos de arredondamento; o teste confere isso e `t(swap(m)) == −t(m)` num
+     master sintético. Assim não é preciso recalcular as features num master trocado, e a antissimetria vale
+     exatamente também nos dados reais (o espelhamento `pitch_l_m − x` não é uma involução exata em float).
+  2. **Features:** f1–f9 da F1-05 (com os limiares do toque de `configs/calib/team.yaml`, persistência só), a
+     ponte de passe (τ 15 e 35), `ev_coll_adv`, `ev_coll_speed`, `d_diff`, os pares brutos de proximidade,
+     pressão e velocidade, `ev_ball_conf`, `d_touchline`, `d_goalline`, `gap_length` e as janelas de
+     `modeling/evidence/windows.py` (W 12, 25, 50). Posição da bola fica de fora (o sentido de ataque muda no
+     intervalo).
+  3. **Fora do modelo** (`feature_params.exclude_features`): `n_tracked_*` e `ev_coll_spread`, que deram `FAIL`
+     na checagem (a) de `tools/gbdt_feature_shift.py` no BAR-ATH; e `n_still_*`, `ball_speed`,
+     `since_last_obs`, `until_next_obs`, que dependem da cobertura da câmera ou do ruído da bola (a lição da
+     D-022) e acrescentam no máximo 0,003 de spellF1 no IDSSE (ablação no relatório).
+  4. **Frames sem bola válida continuam com o modelo "gap" logístico da F1-05** (`gap_model: logistic`): o GBDT
+     de lacuna perdeu no log-loss fora da dobra e no spellF1 (relatório lado a lado, atualização 4).
+  5. **`configs/v2_gbdt.yaml`** = `v2` com `team.kind: gbdt` e `lam_team = 0,3`, escolhido pela regra da F2-05
+     (platô a 1 EP do melhor ponto no `default`, depois o melhor pior caso nos três modos) na grade 0,3–0,6; a
+     primeira rodada mostrou queda abaixo de 0,3 e acima de 0,5.
+  6. **Modelos:** um por dobra em `ext_dir()/models/team_gbdt/` (não commitados) e `models/team_gbdt/all.joblib`
+     (0,92 MB, o único usado no CSV). O YAML registra o scikit-learn 1.5.2, e a inferência recusa outra versão
+     ou outra lista de features. Treino e inferência em uma thread; o CSV sai idêntico em duas execuções.
+- **Evidência (spellF1 médio no IDSSE degradado, 7 partidas, cada uma com os modelos treinados sem ela):**
+
+  | Config | `default` | `hidelo` | `hidehi` | posses previstas / verdadeiras (`default`) |
+  | :--- | ---: | ---: | ---: | ---: |
+  | `v2` (enviado) | 0,402 | 0,385 | 0,426 | 0,70 |
+  | **`v2_gbdt`** | **0,489** | **0,466** | **0,524** | 0,66 |
+
+  O ganho vem dos frames com bola: AUC fora da dobra 0,969 contra 0,850 da logística, nas 7 partidas.
+- **Checagens locais no BAR-ATH** (só `PASS`/`FAIL` e estatísticas dos rótulos previstos saíram da máquina):
+  `python tools/gbdt_feature_shift.py --degrade default hidelo hidehi` `PASS` em (a), (b) e (c);
+  `tools/check_public_window.py` `PASS` nas 7. CSV do `v2_gbdt`: SHA-256
+  `3d9570c55a398c8153fa90289567d8a7e33c3cecac363afefaccee7d7fbed2d0`, H 0,3203, A 0,2065, D 0,4732, 148 posses
+  no 1º tempo e 166 no 2º (o `v2` tem 164 e 174).
+- **Envio:** o envio único (D-013) já foi feito com o `v2`. O `v2_gbdt` só substitui o `v2` se a equipe decidir
+  reenviar e o formulário permitir; nesse caso, antes do envio, rodar `tools/gbdt_feature_shift.py` e
+  `tools/check_public_window.py` e registrar o novo CSV no registro de envios.
 
 ## Registro de envios
 
