@@ -217,9 +217,26 @@ the rule and where it is implemented.*
   negative, and the decoder then switches to the team in control. The tag weights are low on
   purpose, because a tagged interval extends past the restart itself. Implemented in
   `modeling/deadball/dead.py`.
-  *To be completed by F3 (task F3-04): the weights calibrated on IDSSE, if that variant is selected
-  by the protocol of Section 5. The tag terms always keep the priors above, because IDSSE has no
-  tags.*
+
+  A calibrated alternative replaces the kinematic terms by a logistic regression fitted on the
+  degraded IDSSE matches (dead vs live ball, one match left out at a time), turned into a likelihood
+  ratio by subtracting the prior log-odds of the training data. Its inputs are ball availability,
+  ball out of the pitch, the kind of ball gap, the share of still players, the mean player speed, a
+  fast ball inside the pitch and the gap length, plus the pairwise products of the gap kind, the gap
+  length and the player speed. The ball speed and a ball at rest are left out on purpose: on the
+  external matches the ball freezes during dead balls, so they would leak the label. The tag terms
+  keep the priors above, because IDSSE has no tags. The products are there because the meaning of a
+  gap depends on its length and on the players: a short exit gap with the players still running is
+  mostly a dead ball that has just started, while a long one is mostly live play after the restart,
+  with the ball still unseen. Without them the fit treated both alike, so a ball that had just left
+  the pitch stayed live until the players slowed down. With them, the held-out log-loss is lower in
+  6 of the 7 matches and both robustness checks hold: a ball gap during live play pushes towards
+  live play, and a ball leaving the pitch with the players running pushes towards a dead ball, close
+  to what the IDSSE frames of each situation show. The inputs are chosen by the held-out log-loss,
+  never by these checks. The second check weakens when the degraded ball is hidden in fewer dead
+  balls, the main uncertainty of the degradation. Whether the calibrated variant replaces the rules
+  is decided by the protocol of Section 5. Implemented in `modeling/calibration/dead.py`; results in
+  `reports/calibration_dead.md`.
 - **Before kick-off.** The graded block of the second half opens before its kick-off: those 2,934
   frames are forced to `D` by a mask that the decoder cannot override. The first half starts at the
   kick-off itself, so it has no such frames. The mask is the `pre_kickoff` column of the master

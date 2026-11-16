@@ -55,6 +55,7 @@ Modelo:
 | [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente (`harder`/`easier` substituídos pela D-017) |
 | [D-017](#d-017--harder-e-easier-pelo-apêndice-a6-e-estatísticas-originais-do-realismo-f4-04) | 2026-11-15 | `harder`/`easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04) | Vigente |
 | [D-018](#d-018--hazard-de-troca-de-posse-ajuste-e-checagens-f1-08) | 2026-11-15 | Hazard de troca de posse: ajuste e checagens (F1-08) | Vigente |
+| [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente (R2 revisado) |
 
 ## Decisões
 
@@ -625,6 +626,85 @@ Modelo:
 - **Evidência:** [`reports/calibration_hazard.md`](../reports/calibration_hazard.md): AUC fora da dobra 0,71
   no `default` (0,68–0,74 nos outros modos). Nas trocas que o v1 perde, o pico do hazard tem AUC 0,72 contra
   janelas sem troca. Só IDSSE.
+
+### D-019 — Calibração do `dead_logit` no IDSSE: features e o R2
+
+- **Data:** 2026-11-15 (revisada no mesmo dia: R2)
+- **Autor:** Bernardo (F3, F3-04)
+- **Status:** Vigente
+- **Decisão:**
+  1. **`db_ball_rest` e `ball_speed` ficam fora do ajuste, sempre** (atualização de 11/11, item 3). No IDSSE a
+     bola congela durante a bola morta, e as duas vazariam o rótulo. `db_fast_in_pitch` continua.
+  2. **Imputação só na matriz de desenho, sempre com indicador** (regra 4): `out_of_pitch` usa `has_ball`;
+     `db_still_frac`, `db_mean_speed` e `log1p(gap_length)` ganham uma coluna `*_missing`. No IDSSE elas nunca
+     faltam, então os indicadores ficam constantes e com peso 0.
+  3. **`C` escolhido pela log-loss média com uma partida de fora**, empate para o menor `C`. A log-loss
+     de validação usa os frames subamostrados da partida de fora.
+  4. **O arquivo guarda os `dead.params` que constroem as features**, e o tipo `calibrated` recusa um config
+     com valores diferentes (os pesos das tags podem mudar).
+  5. **Interações entre os três fatores de uma lacuna** (conjunto `interactions`): os produtos dois a dois do
+     tipo de lacuna (`gap_exit`, `gap_long`), do comprimento (`log_gap`) e da velocidade média dos jogadores
+     (`mean_speed`): `exit_x_log_gap`, `long_x_log_gap`, `exit_x_speed`, `long_x_speed` e `speed_x_log_gap`. Os
+     produtos usam os valores já imputados, e o indicador de cada fator continua marcando a falta (regra 4).
+     A lacuna aérea fica sem interação: é rara e nunca passa de `air_max_frames`.
+  6. **O conjunto é escolhido pela log-loss, nunca pelo R2.** O ajuste roda o `full` e o `interactions` e
+     fica com o de menor log-loss média com uma partida de fora entre os que passam no R1 em todos os
+     modelos; empate fica com o `full`, o mais simples. Se nenhum passar no R1, entra o `reduced` (item 4 da
+     atualização de 11/11). O R2 só é relatado. O relatório mostra os dois conjuntos lado a lado.
+  7. **Sinais esperados pela inclinação efetiva.** Com interações, o peso de `mean_speed` sozinho não é o
+     efeito da velocidade. A checagem usa a inclinação do `d_fit` em cada feature, na média do treino e em
+     cada cenário R1–R3. Sem interações ela coincide com a checagem antiga (sinal do peso).
+  8. **Resultado:** os 4 arquivos usam o `interactions`, com os três sinais esperados. No `dead.yaml`
+     (`C = 1,0`), a log-loss com uma partida de fora cai de 0,2517 (`full`) para 0,2476 e melhora em 6 das 7
+     partidas. **R1 e R2 passam nos 8 modelos**: R1 = −2,44 no `all` (dobras de −2,68 a −2,28), R2 = +1,03
+     (dobras de +0,81 a +1,21). O R3 vai de +0,35 para −0,56, ou seja, a posse cadenciada com lacuna agora
+     puxa para jogo vivo. `dead_pooled` e `dead_hidehi` também passam no R2 (+0,89 e +1,49). **O
+     `dead_hidelo` falha no R2** (−0,44; ver abaixo). O `calibrated` segue para a F2-06.
+- **Por que o R2 falhava no conjunto `full` (e por que a versão anterior desta decisão estava errada):** a
+  versão anterior dizia que os dados do IDSSE contradizem o R2, porque só 26% dos frames de lacuna de saída
+  com os jogadores entre 2,3 e 2,7 m/s são bola morta. Esse número junta lacunas de todos os comprimentos, e
+  o R2 fixa `gap_length = 50`. Só com as lacunas de até 100 frames, a mesma faixa de velocidade tem 0,56 de
+  bola morta (296 frames); com todas, 0,26, porque as lacunas de centenas de frames dominam a contagem. Uma
+  lacuna de saída longa com os jogadores correndo é quase sempre jogo vivo depois do reinício, com a bola
+  ainda invisível; uma curta é a bola morta que acabou de começar. Nos frames parecidos com cada cenário
+  (mesmo tipo de lacuna, lacuna ≤ 100 frames, jogadores a ±0,4 m/s), o valor fiel aos dados é
+  **R1 = −2,27 [−3,38; −1,59]** e **R2 = +0,70 [+0,07; +1,27]** (intervalo de 90%, bootstrap por lacuna,
+  39 lacunas no R2). O `full` acerta o R1 (−2,02),
+  mas dá −1,15 no R2, fora do intervalo. Com um único coeficiente para `log_gap`, ele aprende "lacuna longa ⇒
+  bola morta", que vale com os jogadores lentos e se inverte com eles correndo. O `interactions` fica dentro
+  dos dois intervalos (−2,44 e +1,03). O pedido de revisão do R2 (jogadores a ~1,5 m/s) feito na issue #81
+  fica sem efeito.
+- **Limite (`hidelo`):** no `hidelo` a bola fica escondida em menos bolas mortas (`p_unfreeze_hide` 0,25).
+  Duas coisas pioram ali. O dado do cenário fica fraco: R2 = +0,57 [−0,24; +1,27] (32 lacunas), com o
+  intervalo cruzando o zero. E o `dead_hidelo` fica abaixo dos dados nos dois cenários: R1 = −3,74 (dados
+  −2,24 [−3,61; −1,51]) e R2 = −0,44, negativo com qualquer `C` da grade (−0,59 a −0,41, exploração desta
+  revisão). Ou seja, o R2 depende de quanto a bola some na bola morta, a principal incerteza da D-016. O
+  `dead_hidelo` não entra na seleção (item 7 da atualização de 11/11), mas a checagem de estabilidade da
+  F2-06 deve olhar esse ponto. O `dead_pooled`, que vê os três modos, passa no R2 (+0,89).
+- **Avaliação cruzada (item 5):** log-loss média do `dead` com cada dobra na partida de fora: `default`
+  0,2479, `hidelo` 0,2733 e `hidehi` 0,2097, menores que as do `full` nos três modos (0,2519, 0,2750 e
+  0,2142). Em relação ao `default`, o `hidelo` fica +10,3% (+10,8% no `dead_pooled`), acima do limite de
+  10% do item 5: fica registrado aqui. A razão sobe porque o `default` melhora mais que o `hidelo`, não
+  porque o `hidelo` piora.
+- **Opções consideradas** (os números das variantes intermediárias vêm da exploração desta revisão, com o
+  mesmo ajuste e as mesmas dobras, e não estão no relatório):
+  - manter o `full` com o R2 falhando (versão anterior desta decisão): descartada, porque os dados apoiam o
+    R2 no comprimento de lacuna do cenário e o `interactions` tem log-loss menor;
+  - forçar o R2 a passar (peso mínimo para `gap_exit`, ou +3 fixo como no `rules_v1`): descartada. Seria um
+    número escolhido por nós, e o R2 nunca entra na escolha;
+  - só `gap_exit` × velocidade: log-loss quase igual à do `full` e R2 ainda negativo (−0,91);
+  - só os produtos com `log_gap`: R2 positivo, mas com margem de +0,01 a +0,02 na pior dobra e log-loss pior
+    que a do conjunto completo de interações;
+  - uma feature de posição dentro da lacuna (frames desde o início): é a descrição mais fiel (a evidência da
+    saída está no começo da lacuna), mas os cenários da tarefa não dizem a posição, então pediria uma
+    mudança da especificação (regra 11). Fica como melhoria futura;
+  - melhorar o detector de saída da F3-01: não ataca a causa principal (lacunas que atravessam o reinício) e
+    muda features compartilhadas com o `rules_v1`.
+- **Evidência:** `reports/calibration_dead.md`: escolha do conjunto (log-loss por partida e R1–R3 de cada
+  conjunto), cenários contra os dados com intervalo, tabela de P(D) com todas as lacunas e só com as de até
+  100 frames, inclinações efetivas, avaliação cruzada e AUC de cada feature sozinha. O ajuste é
+  reprodutível: rodando de novo, os 4 arquivos e o relatório saem idênticos byte a byte. Testes:
+  `tests/test_modeling_calibration_dead.py` (sintéticos).
 
 ## Registro de envios
 
