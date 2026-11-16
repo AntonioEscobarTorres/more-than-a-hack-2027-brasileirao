@@ -234,7 +234,9 @@ the rule and where it is implemented.*
   live play, and a ball leaving the pitch with the players running pushes towards a dead ball, close
   to what the IDSSE frames of each situation show. The inputs are chosen by the held-out log-loss,
   never by these checks. The second check weakens when the degraded ball is hidden in fewer dead
-  balls, the main uncertainty of the degradation. Whether the calibrated variant replaces the rules
+  balls, the main uncertainty of the degradation. The player inputs are never missing on IDSSE, so
+  at inference a missing value takes the training mean, which adds no evidence, instead of reading
+  as "every player stands still". Whether the calibrated variant replaces the rules
   is decided by the protocol of Section 5. Implemented in `modeling/calibration/dead.py`; results in
   `reports/calibration_dead.md`.
 - **Before kick-off.** The graded block of the second half opens before its kick-off: those 2,934

@@ -55,7 +55,7 @@ Modelo:
 | [D-016](#d-016--degradação-do-idsse-ajustada-pelo-realismo-f4-04) | 2026-11-15 | Degradação do IDSSE ajustada pelo realismo (F4-04) | Vigente (`harder`/`easier` substituídos pela D-017) |
 | [D-017](#d-017--harder-e-easier-pelo-apêndice-a6-e-estatísticas-originais-do-realismo-f4-04) | 2026-11-15 | `harder`/`easier` pelo Apêndice A.6 e estatísticas originais do realismo (F4-04) | Vigente |
 | [D-018](#d-018--hazard-de-troca-de-posse-ajuste-e-checagens-f1-08) | 2026-11-15 | Hazard de troca de posse: ajuste e checagens (F1-08) | Vigente |
-| [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente (R2 revisado) |
+| [D-019](#d-019--calibração-do-dead_logit-no-idsse-features-e-o-r2) | 2026-11-15 | Calibração do `dead_logit` no IDSSE: features e o R2 | Vigente (R2 revisado; NaN na inferência, 16/11) |
 | [D-020](#d-020--trilha-da-câmera-de-transmissão-descartada-no-go-f4-05) | 2026-11-16 | Trilha da câmera de transmissão descartada: NO-GO (F4-05) | Vigente |
 
 ## Decisões
