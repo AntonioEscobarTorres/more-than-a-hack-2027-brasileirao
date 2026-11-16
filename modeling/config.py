@@ -255,6 +255,7 @@ BROADCAST_SCHEMA = {
     "block_frames": Int(ge=1),
     "min_visible_players": Int(ge=1),
     "refine_search_radius_frames": Int(ge=1),
+    "local_coarse_seconds": Int(ge=0),
     "align_max_cost_m": _POS,
     "second_best_min_offset_frames": Int(ge=0),
     "second_best_cost_ratio": Float(ge=1.0),

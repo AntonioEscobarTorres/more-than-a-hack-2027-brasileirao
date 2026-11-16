@@ -708,6 +708,29 @@ Modelo:
   100 frames, inclinações efetivas, avaliação cruzada e AUC de cada feature sozinha. O ajuste é
   reprodutível: rodando de novo, os 4 arquivos e o relatório saem idênticos byte a byte. Testes:
   `tests/test_modeling_calibration_dead.py` (sintéticos).
+- **Revisão da F5 (16/11):**
+  - **Falta na inferência (corrige o item 2).** Como `db_still_frac` e `db_mean_speed` nunca faltam no
+    IDSSE, imputar 0 na inferência lia uma velocidade NaN como "todos parados": `d_fit` de cerca de +4,2
+    no `dead.yaml` (−3 com a fração de parados NaN), contra a regra 4 (NaN é "sem evidência"). Agora, só na
+    inferência, a entrada cujo indicador nunca disparou no ajuste recebe a média do treino do próprio
+    modelo (`inference_fill`): o valor padronizado fica 0 e as interações usam esse mesmo valor. Uma
+    entrada que faltou no ajuste mantém a convenção ajustada (0 mais o indicador). O ajuste não muda: os 4
+    arquivos e o relatório saem idênticos. No BAR-ATH as duas features são finitas em todos os frames dos
+    tempos (`PASS`), então a submissão não muda; é uma proteção.
+  - **Deslocamento das entradas.** O modelo depende muito de `db_mean_speed` (inclinação de cerca de
+    −2,8 por m/s na média do treino), e a checagem (a) da F4-04 só compara a mediana bruta com ±20%. Nova
+    ferramenta `tools/dead_feature_shift.py` (execução local, só `PASS`/`FAIL`): finitude das duas
+    features, quantis 10/50/90 de `db_mean_speed` a até 0,25 m/s da referência IDSSE e, informativa, a
+    fração de `d_fit > 0`. Resultado no BAR-ATH: `PASS` em todas, com `default` e com os três modos, para
+    `dead.yaml` e `dead_pooled.yaml`.
+  - **Efeito no score (spellF1 no IDSSE, uma partida de fora por vez, decodificador de
+    `decoder_idsse.yaml`, melhor `lam_dead` de cada variante):** com o `team` `rules_v1`, o `calibrated`
+    piora (−0,007 `default`, −0,013 `hidehi`, ≈ 0 `hidelo`), apesar da AUC por frame maior (0,963 contra
+    0,937). Com o `team` calibrado (F1-05), ganha: `lam_dead` 0,2 contra `rules_v1` com 0,35 dá +0,011
+    no `default` (6/7 partidas), +0,029 no `hidelo` (7/7) e −0,008 no `hidehi` (3/7); média de 0,362 para
+    0,373. O `dead_pooled` fica igual. **Na F2-06, testar o `dead` calibrado junto com o `team`
+    calibrado**, nunca contra o `team` `rules_v1`. Ressalvas: 7 partidas, `lam_dead` escolhido nelas, e a
+    F2-06 decide.
 
 ### D-020 — Trilha da câmera de transmissão descartada: NO-GO (F4-05)
 
@@ -725,6 +748,24 @@ Modelo:
   - `(iv)` concordância da posição da bola quando ambas as câmeras a observam: `PASS`;
   - veredito final: `NO-GO`.
   - Código e testes sintéticos em `modeling/broadcast/align.py`, `tools/broadcast_feasibility.py` e `tests/test_modeling_broadcast_align.py` (issues #78 e #84).
+- **Revisão da F5 (16/11):**
+  - **Falha no alinhamento.** O refino só procurava ±25 frames em volta de **um** deslocamento grosso por
+    tempo (ou do bloco anterior). Se o deslocamento muda dentro do tempo (uma edição ou deriva da
+    transmissão), o trecho ao vivo com o outro deslocamento nunca era procurado e ficava sem mapeamento:
+    num teste sintético com dois trechos no mesmo tempo, um deles ficou com 0% mapeado, mesmo com um salto de
+    só 1,6 s. Os testes da F4-05 não pegavam isso porque os dois trechos ficavam em tempos diferentes.
+    Corrigido com deslocamentos grossos locais em janelas deslizantes de 60 s (`local_coarse_seconds`,
+    passo de 20 s; 0 desliga), usados como centros extras da busca; valor fixado no teste sintético, antes de
+    rodar no BAR-ATH. Testes novos em `tests/test_modeling_broadcast_align.py` (seção 6).
+  - **O veredito não muda.** Execução local de `tools/broadcast_feasibility.py`: com o algoritmo original
+    (`local_coarse_seconds: 0`) reproduz exatamente o resultado acima, e com a correção também dá (i) `FAIL`,
+    (ii) `PASS`, (iii) `FAIL`, (iv) `PASS`, **NO-GO**.
+  - **Não é limite dos dados.** Tetos com alinhamento perfeito (todo frame da transmissão com homografia
+    válida, ou com bola, mapeado): (i) e (iii) dariam `PASS`. A ordem dos times (casa primeiro) é a mesma
+    nos metadados das duas câmeras (`PASS`). A cobertura fica abaixo do limiar por causa do próprio
+    alinhamento: os critérios de aceite dos blocos (custo, segundo melhor, 6 jogadores) foram fixados antes e
+    **não podem ser ajustados no BAR-ATH** (D-012: parâmetros só em dados externos). O NO-GO fica.
+  - O merge do #141 tinha apagado o bloco "Revisão da F5 (16/11)" da D-019; ele foi restaurado.
 
 
 ### D-021 — `team_logit` calibrado com a variante `touch` e o config `v2` (revisão da F1-05/F1-06)

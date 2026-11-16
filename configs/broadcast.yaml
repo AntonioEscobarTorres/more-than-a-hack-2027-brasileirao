@@ -8,6 +8,7 @@ source_fps: 25                # frame rate of both video timelines
 
 # -- coarse alignment ------------------------------------------------------------------------
 coarse_fps: 5                 # ball series are subsampled to this rate for the cross-correlation
+local_coarse_seconds: 60      # also correlate sliding windows of this length (0 = one shift per half only)
 
 # -- block refinement ------------------------------------------------------------------------
 block_seconds: 2              # block length in seconds

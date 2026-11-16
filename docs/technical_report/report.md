@@ -117,7 +117,7 @@ model sees the same features in both domains.
 | Tactical homography | **Not in the model** | Diagnostics only. Its reprojection error is kept as an optional column and is deliberately excluded from the features. |
 | Tactical video | **Not in the model** | Watched by team members to check the pipeline (for example the attacking direction in each half). Nothing seen in it became a label, a correction or a frame-specific constant. |
 | Broadcast video | **Not in the model** | Not frame-aligned to the tactical video, with cuts, replays and zooms. |
-| Broadcast tracking | **Exploratory** | *To be completed by F4 (tasks F4-05/F4-06): "used" or "tested and dropped", with the reason.* |
+| Broadcast tracking | **Tested and dropped** | No frame alignment to the tactical video was reliable enough: the feasibility gate (F4-05, D-020) gave NO-GO. |
 
 Why each decision was taken:
 
@@ -133,8 +133,16 @@ Why each decision was taken:
   matches and is tied to match time, so using it as a feature would let a model memorise the moment
   of the match.
 - **Broadcast tracking.** The tactical ball is missing in 41% of the graded frames, and the broadcast
-  camera may see some of them. This is evaluated as a separate track with a go/no-go gate, and is
-  accepted only through the protocol of Section 5.
+  camera may see some of them. It was evaluated as a separate track with a pre-registered go/no-go
+  gate (F4-05, decision D-020). The broadcast timeline is mapped to the tactical one without any
+  correspondence table: a cross-correlation of the two ball trajectories (per half and on sliding
+  60 s windows) gives coarse shifts, refined on 2 s blocks by pairing each visible broadcast player
+  with the closest tactical player of the same team, and kept only in live segments of at least
+  10 s (replays and cuts are dropped). Where the mapping exists it is accurate (players and ball
+  agree within the gate's 1 m and 2 m thresholds), but it covers less than half of the graded frames
+  and the broadcast sees the ball on too few of the frames where the tactical ball is missing.
+  The acceptance thresholds were fixed before the run and could not be tuned on the match, so the
+  track was dropped and the fusion task (F4-06) was not done.
 
 ## 3. External data
 

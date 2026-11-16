@@ -7,12 +7,17 @@ table. This module recovers one: for every broadcast frame, the tactical video f
 Pipeline, run once per candidate orientation (identity and 180-degree rotation):
 
 1. Coarse alignment, per tactical half: a masked cross-correlation of the pitch-centred ball
-   position series at ``coarse_fps``, using only samples where both cameras see the ball.
+   position series at ``coarse_fps``, using only samples where both cameras see the ball. The same
+   correlation is also run on sliding windows of ``local_coarse_seconds`` of the broadcast (local
+   coarse shifts), because the shift is not constant inside a half when the broadcast has an edit or
+   drifts (review of F4-05: with one shift per half, a live stretch with another shift was never
+   searched and stayed unmapped). ``local_coarse_seconds: 0`` turns the local shifts off.
 2. Block refinement: the broadcast timeline is cut into blocks of ``block_frames`` frames. Each
-   eligible block searches integer shifts around the coarse shift (or around the previous accepted
-   block) and keeps the shift that minimises the median distance from each visible broadcast
-   player to the closest tactical player of the same team. A block is accepted only when the cost is
-   small and the runner-up shift is clearly worse.
+   eligible block searches integer shifts around the previous accepted block, then around the local
+   coarse shifts of its stretch and the per-half coarse shifts, and keeps the shift that minimises
+   the median distance from each visible broadcast player to the closest tactical player of the
+   same team. A block is accepted only when the cost is small and the runner-up shift is clearly
+   worse.
 3. Live segments: consecutive accepted blocks with nearly equal shifts form a segment; short
    segments (replays, cuts) are dropped.
 
@@ -44,7 +49,7 @@ _REQUIRED_CFG = (
     "tactical_n_slots", "broadcast_n_slots", "source_fps", "coarse_fps", "block_seconds",
     "block_frames", "min_visible_players", "refine_search_radius_frames", "align_max_cost_m",
     "second_best_min_offset_frames", "second_best_cost_ratio", "segment_max_offset_diff_frames",
-    "segment_min_blocks")
+    "segment_min_blocks", "local_coarse_seconds")
 
 
 # -- data containers ----------------------------------------------------------------------------
@@ -74,6 +79,7 @@ class AlignDiagnostics:
 
     orientation_costs: dict          # orientation -> global cost (median best block cost), inf = none
     coarse: dict                     # half -> (shift_frames, normalised_corr, overlap_samples) or None
+    local_coarse: list               # [(first, stop, half, shift_frames)] per local window
     block_frames: int
     block_eligible: np.ndarray       # bool[n_blocks]
     block_accepted: np.ndarray       # bool[n_blocks]
@@ -349,7 +355,35 @@ def _window(center, half_bounds, start, n_frames, radius):
     return np.arange(low, high + 1, dtype=np.int64)
 
 
-def _refine(b_team, t_team, eligible, coarse, bounds, cfg):
+LOCAL_HOP_FRACTION = 3      # local windows start every local_coarse_seconds / 3
+
+
+def _local_coarse(b_ball_coarse, t_ball_by_half, bounds, stride, min_overlap, center, cfg):
+    """Local coarse shifts on sliding windows of the broadcast: ``[(first, stop, half, shift)]``.
+
+    Window ``w`` covers broadcast frames ``[first, stop)`` (``local_coarse_seconds`` long, starting
+    every third of that). Its shift is the coarse correlation of that window alone against each
+    tactical half. Empty when ``local_coarse_seconds`` is 0.
+    """
+    n = int(cfg["local_coarse_seconds"]) * int(cfg["coarse_fps"])
+    if n <= 0:
+        return []
+    hop = max(1, n // LOCAL_HOP_FRACTION)
+    total = b_ball_coarse.shape[0]
+    out = []
+    for w0 in range(0, max(total - n, 0) + hop, hop):
+        part = b_ball_coarse[w0:w0 + n]
+        if part.shape[0] == 0:
+            break
+        for half_id, (first, _last) in sorted(bounds.items()):
+            res = _coarse_shift(part, t_ball_by_half[half_id], first, stride, min_overlap, center)
+            if res is not None:
+                out.append((w0 * stride, (w0 + part.shape[0]) * stride, half_id,
+                            int(res[0]) - w0 * stride))
+    return out
+
+
+def _refine(b_team, t_team, eligible, coarse, bounds, cfg, local=None):
     """Per-block search. Returns half, shift, cost, accepted arrays over all blocks."""
     n_blocks = eligible.size
     n_frames = cfg["block_frames"]
@@ -381,9 +415,13 @@ def _refine(b_team, t_team, eligible, coarse, bounds, cfg):
             tried.append(search(previous[0], previous[1], start))
         chosen = next((r for r in tried if r is not None and r[3]), None)
         if chosen is None:
+            centers = [(h, c) for first, stop, h, c in (local or ())
+                       if first <= start and start + n_frames <= stop]
             for half_id in sorted(coarse):
                 if coarse[half_id] is not None:
-                    tried.append(search(half_id, coarse[half_id][0], start))
+                    centers.append((half_id, coarse[half_id][0]))
+            for half_id, center in dict.fromkeys(centers):     # unique, first-seen order
+                tried.append(search(half_id, center, start))
             winners = [r for r in tried if r is not None and r[3]]
             if winners:
                 chosen = min(winners, key=lambda r: (r[2], r[0]))
@@ -437,17 +475,17 @@ def _align_one_orientation(orientation, tactical, broadcast, t_team, eligible, b
     b_team = _split_by_team(players, broadcast.team, broadcast.valid)
     b_ball_coarse = ball[::stride]
 
-    coarse = {}
-    for half_id, first, last in ((h, f, l) for h, (f, l) in sorted(bounds.items())):
-        t_ball_coarse = tactical.ball[first:last + 1:stride]
-        coarse[half_id] = _coarse_shift(b_ball_coarse, t_ball_coarse, first, stride, min_overlap,
-                                        (pitch[0] / 2.0, pitch[1] / 2.0))
+    center = (pitch[0] / 2.0, pitch[1] / 2.0)
+    t_ball_by_half = {h: tactical.ball[f:l + 1:stride] for h, (f, l) in sorted(bounds.items())}
+    coarse = {h: _coarse_shift(b_ball_coarse, t_ball_by_half[h], bounds[h][0], stride,
+                               min_overlap, center) for h in sorted(bounds)}
+    local = _local_coarse(b_ball_coarse, t_ball_by_half, bounds, stride, min_overlap, center, cfg)
 
     block_half, block_shift, block_cost, accepted = _refine(
-        b_team, t_team, eligible, coarse, bounds, cfg)
+        b_team, t_team, eligible, coarse, bounds, cfg, local)
     scored = block_cost[eligible & np.isfinite(block_cost)]
     global_cost = float(np.median(scored)) if scored.size else np.inf
-    return {"coarse": coarse, "half": block_half, "shift": block_shift, "cost": block_cost,
+    return {"coarse": coarse, "local": local, "half": block_half, "shift": block_shift, "cost": block_cost,
             "accepted": accepted, "global_cost": global_cost}
 
 
@@ -496,6 +534,7 @@ def align_broadcast(tactical: Tracking, broadcast: Tracking, cfg, pitch=None) ->
     diagnostics = AlignDiagnostics(
         orientation_costs=costs,
         coarse=best["coarse"],
+        local_coarse=best["local"],
         block_frames=n_frames,
         block_eligible=eligible,
         block_accepted=best["accepted"],
