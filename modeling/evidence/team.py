@@ -31,7 +31,6 @@ from ..variants import register_team
 from .collective import _half_runs, build_collective_features
 from .control import build_control_features, require_columns
 
-from sklearn.ensemble import HistGradientBoostingClassifier
 
 COLLECTIVE_WEIGHTS = (("w_adv", "ev_coll_adv"), ("w_spread", "ev_coll_spread"),
                       ("w_speed", "ev_coll_speed"))
@@ -486,6 +485,18 @@ def team_logit_calibrated(master: pd.DataFrame, params: dict, *, holdout=None) -
     return t.astype(np.float32)
 
 
+@register_team("gbdt")
+def team_logit_gbdt(master: pd.DataFrame, params: dict, *, holdout=None) -> np.ndarray:
+    """F1-07 GBDT team_logit, antisymmetric by construction: float32[n], |t| <= 8, 0 on half == 0.
+
+    ``params["calibrated_file"]`` is ``configs/calib/team_gbdt.yaml``; ``holdout`` selects the fold
+    model trained without that match. See :mod:`modeling.evidence.team_gbdt`.
+    """
+    from .team_gbdt import team_logit_gbdt_impl
+
+    return team_logit_gbdt_impl(master, params, holdout=holdout)
+
+
 __all__ = [
     "BALL_BASE_FEATURES",
     "GAP_BASE_FEATURES",
@@ -495,56 +506,8 @@ __all__ = [
     "build_touch_feature",
     "load_team_calibration",
     "team_logit_calibrated",
+    "team_logit_gbdt",
     "team_logit_rules_v1",
     "team_tag_prior",
     "touch_components",
 ]
-
-@register_team("gbdt")
-def team_logit_gbdt(master: pd.DataFrame, params: dict, *, holdout=None) -> np.ndarray:
-    """GBDT team_logit variant, antisymmetric by construction via data augmentation."""
-    half = master["half"].to_numpy()
-    valid_mask = (half != 0)
-
-    calibrated_file = params.get("calibrated_file")
-    if not calibrated_file or not Path(calibrated_file).is_file():
-        return team_logit_calibrated(master, params, holdout=holdout)
-
-    import joblib
-    from .windows import build_window_features 
-
-    model_data = joblib.load(calibrated_file)
-    clf = model_data["model"]
-    feature_names = model_data["features"]
-
-    feats = build_window_features(master, params)
-    base_feats = build_team_calibration_features(master, params)
-    for col in base_feats.columns:
-        if col not in feats.columns:
-            feats[col] = base_feats[col]
-
-    X = np.column_stack([np.where(np.isfinite(feats[c].to_numpy(dtype=np.float64)), feats[c].to_numpy(dtype=np.float64), 0.0) for c in feature_names])
-
-    swapped_master = swap_teams_master(master)
-    swapped_feats = build_window_features(swapped_master, params)
-    swapped_base = build_team_calibration_features(swapped_master, params)
-    for col in base_feats.columns:
-        if col not in swapped_feats.columns:
-            swapped_feats[col] = swapped_base[col]
-
-    X_swap = np.column_stack([np.where(np.isfinite(swapped_feats[c].to_numpy(dtype=np.float64)), swapped_feats[c].to_numpy(dtype=np.float64), 0.0) for c in feature_names])
-
-    if hasattr(clf, "predict_proba"):
-        p = clf.predict_proba(X)[:, 1]
-        p_swap = clf.predict_proba(X_swap)[:, 1]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            logit_orig = np.log(p / (1.0 - p))
-            logit_swap = np.log(p_swap / (1.0 - p_swap))
-            t = 0.5 * (logit_orig - logit_swap)
-    else:
-        t = 0.5 * (clf.predict(X) - clf.predict(X_swap))
-
-    t = np.clip(t, -TEAM_LOGIT_MAX, TEAM_LOGIT_MAX)
-    t = t + team_tag_prior(master, params)
-    t = np.where(valid_mask & np.isfinite(t), t, 0.0) + 0.0
-    return t.astype(np.float32)

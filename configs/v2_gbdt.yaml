@@ -1,0 +1,90 @@
+# v2_gbdt (F1-07, decision D-023): configs/v2.yaml with the GBDT team_logit
+# (configs/calib/team_gbdt.yaml, models/team_gbdt/all.joblib; gap frames keep the F1-05 logistic)
+# and lam_team re-chosen on degraded IDSSE with the F2-05 plateau + worst-case rule.
+# Nothing here was fitted or chosen on BAR-ATH. Transfer check: tools/gbdt_feature_shift.py.
+name: v2_gbdt
+pipeline: hmm
+ball_source: tactical
+team:
+  kind: gbdt
+  params:
+    pitch_l_m: 105.3
+    pitch_w_m: 68.0
+    kappa: 3.0
+    sigma_d: 2.0
+    r_ctrl: 2.0
+    l_prox: 3.0
+    v_rel: 6.0
+    ball_conf_filled: 0.6
+    contest_factor: 0.5
+    rel_w_when_nan: 0.5
+    # D-022: the abrupt ball-change condition of the touch feature fails the transfer check
+    # (tools/touch_feature_shift.py); the touch is persistence only.
+    touch_require_abrupt: false
+    collective:
+      win_frames: 25
+      w_adv: 0.0
+      w_spread: 0.0
+      w_speed: 0.0
+  calibrated_file: configs/calib/team_gbdt.yaml
+dead:
+  kind: calibrated
+  params:
+    long_gap_frames: 12
+    exit_line_m: 3.0
+    exit_speed_mps: 0.5
+    restart_line_m: 1.5
+    goal_area_depth_m: 6.0
+    goal_area_half_width_m: 9.2
+    pitch_w_m: 68.0
+    air_speed_mps: 8.0
+    air_max_frames: 100
+    smooth_frames: 25
+    rest_speed_mps: 0.3
+    rest_min_frames: 25
+    fast_speed_mps: 6.0
+    sp_prox_tau_frames: 250
+    sp_after_tau_frames: 75
+    goal_window_frames: 1500
+    weights:
+      out_of_pitch: 4.0
+      gap_exit: 3.0
+      gap_air: -1.0
+      gap_long: 0.5
+      still: 3.0
+      speed_high: -2.0
+      speed_low: 1.5
+      ball_rest: 2.0
+      fast_in_pitch: -3.0
+      tag_set_piece: 1.0
+      tag_sp_prox: 1.0
+      tag_sp_after: -1.0
+      tag_goal_window: 2.0
+  calibrated_file: configs/calib/dead.yaml
+decoder:
+  lam_team: 0.3
+  lam_dead: 0.2
+  mean_duration_s:
+    H: 7.6395
+    A: 6.8114
+    D: 25.2196
+  exit_split:
+    H:
+      A: 0.753086
+      D: 0.246914
+    A:
+      H: 0.78318
+      D: 0.21682
+    D:
+      H: 0.486409
+      A: 0.513591
+  min_dwell_frames:
+    H: 12
+    A: 12
+    D: 25
+postprocess:
+  midpoint_neutral_switch: false
+  boundary_shift_file: null
+  d_bridge_frames: 0
+  d_cross_frames: 0
+  min_spell_frames: 0
