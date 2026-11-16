@@ -33,7 +33,7 @@ from modeling.io import validate_master
 from modeling.scoring import external_eval
 from preprocessing.schema import N_SLOTS
 
-DEGRADE_MODES = ("none", "default", "harder", "easier", "hidelo", "hidehi")
+DEGRADE_MODES = ("none", "default", "harder", "easier", "fused", "hidelo", "hidehi")
 
 SUMMARY_KEYS = {
     "match",
@@ -205,7 +205,7 @@ def test_external_eval_degrade_choices_include_hidelo_and_hidehi() -> None:
 
 
 def test_build_degrade_choices_cover_all_modes() -> None:
-    """The build CLI accepts exactly the six documented degradation modes."""
+    """The build CLI accepts exactly the seven documented degradation modes."""
     assert tuple(build.BUILD_DEGRADE_CHOICES) == DEGRADE_MODES
     parser = build.build_parser()
     for mode in DEGRADE_MODES:
