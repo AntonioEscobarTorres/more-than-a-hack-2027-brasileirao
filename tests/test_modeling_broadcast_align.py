@@ -578,3 +578,34 @@ def test_mapped_pairs_drop_frames_outside_the_evaluated_halves(tool):
     assert t_idx.tolist() == [3, 6]
     with pytest.raises(ValueError):
         tool.mapped_pairs(SimpleNamespace(tactical_frame=np.array([99], dtype=np.int32)), evaluated)
+
+# -- 6. review of F4-05: two live shifts inside the same half ------------------------------------
+
+def _same_half_scenario(monkeypatch, offset_a, offset_b):
+    """Both live segments in half 1, the shift jumping between them (an edit or drift)."""
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "HALF_BOUNDS", {1: (500, 5499), 2: (6000, 7499)})
+    monkeypatch.setattr(module, "OFFSET_1", offset_a)
+    monkeypatch.setattr(module, "OFFSET_2", offset_b)
+    return build_scenario()
+
+
+@pytest.mark.parametrize("jump", [40, 300])
+def test_two_shifts_in_the_same_half_are_both_recovered(monkeypatch, cfg, jump):
+    scenario = _same_half_scenario(monkeypatch, OFFSET_1, OFFSET_1 + jump)
+    mapped = align_broadcast(scenario.tactical, scenario.broadcast, cfg).tactical_frame
+    frames = np.arange(N_BROADCAST_FRAMES)
+    for (start, stop), offset in ((SEGMENT_1, OFFSET_1), (SEGMENT_2, OFFSET_1 + jump)):
+        part = slice(start, stop)
+        ok = (mapped[part] >= 0) & (np.abs(mapped[part] - (frames[part] + offset)) <= 1)
+        assert ok.mean() >= MIN_LIVE_MAPPED_RATIO * 0.85, (start, ok.mean())
+    assert np.all(mapped[REPLAY[0]:REPLAY[1]] == -1)
+
+
+def test_without_local_shifts_the_second_shift_of_a_half_is_lost(monkeypatch, cfg):
+    """The behaviour fixed by local_coarse_seconds: one coarse shift per half misses a segment."""
+    scenario = _same_half_scenario(monkeypatch, OFFSET_1, OFFSET_1 + 300)
+    mapped = align_broadcast(scenario.tactical, scenario.broadcast,
+                             {**cfg, "local_coarse_seconds": 0}).tactical_frame
+    per_segment = [np.mean(mapped[slice(*seg)] >= 0) for seg in (SEGMENT_1, SEGMENT_2)]
+    assert min(per_segment) == 0.0
