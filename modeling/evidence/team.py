@@ -1,6 +1,6 @@
-"""Team-possession evidence team_logit (contract C2): rules_v1 and calibrated.
+"""Team-possession evidence team_logit: rules_v1 and calibrated.
 
-Ball term (Appendix A.1, F1-02):
+Ball term:
 
     t = -kappa * tanh(d_diff / sigma_d) * ev_prox_w * ev_rel_w * ev_ball_conf * contest
     contest = contest_factor if ev_contest == 1 else 1
@@ -9,7 +9,7 @@ Ball term (Appendix A.1, F1-02):
 Sign convention: d_diff = d_near_home - d_near_away, so home closer -> d_diff < 0 -> t > 0
 (favours H). t == 0 means "no evidence".
 
-Calibrated variant (F1-05):
+Calibrated variant:
     Uses two antisymmetric logistic models without intercept ("ball" when the ball is valid,
     "gap" when it is not), scaled by uncentred training standard deviations and clipped to
     +-TEAM_LOGIT_MAX (8.0). Inner products use explicit float64 elementwise multiplication and sum.
@@ -30,6 +30,8 @@ from ..contracts import TEAM_LOGIT_MAX
 from ..variants import register_team
 from .collective import _half_runs, build_collective_features
 from .control import build_control_features, require_columns
+
+from sklearn.ensemble import HistGradientBoostingClassifier
 
 COLLECTIVE_WEIGHTS = (("w_adv", "ev_coll_adv"), ("w_spread", "ev_coll_spread"),
                       ("w_speed", "ev_coll_speed"))
@@ -140,7 +142,7 @@ def build_pass_bridge_features(
     ev: pd.DataFrame | None = None,
     taus: Sequence[int | float] | None = None,
 ) -> pd.DataFrame:
-    """Pass-bridge features ``f10_<tau>`` and ``f11_<tau>`` per half block (F1-05 Update 3).
+    """Pass-bridge features ``f10_<tau>`` and ``f11_<tau>`` per half block.
 
     ``c(t) = f1(t) * ev_prox_w(t) * ev_ball_conf(t)`` where the ball is valid, and 0 otherwise.
     Filtered with a centered median of ``bridge_median_frames``, then smoothed forward and
@@ -212,7 +214,7 @@ def touch_components(
     *,
     ev: pd.DataFrame | None = None,
 ) -> dict[str, np.ndarray]:
-    """The two conditions of the touch feature, frame by frame (F1-05 Update 4).
+    """The two conditions of the touch feature, frame by frame.
 
     Returns boolean arrays ``valid`` (ball valid inside a half), ``abrupt`` (an abrupt ball change
     inside the centered window) and ``persist`` (the closer team within ``r_touch_m`` on at least
@@ -267,7 +269,7 @@ def build_touch_feature(
     *,
     ev: pd.DataFrame | None = None,
 ) -> pd.Series:
-    """Antisymmetric controlled-touch feature ``f9 = f1 * touch`` (F1-05 Update 4).
+    """Antisymmetric controlled-touch feature ``f9 = f1 * touch``.
 
     ``touch`` is even under team swap and uses the conditions of :func:`touch_components`:
       1. Abrupt ball change: ``|ball_dir_change| >= touch_dir_change_rad`` or
@@ -286,7 +288,7 @@ def build_touch_feature(
 
 
 def team_tag_prior(master: pd.DataFrame, params: Mapping) -> np.ndarray:
-    """Optional pre-registered tag prior (F1-05 Update 8), float64[n].
+    """Optional pre-registered tag prior, float64[n].
 
     Zero on IDSSE (where tag columns are absent/zero) and whenever ``w_tag_phase`` and
     ``w_sp_team`` are zero. Computed per half block and strictly 0 on ``half == 0``.
@@ -497,3 +499,52 @@ __all__ = [
     "team_tag_prior",
     "touch_components",
 ]
+
+@register_team("gbdt")
+def team_logit_gbdt(master: pd.DataFrame, params: dict, *, holdout=None) -> np.ndarray:
+    """GBDT team_logit variant, antisymmetric by construction via data augmentation."""
+    half = master["half"].to_numpy()
+    valid_mask = (half != 0)
+
+    calibrated_file = params.get("calibrated_file")
+    if not calibrated_file or not Path(calibrated_file).is_file():
+        return team_logit_calibrated(master, params, holdout=holdout)
+
+    import joblib
+    from .windows import build_window_features 
+
+    model_data = joblib.load(calibrated_file)
+    clf = model_data["model"]
+    feature_names = model_data["features"]
+
+    feats = build_window_features(master, params)
+    base_feats = build_team_calibration_features(master, params)
+    for col in base_feats.columns:
+        if col not in feats.columns:
+            feats[col] = base_feats[col]
+
+    X = np.column_stack([np.where(np.isfinite(feats[c].to_numpy(dtype=np.float64)), feats[c].to_numpy(dtype=np.float64), 0.0) for c in feature_names])
+
+    swapped_master = swap_teams_master(master)
+    swapped_feats = build_window_features(swapped_master, params)
+    swapped_base = build_team_calibration_features(swapped_master, params)
+    for col in base_feats.columns:
+        if col not in swapped_feats.columns:
+            swapped_feats[col] = swapped_base[col]
+
+    X_swap = np.column_stack([np.where(np.isfinite(swapped_feats[c].to_numpy(dtype=np.float64)), swapped_feats[c].to_numpy(dtype=np.float64), 0.0) for c in feature_names])
+
+    if hasattr(clf, "predict_proba"):
+        p = clf.predict_proba(X)[:, 1]
+        p_swap = clf.predict_proba(X_swap)[:, 1]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            logit_orig = np.log(p / (1.0 - p))
+            logit_swap = np.log(p_swap / (1.0 - p_swap))
+            t = 0.5 * (logit_orig - logit_swap)
+    else:
+        t = 0.5 * (clf.predict(X) - clf.predict(X_swap))
+
+    t = np.clip(t, -TEAM_LOGIT_MAX, TEAM_LOGIT_MAX)
+    t = t + team_tag_prior(master, params)
+    t = np.where(valid_mask & np.isfinite(t), t, 0.0) + 0.0
+    return t.astype(np.float32)
