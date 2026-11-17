@@ -512,11 +512,11 @@ without them.
 Agents never run these. Record PASS/FAIL only. The fused master is
 `<data>/processed_fused/master_features.parquet` (built by `make_submission` with this config).
 
-- csv_valid (`python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing`, SHA-256 recorded): **pending**
-- check_public_window (`--pred outputs/final.csv --master <fused master>`): **pending**
-- deadball_diagnostics (±40% plausibility; `--pred outputs/final.csv --master <fused master> --config configs/final.yaml`): **pending**
-- stability dead default/hidelo/hidehi (<5% label change, `tools/dead_stability.py --config configs/final.yaml`, GBDT fits): **pending**
-- dead_feature_shift (`--config configs/final.yaml --calibration configs/calib/dead_gbdt.yaml --master <fused master> --degrade fused`): **pending**
+- csv_valid (`python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing`, SHA-256 recorded): **PASS** (config `08a6a70f…`, CSV `f9e363ea…`; H 0.3327, A 0.2239, D 0.4433; 167 + 199 possessions)
+- check_public_window (`--pred outputs/final.csv --master <fused master>`): **PASS** (all 7)
+- deadball_diagnostics (±40% plausibility; `--pred outputs/final.csv --master <fused master> --config configs/final.yaml`): **PASS** (informative (iv), (v) also PASS)
+- stability dead default/hidelo/hidehi (<5% label change, `tools/dead_stability.py --config configs/final.yaml`, GBDT fits): **PASS** (all three pairs)
+- dead_feature_shift (`--config configs/final.yaml --calibration configs/calib/dead_gbdt.yaml --master <fused master> --degrade fused`): **PASS** ((a)–(c); informative (d) PASS)
 - gbdt_feature_shift (team GBDT, fused master, `--degrade fused`): **PASS** (D-025 item 10; the team section is unchanged)
 - hazard_feature_shift (`hazard_nodir`, tactical and fused masters): **PASS** (D-025 item 10; the hazard does not depend on the dead or decoder sections)
 
