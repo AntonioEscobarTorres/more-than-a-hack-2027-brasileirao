@@ -200,19 +200,26 @@ def test_cli_missing_master(data_root, tmp_path, capsys):
     assert "master not found" in capsys.readouterr().err
 
 
-def test_cli_rejects_bad_config_and_unsupported_ball_source(baseline_cfg, data_root, tmp_path,
-                                                           capsys):
+def test_cli_rejects_bad_config(baseline_cfg, data_root, tmp_path, capsys):
     bad = copy.deepcopy(baseline_cfg)
     bad["extra"] = 1
     assert make_submission.main(["--config", str(_write_cfg(tmp_path, bad)),
                                  "--skip-preprocessing"]) == 2
-    fused = copy.deepcopy(baseline_cfg)
-    fused["ball_source"] = "fused"
-    assert make_submission.main(["--config", str(_write_cfg(tmp_path, fused)),
-                                 "--skip-preprocessing"]) == 2
     assert make_submission.main(["--config", str(tmp_path / "nope.yaml"),
                                  "--skip-preprocessing"]) == 2
     assert "error:" in capsys.readouterr().err
+
+
+def test_cli_fused_ball_source_reads_processed_fused(baseline_cfg, data_root, tmp_path, capsys):
+    """F4-06: ball_source fused is accepted and loads the master from <data>/processed_fused only."""
+    fused = copy.deepcopy(baseline_cfg)
+    fused["ball_source"] = "fused"
+    out = tmp_path / "sub.csv"
+    assert make_submission.main(["--config", str(_write_cfg(tmp_path, fused)),
+                                 "--skip-preprocessing", "--out", str(out)]) == 1
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "master not found" in err and "processed_fused" in err
 
 
 def test_cli_as_module_is_byte_reproducible(mock_master, tmp_path):
