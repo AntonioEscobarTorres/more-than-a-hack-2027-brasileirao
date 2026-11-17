@@ -976,6 +976,14 @@ Modelo:
      0,5097 com `beta` 2 (+0,0139 ± 0,0031); `beta` 2,5 dá 0,5150. Config: `configs/v2_gbdt_fused_hzn2.yaml`
      (`beta` 2). A ordem dos passos (hazard antes ou depois da bola fundida) é da F2-06; para enviar esse config,
      a checagem do hazard roda também no master fundido (comando abaixo).
+  10. **Checagens locais no BAR-ATH (16/11, só `PASS`/`FAIL` e estatísticas dos rótulos previstos saíram da máquina):**
+     `tools/hazard_feature_shift.py` com `hazard_nodir`: `PASS` no master fundido (`--degrade fused`) e `PASS` no
+     tático (`--degrade default hidelo hidehi`; a informativa (c) deu `FAIL`). CSV do `v2_gbdt_fused_hzn2`
+     (`python -m modeling.make_submission --config configs/v2_gbdt_fused_hzn2.yaml --skip-preprocessing`, config
+     `45a68240…`): SHA-256 `ae80daecb916802399fedfedd2c897cc04b5913192437874e361fe261754a7c7`, idêntico em duas
+     execuções; 158.857 frames avaliados, H 0,3218, A 0,2047, D 0,4736; 150 posses no 1º tempo e 182 no 2º.
+     `tools/check_public_window.py` `PASS` nas 7; `tools/deadball_diagnostics.py` (master fundido) `PASS`;
+     `tools/gbdt_feature_shift.py` (master fundido, `--degrade fused`) `PASS` em (a), (b) e (c).
 - **Opções consideradas:**
   - renormalizar sempre, com `x = 0` no lugar de `None`: descartada, porque a especificação exige o código antigo
     intacto, e um empate decidido pelo arredondamento de `Z_t` mudaria rótulos;
