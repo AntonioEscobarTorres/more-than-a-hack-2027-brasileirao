@@ -933,6 +933,20 @@ Modelo:
      λ da base, o spellF1 no `default` sobe até `beta` 2,5 (0,508) e cai em 3 (0,501) e em 4 (0,419), porque o
      decodificador passa a trocar demais (razão de posses de 0,66 em `beta` 0 para 0,81 em 3 e 1,20 em 4). Qualquer
      `beta` fora da grade só entra pela F2-06.
+  7. **Hazard sem `ball_dir_change` (16/11, depois da checagem local).** No BAR-ATH,
+     `tools/hazard_feature_shift.py --degrade default hidelo hidehi` deu `FAIL` em (a) só na `ball_dir_change`
+     ((b) `PASS`; só `PASS`/`FAIL` e o nome da feature saíram da máquina). Pela mesma regra da D-023, a feature sai
+     do ajuste: `configs/hazard_fit_nodir.yaml` (igual ao da F1-08 sem ela) gera `configs/calib/hazard_nodir.yaml`,
+     ajustado só no IDSSE ([`reports/calibration_hazard_nodir.md`](../reports/calibration_hazard_nodir.md), AUC
+     fora da dobra 0,712 contra 0,713). A checagem só elimina features e nada é ajustado nos rótulos do BAR-ATH. O
+     hazard da F1-08 continua no repositório, sem mudança. Com cada partida do IDSSE no lugar do BAR-ATH, (a) e (b)
+     dão `PASS` nas 35 combinações.
+  8. **Configs candidatos** (hazard sem `ball_dir_change`, `lam_team` 0,3 mantido pela re-varredura):
+     `configs/v2_gbdt_hzn.yaml` (`beta` 1, a escolha da grade pré-registrada, +0,0067 ± 0,0022 no `default`) e
+     `configs/v2_gbdt_hzn2.yaml` (`beta` 2, fora da grade, escolhido pela seção informativa: +0,0141 ± 0,0031 no
+     `default`, ganho em todos os modos, abaixo do pico de 2,5 e longe da troca excessiva de 4). A escolha entre
+     eles é da F2-06/F5; `beta` 2 é a recomendação desta tarefa. Os configs `v1s_hz`, `v2_hz` e `v2_gbdt_hz`
+     usam o hazard com `ball_dir_change` e **não devem ser enviados**.
 - **Opções consideradas:**
   - renormalizar sempre, com `x = 0` no lugar de `None`: descartada, porque a especificação exige o código antigo
     intacto, e um empate decidido pelo arredondamento de `Z_t` mudaria rótulos;
@@ -954,11 +968,15 @@ Modelo:
     frames. A razão de posses vai de 0,657 a 0,661.
   - Tempo: o hazard leva cerca de 0,1 s por partida, e o decodificador modulado gasta cerca de 20% a mais que o
     constante (tabelas nos relatórios).
+  - Hazard sem `ball_dir_change` no `v2_gbdt` (item 7), delta pareado no `default`/`hidelo`/`hidehi`/`harder`/`easier`:
+    `beta` 1 +0,0067/+0,0066/+0,0071/+0,0089/+0,0057; `beta` 2 +0,0141/+0,0130/+0,0139/+0,0128/+0,0144
+    (spellF1 0,5036/0,4789/0,5375/0,4704/0,5335); `beta` 2,5 +0,0187; `beta` 4 −0,067.
   - Relatórios: [`reports/sensitivity_hazard.md`](../reports/sensitivity_hazard.md) (`v1s`),
-    [`reports/sensitivity_hazard_v2.md`](../reports/sensitivity_hazard_v2.md) e
-    [`reports/sensitivity_hazard_v2_gbdt.md`](../reports/sensitivity_hazard_v2_gbdt.md). Só IDSSE.
+    [`reports/sensitivity_hazard_v2.md`](../reports/sensitivity_hazard_v2.md),
+    [`reports/sensitivity_hazard_v2_gbdt.md`](../reports/sensitivity_hazard_v2_gbdt.md) e
+    [`reports/sensitivity_hazard_v2_gbdt_nodir.md`](../reports/sensitivity_hazard_v2_gbdt_nodir.md). Só IDSSE.
 - **Antes de enviar um config com o hazard** (execução local, só `PASS`/`FAIL` sai da máquina):
-  `python tools/hazard_feature_shift.py --degrade default hidelo hidehi`. A ferramenta compara as features e a
+  `python tools/hazard_feature_shift.py --hazard-file configs/calib/hazard_nodir.yaml --degrade default hidelo hidehi`. A ferramenta compara as features e a
   saída do hazard entre o IDSSE e o BAR-ATH: (a) features dentro da faixa do IDSSE e (b) probabilidade média de troca
   a ±25% do IDSSE são eliminatórias; (c) fração de `h ≥ 1` é informativa. Com cada partida do IDSSE no lugar do
   BAR-ATH, (a) e (b) dão `PASS` nas 35 combinações (7 partidas × 5 modos). Se der `FAIL`, envia-se o mesmo config com

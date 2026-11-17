@@ -609,3 +609,20 @@ def test_report_renders_stages_summary_and_extra_section(v1_cfg):
                     "## Beyond the pre-registered grid"):
         assert heading in text
     assert "beta = 4" in text and "## Decoder time" not in text
+
+
+def test_nodir_hazard_file_matches_its_fit_config():
+    """configs/calib/hazard_nodir.yaml = the F1-08 fit without ball_dir_change (D-024)."""
+    from modeling.calibration.hazard import load_fit_config
+    from modeling.evidence.hazard import design_columns, load_hazard_file
+
+    fit = load_fit_config(REPO / "configs" / "hazard_fit_nodir.yaml")
+    base = load_fit_config(REPO / "configs" / "hazard_fit.yaml")
+    assert fit["features"] == [f for f in base["features"] if f != "ball_dir_change"]
+    assert {k: v for k, v in fit.items() if k != "features"} == \
+        {k: v for k, v in base.items() if k != "features"}
+    calib = load_hazard_file(REPO / "configs" / "calib" / "hazard_nodir.yaml")
+    assert calib["features"] == fit["features"]
+    assert "ball_dir_change" not in design_columns(calib["features"])
+    assert sorted(calib["folds"]) == sorted(load_hazard_file(
+        REPO / "configs" / "calib" / "hazard.yaml")["folds"])
