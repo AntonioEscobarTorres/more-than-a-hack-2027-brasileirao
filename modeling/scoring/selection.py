@@ -5,24 +5,34 @@ Walks a ladder of candidates from simple to complex. Each step is accepted only 
 degrade the step does not worsen spellF1 by more than 1 SE. Writes
 ``reports/selection.md`` and ``configs/final.yaml``.
 
+The duration-stage (F2-08) and hazard (F2-07) steps re-sweep only λ (stage 1 of F2-05, with the
+F2-05 robust rule), as the update of 13/11 asks. ``--jobs N`` scores the external matches in N
+worker processes; every match is independent, so the tables are the same as with one process.
+
 Usage::
 
-    python -m modeling.scoring.selection --report reports/selection.md --final configs/final.yaml
+    python -m modeling.scoring.selection --report reports/selection.md --final configs/final.yaml \
+        --jobs 7
 """
 from __future__ import annotations
 
 import argparse
 import copy
 import math
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+import numpy as np
 import pandas as pd
 import yaml
 
 from modeling import paths
 from modeling.config import load_config, validate_config
+from modeling.scoring import durations_sweep as dsw
+from modeling.scoring import sweep
 from modeling.scoring.external_eval import (
+    SUMMARY_ROWS,
     evaluate_config,
     paired_delta,
     to_markdown,
@@ -35,6 +45,48 @@ PRIMARY_DEGRADE = "default"
 
 
 EvalFn = Callable[[dict, str], pd.DataFrame]
+
+
+def _score_one_match(job: tuple[dict, str, str]) -> dict:
+    cfg, degrade, match = job
+    return evaluate_config(cfg, degrade=degrade, matches=[match]).loc[match].to_dict()
+
+
+def parallel_evaluate_fn(jobs: int, matches: Sequence[str] | None = None) -> EvalFn:
+    """``evaluate_config`` with one worker process per match (same table, same order)."""
+    from modeling.external.files import IDSSE_MATCHES
+
+    matches = list(IDSSE_MATCHES if matches is None else matches)
+    pool = ProcessPoolExecutor(max_workers=int(jobs))
+
+    def evaluate(cfg: dict, degrade: str) -> pd.DataFrame:
+        records = list(pool.map(_score_one_match, [(cfg, degrade, m) for m in matches]))
+        df = pd.DataFrame(records, index=pd.Index(matches, name="match"))
+        n = len(df)
+        summary = pd.DataFrame([df.mean(), df.std(ddof=1) / math.sqrt(n)],
+                               index=list(SUMMARY_ROWS))
+        return pd.concat([df.astype(np.float64), summary])
+
+    evaluate.pool = pool  # type: ignore[attr-defined]
+    return evaluate
+
+
+def resweep_lambda(cfg: dict, evaluate_fn: EvalFn) -> dict:
+    """Stage 1 of F2-05 on ``cfg`` (λ grid, plateau within 1 SE, best worst case)."""
+    ev = dsw.Evaluator(frame_fn=evaluate_fn)
+    points = dsw.sweep_lambdas(cfg, ev)
+    return sweep.robustify_stage(points, evaluate_fn=ev, primary=PRIMARY_DEGRADE)["cfg"]
+
+
+def calibrated_stages(cfg: dict) -> dict[str, int]:
+    """F2-08 stage counts (``all``) for the ``min_dwell``/mean durations of ``cfg`` (IDSSE)."""
+    import games
+    from modeling.calibration.durations import calibrate_durations, load_lengths
+    from modeling.external.files import IDSSE_MATCHES
+
+    fps = float(games.GAMES[games.GAME]["fps"])
+    result = calibrate_durations(load_lengths(IDSSE_MATCHES), cfg["decoder"], fps=fps)
+    return {s: int(result["all"][s]) for s in ("H", "A", "D")}
 
 
 def _load_named(name: str) -> dict:
@@ -143,7 +195,7 @@ DEAD_GBDT_FILE = "configs/calib/dead_gbdt.yaml"
 
 
 def default_ladder() -> list[dict[str, Any]]:
-    """Ladder steps available without F2-08 (still open).
+    """Ladder steps of Section 6 and its updates of 11/11, 13/11 and 16/11.
 
     Each item is ``{"id", "label", "build": fn(current_cfg) -> candidate_cfg,
     "require_stress": bool, "force_accept": bool}``.
@@ -184,6 +236,19 @@ def default_ladder() -> list[dict[str, Any]]:
         return mutate(current, name="{}_hzn2".format(current["name"]),
                       hazard={"kind": "calibrated", "calibrated_file": HAZARD_FILE,
                               "beta": HAZARD_BETA})
+
+    def with_hazard_lam(current, evaluate_fn):
+        # Update of 13/11: the hazard step re-sweeps only λ.
+        return resweep_lambda(with_hazard(current), evaluate_fn)
+
+    def with_durations(current, evaluate_fn):
+        # F2-08 (D-027): stages fitted for this decoder, then re-sweep only λ.
+        stages = calibrated_stages(current)
+        if stages == dict(current["decoder"]["duration_stages"]):
+            return current  # identity: skipped as a no-op
+        staged = mutate(current, name="{}_nb".format(current["name"]),
+                        decoder={"duration_stages": stages})
+        return resweep_lambda(staged, evaluate_fn)
 
     def with_fused(current):
         # BAR-ATH uses ball_source=fused; IDSSE gain is measured on degrade=fused masters
@@ -237,9 +302,12 @@ def default_ladder() -> list[dict[str, Any]]:
              "boundary",
              boundary_shift_file="configs/calib/boundary.yaml"),
          "require_stress": True, "force_accept": False},
-        # F2-08 (semi-Markov durations) skipped while open.
-        {"id": "hazard", "label": "hazard-guided transitions (F2-07, D-025, beta 2)",
-         "build": with_hazard, "require_stress": True, "force_accept": False},
+        {"id": "durations", "label": "semi-Markov durations (F2-08, D-027), λ re-swept",
+         "build": with_durations, "needs_eval": True,
+         "require_stress": True, "force_accept": False},
+        {"id": "hazard", "label": "hazard-guided transitions (F2-07, D-025, beta 2), λ re-swept",
+         "build": with_hazard_lam, "needs_eval": True,
+         "require_stress": True, "force_accept": False},
         {"id": "fused", "label": "ball_source fused (F4-06, D-024)",
          "build": with_fused, "require_stress": False, "force_accept": False,
          "fused_idsse": True},
@@ -307,7 +375,10 @@ def run_ladder(
             continue
 
         assert current is not None
-        candidate = step["build"](current)
+        if step.get("needs_eval"):
+            candidate = step["build"](current, evaluate_fn)
+        else:
+            candidate = step["build"](current)
         # Skip no-ops (identical to current on the mutated fields).
         if candidate["name"] == current["name"] and candidate == current:
             history.append({
@@ -363,6 +434,7 @@ def run_ladder(
                 current = decision["candidate"]
         decision["id"] = step["id"]
         decision["label"] = step["label"]
+        decision["candidate_cfg"] = candidate
         history.append(decision)
 
     return {"history": history, "winner": current}
@@ -429,6 +501,11 @@ def render_report(result: Mapping[str, Any], *,
                     p["mean_delta"], p["se_delta"], p["gain_ok"],
                     p["current_mean"], p["candidate_mean"],
                     p["current_ratio"], p["candidate_ratio"]))
+        cand_cfg = step.get("candidate_cfg")
+        if cand_cfg is not None and "decoder" in cand_cfg:
+            dec = cand_cfg["decoder"]
+            lines.append("- candidate decoder: lam_team {}, lam_dead {}, duration_stages {}".format(
+                dec.get("lam_team"), dec.get("lam_dead"), dec.get("duration_stages")))
         lines.append("- **accepted:** {}".format(step["accepted"]))
         if step.get("forced"):
             lines.append("- forced accept (pre-registered rule)")
@@ -465,7 +542,6 @@ def render_report(result: Mapping[str, Any], *,
     lines.append("")
     lines.append("## Skipped optional steps")
     lines.append("")
-    lines.append("- F2-08 semi-Markov durations (#126): still open — skipped.")
     lines.append("- `team_tag_prior` (F1-05 item 8): 0 on IDSSE, so not part of the gain rule; "
                  "its pre-registered BAR-ATH agreement check was not run, so it stays off.")
     lines.append("")
@@ -477,10 +553,13 @@ def main(argv=None) -> int:
     parser.add_argument("--report", default="reports/selection.md")
     parser.add_argument("--final", default="configs/final.yaml")
     parser.add_argument("--skip-write", action="store_true")
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="worker processes over the external matches (same results)")
     args = parser.parse_args(argv)
 
     root = paths.repo_root()
-    result = run_ladder()
+    evaluate_fn = parallel_evaluate_fn(args.jobs) if args.jobs > 1 else None
+    result = run_ladder(evaluate_fn=evaluate_fn)
     report = render_report(result)
     if not args.skip_write:
         report_path = root / args.report

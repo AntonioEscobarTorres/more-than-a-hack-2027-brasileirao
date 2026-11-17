@@ -188,14 +188,23 @@ def test_write_final_and_report(tmp_path):
 def test_ladder_has_the_gbdt_hazard_and_fused_steps_in_order():
     ids = [s["id"] for s in sel.default_ladder()]
     assert (ids.index("dead_pooled") < ids.index("team_gbdt") < ids.index("dead_gbdt")
-            < ids.index("hazard") < ids.index("fused") == len(ids) - 1)
+            < ids.index("post_d_cross_75") < ids.index("durations") < ids.index("hazard")
+            < ids.index("fused") == len(ids) - 1)
     steps = {s["id"]: s for s in sel.default_ladder()}
-    for sid in ("dead_gbdt", "hazard"):
+    for sid in ("dead_gbdt", "durations", "hazard"):
         assert steps[sid]["require_stress"] is True and steps[sid]["force_accept"] is False
+    assert steps["durations"]["needs_eval"] and steps["hazard"]["needs_eval"]
 
 
-def test_steps_change_only_their_own_section():
-    """v2 -> team GBDT is v2_gbdt; each later step changes only its own section (D-024/25/26)."""
+def _no_resweep(monkeypatch, stages=None):
+    monkeypatch.setattr(sel, "resweep_lambda", lambda cfg, evaluate_fn: cfg)
+    monkeypatch.setattr(sel, "calibrated_stages",
+                        lambda cfg: dict(stages or {"H": 1, "A": 1, "D": 2}))
+
+
+def test_steps_change_only_their_own_section(monkeypatch):
+    """v2 -> team GBDT is v2_gbdt; each later step changes only its own section (D-024..27)."""
+    _no_resweep(monkeypatch)
     from modeling import paths
     from modeling.config import config_hash, load_config
 
@@ -212,7 +221,12 @@ def test_steps_change_only_their_own_section():
     assert nxt["dead"]["calibrated_file"] == "configs/calib/dead_gbdt.yaml"
     assert nxt["dead"]["params"] == cur["dead"]["params"]
     assert strip(nxt, "dead") == strip(cur, "dead")
-    cur, nxt = nxt, steps["hazard"]["build"](nxt)
+    cur, nxt = nxt, steps["durations"]["build"](nxt, None)
+    assert nxt["decoder"]["duration_stages"] == {"H": 1, "A": 1, "D": 2}
+    assert {k: v for k, v in nxt["decoder"].items() if k != "duration_stages"} == \
+        {k: v for k, v in cur["decoder"].items() if k != "duration_stages"}
+    assert strip(nxt, "decoder") == strip(cur, "decoder")
+    cur, nxt = nxt, steps["hazard"]["build"](nxt, None)
     hz = load_config(paths.repo_root() / "configs" / "v2_gbdt_hzn2.yaml")["hazard"]
     assert nxt["hazard"] == hz
     assert strip(nxt, "hazard") == strip(cur, "hazard")
@@ -221,12 +235,14 @@ def test_steps_change_only_their_own_section():
     assert strip(nxt, "ball_source") == strip(cur, "ball_source")
 
 
-def test_ladder_configs_use_repo_relative_paths():
+def test_ladder_configs_use_repo_relative_paths(monkeypatch):
     """A winner written to final.yaml must not carry a machine-specific absolute path."""
+    _no_resweep(monkeypatch)
     steps = {s["id"]: s for s in sel.default_ladder()}
     cur = steps["v2"]["build"](None)
     for sid in ("dead_pooled", "dead_gbdt", "boundary_shift", "hazard"):
-        cand = steps[sid]["build"](cur)
+        build = steps[sid]["build"]
+        cand = build(cur, None) if steps[sid].get("needs_eval") else build(cur)
         for section in ("dead", "hazard"):
             f = cand[section].get("calibrated_file")
             assert f is None or not f.startswith("/"), (sid, f)
@@ -245,3 +261,35 @@ def test_report_renders_the_seed_step():
     result = sel.run_ladder(steps, evaluate_fn=fake_eval)
     text = sel.render_report(result)
     assert "seeded ladder with `a`" in text
+
+
+def test_durations_identity_is_skipped(monkeypatch):
+    """Stages equal to the current ones (e.g. v1s, D-027 item 6): no-op, nothing evaluated."""
+    _no_resweep(monkeypatch, {"H": 1, "A": 1, "D": 1})
+    calls = []
+
+    def fake_eval(cfg, degrade):
+        calls.append((cfg["name"], degrade))
+        return _table({"M1": 0.40, "M2": 0.42, "M3": 0.41})
+
+    v1s = sel._load_named("v1s")
+    steps = [{"id": "seed", "label": "seed", "build": lambda _c: v1s, "absolute": True,
+              "require_stress": True, "force_accept": True},
+             {**{s["id"]: s for s in sel.default_ladder()}["durations"]}]
+    result = sel.run_ladder(steps, evaluate_fn=fake_eval)
+    assert result["history"][1]["skipped"] is True
+    assert result["winner"] is v1s
+    assert calls == [("v1s", "default")]
+
+
+def test_resweep_lambda_picks_a_grid_point():
+    """With a flat score every λ is on the plateau; the pick is a valid grid config."""
+    def fake_eval(cfg, degrade):
+        return _table({"M1": 0.40, "M2": 0.42, "M3": 0.41})
+
+    base = sel._load_named("v2_gbdt")
+    out = sel.resweep_lambda(base, fake_eval)
+    from modeling.scoring.sweep import LAM_GRID
+    assert out["decoder"]["lam_team"] in LAM_GRID and out["decoder"]["lam_dead"] in LAM_GRID
+    assert {k: v for k, v in out.items() if k != "decoder"} == \
+        {k: v for k, v in base.items() if k != "decoder"}
