@@ -1322,9 +1322,17 @@ Preenchido pela F5 (F5-09; envio único, ver D-013). O CSV enviado tem de ser o 
 
 | Data | Envio | Config (nome e hash) | Commit ou tag | SHA-256 do CSV | `validate_submission` | Autor |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 2026-11-16 | Envio final (F5-09) | `v2` (`6a992f351783382f2532c34d5299307ce61ea20326ecf1e002aee5b95d2b241b`) | `ffe5eae` (merge do #142) | `50b12bb537f1c62b6dd033da1efc6e03ab243cf2f77dfd44709c90201f0ae66a` | `PASS` (`tools/check_public_window.py`, check (i)) | Ahmed |
+| 2026-11-16 | Planejado (F5-09), não enviado; substituído pela linha de 17/11 (D-029) | `v2` (`6a992f351783382f2532c34d5299307ce61ea20326ecf1e002aee5b95d2b241b`) | `ffe5eae` (merge do #142) | `50b12bb537f1c62b6dd033da1efc6e03ab243cf2f77dfd44709c90201f0ae66a` | `PASS` (`tools/check_public_window.py`, check (i)) | Ahmed |
+| 2026-11-17 | Envio final (F5-09) | `final` (`a84e812099d2df782dd2b66576ff47cd4892c01ab7d227e0c93f0d394066f1f8`) | `7d6cd02` (merge do #157) | `25064d90ff2808ffb325f43d51253a5dd58be765d70c2ddee6d608f5fb9f0503` | `PASS` (`tools/check_public_window.py`, check (i)) | Ahmed |
 
-Checagens locais do CSV acima: `tools/touch_feature_shift.py` `PASS` (a informativa (c) deu `FAIL`, sem efeito
+Checagens locais do CSV de 17/11 (`final`, D-029): `tools/check_public_window.py` `PASS` nas 7,
+`tools/deadball_diagnostics.py --config configs/final.yaml` `PASS`, `tools/stack_feature_shift.py` `PASS` e
+`tools/dead_stability.py --config configs/final.yaml` `PASS`. Rótulos previstos: 158.857 frames avaliados,
+H 0,3190, A 0,2207, D 0,4603; 177 posses no 1º tempo e 193 no 2º. Comando:
+`python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing`. O arquivo
+`outputs/final.csv` é enviado com o nome `brasileirao.csv` (D-013); renomear não muda o SHA-256.
+
+Checagens locais do CSV de 16/11 (`v2`, não enviado): `tools/touch_feature_shift.py` `PASS` (a informativa (c) deu `FAIL`, sem efeito
 no resultado, D-022), `tools/dead_feature_shift.py --config configs/v2.yaml` `PASS` em todas e as 7 de
 `tools/check_public_window.py --pred outputs/v2.csv` `PASS`. Rótulos previstos: 158.857
 frames avaliados, H 0,3216, A 0,2051, D 0,4732; 164 posses no 1º tempo e 174 no 2º. Comando:
