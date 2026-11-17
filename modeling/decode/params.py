@@ -1,8 +1,9 @@
-"""Immutable decoder parameters (task F2-01).
+"""Immutable decoder parameters (task F2-01) and hazard-modulated team exits (task F2-07).
 
 ``DecoderParams.from_config`` converts the ``decoder`` section of an HMM config into
 float64 arrays used by the Viterbi decoder, including ``p_stay`` derived from the
-mean duration and minimum dwell.
+mean duration and minimum dwell. :func:`team_exit_logs` gives the frame-dependent
+transition row of the terminal H and A sub-states under an exit logit (IO-HMM, D-025).
 """
 from __future__ import annotations
 
@@ -15,6 +16,8 @@ from modeling.contracts import STATES
 from modeling.decode.emission import DEFAULT_NEG
 
 _STATE_INDEX = {name: i for i, name in enumerate(STATES)}
+H, A, D = (_STATE_INDEX[name] for name in ("H", "A", "D"))
+TEAM_STATES = (H, A)
 
 
 def _p_stay_from_mean(mean_frames: float, min_dwell: int) -> float:
@@ -148,3 +151,32 @@ class DecoderParams:
             log_p_stay=log_p_stay,
             log_exit=log_exit,
         )
+
+
+def team_exit_logs(params: DecoderParams, exit_logit) -> dict[int, tuple[np.ndarray, ...]]:
+    """Transition row of the terminal sub-state of H and of A, per frame, under ``exit_logit``.
+
+    For a team state ``s`` with stay ``p``, exit to the other team ``q_o`` and exit to D ``q_d``
+    (the constant row of ``params``), frame ``t`` with ``x_t = exit_logit[t]`` uses::
+
+        q_o' = q_o e^{x_t} / Z_t,   p' = p / Z_t,   q_d' = q_d / Z_t,   Z_t = p + q_d + q_o e^{x_t}
+
+    computed in log space with ``logaddexp`` in float64 (``log Z_t = logaddexp(log(p + q_d),
+    log q_o + x_t)``). An edge with probability 0 (``-inf``) stays ``-inf``. Returns
+    ``{s: (log_stay, log_other, log_d)}`` for ``s`` in (H, A), each float64 ``(T,)``.
+    """
+    x = np.asarray(exit_logit, dtype=np.float64)
+    if x.ndim != 1:
+        raise ValueError("exit_logit must be one-dimensional, got shape {}".format(x.shape))
+    if not np.isfinite(x).all():
+        raise ValueError("exit_logit must be finite")
+    out = {}
+    for s, other in ((H, A), (A, H)):
+        log_p = float(params.log_p_stay[s])
+        log_qo = float(params.log_exit[s, other])
+        log_qd = float(params.log_exit[s, D])
+        log_keep = np.logaddexp(log_p, log_qd)          # log(p + q_d), the unmodulated mass
+        log_other = log_qo + x                          # log(q_o e^x); -inf stays -inf
+        log_z = np.logaddexp(log_keep, log_other)
+        out[s] = (log_p - log_z, log_other - log_z, log_qd - log_z)
+    return out

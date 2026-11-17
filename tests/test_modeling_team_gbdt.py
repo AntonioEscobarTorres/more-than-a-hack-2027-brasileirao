@@ -294,12 +294,12 @@ def test_calibration_is_deterministic_and_rejects_degrade_none(calibrated, tmp_p
 
 
 def test_evaluate_lam_grid_runs_leave_one_match_out(calibrated):
-    from tests.modeling_fixtures import _DEAD, _DECODER, _POST
+    from tests.modeling_fixtures import _DEAD, _DECODER, _HAZARD, _POST
     cfg = {"name": "g", "pipeline": "hmm", "ball_source": "tactical",
            "team": {"kind": "gbdt", "params": team_params(),
                     "calibrated_file": str(calibrated["path"])},
            "dead": copy.deepcopy(_DEAD), "decoder": copy.deepcopy(_DECODER),
-           "postprocess": copy.deepcopy(_POST)}
+           "postprocess": copy.deepcopy(_POST), "hazard": copy.deepcopy(_HAZARD)}
     df = evaluate_lam_grid({"g": cfg}, [0.2, 0.4], degrade="default",
                            matches=["m1", "m2"], load_fn=calibrated["load"])
     assert len(df) == 4 and df["spell_f1_mean"].between(0, 1).all()

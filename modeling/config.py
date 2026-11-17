@@ -20,8 +20,9 @@ PIPELINES = ("baseline", "hmm")
 BALL_SOURCES = ("tactical", "fused")
 TEAM_KIND_NAMES = ("none", "rules_v1", "calibrated", "gbdt")
 DEAD_KIND_NAMES = ("none", "rules_v1", "calibrated", "gbdt")
+HAZARD_KIND_NAMES = ("none", "calibrated")
 KINDS_WITH_FILE = ("calibrated", "gbdt")
-HMM_SECTIONS = ("team", "dead", "decoder", "postprocess")
+HMM_SECTIONS = ("team", "dead", "decoder", "postprocess", "hazard")
 EXIT_SPLIT_TOL = 1e-9
 
 
@@ -233,6 +234,14 @@ POSTPROCESS_SCHEMA = {
     "min_spell_frames": Int(ge=0),
 }
 
+# F2-07: the possession-change hazard (F1-08) modulates the H<->A exits of the decoder with
+# exit_logit = beta * h. kind none or beta 0 leaves the decoder exactly as without the section.
+HAZARD_SCHEMA = {
+    "kind": Str(HAZARD_KIND_NAMES),
+    "calibrated_file": Str(nullable=True),
+    "beta": Float(ge=0.0),
+}
+
 TOP_COMMON = {
     "name": Str(),
     "pipeline": Str(PIPELINES),
@@ -242,7 +251,8 @@ TOP_COMMON = {
 PIPELINE_SCHEMAS = {
     "baseline": {**TOP_COMMON, "baseline": BASELINE_SCHEMA},
     "hmm": {**TOP_COMMON, "team": TEAM_SCHEMA, "dead": DEAD_SCHEMA,
-            "decoder": DECODER_SCHEMA, "postprocess": POSTPROCESS_SCHEMA},
+            "decoder": DECODER_SCHEMA, "postprocess": POSTPROCESS_SCHEMA,
+            "hazard": HAZARD_SCHEMA},
 }
 
 
@@ -275,6 +285,9 @@ def _check_hmm(cfg: dict) -> None:
         if cfg[section]["kind"] in KINDS_WITH_FILE and cfg[section]["calibrated_file"] is None:
             raise ConfigError("{}.calibrated_file is required when {}.kind is {!r}".format(
                 section, section, cfg[section]["kind"]))
+    if cfg["hazard"]["kind"] != "none" and cfg["hazard"]["calibrated_file"] is None:
+        raise ConfigError("hazard.calibrated_file is required when hazard.kind is {!r}".format(
+            cfg["hazard"]["kind"]))
 
     dec = cfg["decoder"]
     for state, row in dec["exit_split"].items():
@@ -377,5 +390,6 @@ def config_hash(cfg: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-__all__ = ["BALL_SOURCES", "ConfigError", "DEAD_KIND_NAMES", "PIPELINES", "TEAM_KIND_NAMES",
+__all__ = ["BALL_SOURCES", "ConfigError", "DEAD_KIND_NAMES", "HAZARD_KIND_NAMES", "HMM_SECTIONS",
+           "PIPELINES", "TEAM_KIND_NAMES",
            "config_hash", "load_config", "validate_broadcast_config", "validate_config"]

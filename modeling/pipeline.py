@@ -105,13 +105,44 @@ def variant_params(section: dict) -> dict:
     return {**params, "calibrated_file": str(path)}
 
 
+def hazard_exit_logit(master: pd.DataFrame, cfg: dict, *,
+                      holdout: str | None = None) -> np.ndarray | None:
+    """F2-07: ``exit_logit = beta * h`` (float64) for the decoder, or ``None`` when it is off.
+
+    ``None`` (the hazard is not even computed) when ``cfg["hazard"]["kind"]`` is ``none`` or
+    ``beta == 0``, so the decoder runs its constant-transition code path. Otherwise ``h`` is the
+    ``HAZARD_KINDS[kind]`` variant (F1-08) with ``params = {"calibrated_file": <absolute path>}``
+    (the hazard section has no ``params`` of its own; :func:`variant_params`, D-011) and the
+    ``holdout`` fold. ``h`` must be finite, one value per row and 0 where ``half == 0``.
+    """
+    section = cfg["hazard"]
+    kind, beta = section["kind"], float(section["beta"])
+    if kind == "none" or beta == 0.0:
+        return None
+    variants.load_kinds()
+    if kind not in variants.HAZARD_KINDS:
+        raise NotImplementedError("hazard.kind {!r} is not registered (known: {})".format(
+            kind, sorted(variants.HAZARD_KINDS)))
+    params = variant_params({"params": {}, "calibrated_file": section["calibrated_file"]})
+    h = np.asarray(variants.HAZARD_KINDS[kind](master, params, holdout=holdout))
+    n = len(master)
+    if h.shape != (n,):
+        raise ValueError("hazard must have shape ({},), got {}".format(n, h.shape))
+    if not np.isfinite(h).all():
+        raise ValueError("hazard must be finite on every row")
+    if (h[master["half"].to_numpy() == 0] != 0).any():
+        raise ValueError("hazard must be 0 where half == 0")
+    return beta * h.astype(np.float64)
+
+
 def hmm_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = None) -> np.ndarray:
     """HMM pipeline (F5-04): evidence -> emission -> per-half Viterbi -> post-processing.
 
     Each variant receives its ``params`` section (``cfg["team"]["params"]``,
     ``cfg["dead"]["params"]``), the convention of ``team_logit_rules_v1`` and
     ``dead_logit_rules_v1`` (decision D-008), plus ``params["calibrated_file"]`` when the section
-    sets one (:func:`variant_params`, decision D-011).
+    sets one (:func:`variant_params`, decision D-011). The hazard section (F2-07) only reaches the
+    decoder, as ``exit_logit`` (:func:`hazard_exit_logit`).
     """
     variants.load_kinds()
     team_kind, dead_kind = cfg["team"]["kind"], cfg["dead"]["kind"]
@@ -132,7 +163,8 @@ def hmm_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = None) -
     params = DecoderParams.from_config(cfg["decoder"], fps=games.GAMES[games.GAME]["fps"])
     scores = logits_to_logscores(team, dead, params.lam_team, params.lam_dead, force_d,
                                  neg=params.neg)
-    labels = decode_match(scores, half, force_d, params)
+    exit_logit = hazard_exit_logit(master, cfg, holdout=holdout)
+    labels = decode_match(scores, half, force_d, params, exit_logit=exit_logit)
 
     labels, post_stats = _postprocess_fn()(labels, master, team, dead, force_d,
                                            cfg["postprocess"], holdout=holdout)
@@ -159,4 +191,5 @@ def predict_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = Non
     return labels
 
 
-__all__ = ["final_imposition", "hmm_labels", "predict_labels", "variant_params"]
+__all__ = ["final_imposition", "hazard_exit_logit", "hmm_labels", "predict_labels",
+           "variant_params"]
