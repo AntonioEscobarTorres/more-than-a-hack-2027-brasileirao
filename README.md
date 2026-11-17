@@ -160,6 +160,27 @@ Column contract: **[SCHEMA.md](SCHEMA.md)**.
 
 ---
 
+## How to run
+
+To reproduce the final submission CSV from a clean clone:
+
+1. **Install dependencies** (requires **Python 3.12**):
+   ```bash
+   python3.12 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements-modeling.txt
+   ```
+2. **Place the match data** in `./data` at the repository root (as in [DATA.md](DATA.md)), or set `MTAH_DATA_DIR`.
+3. **Run the single submission command**:
+   ```bash
+   python -m modeling.make_submission --config configs/final.yaml --out outputs/<team_name>.csv
+   ```
+4. **Verify the output CSV SHA-256**:
+   - Expected CSV SHA-256: `25064d90ff2808ffb325f43d51253a5dd58be765d70c2ddee6d608f5fb9f0503`
+   - Cross-machine reproduction details and CPU verification logs: **[docs/reproducibility.md](docs/reproducibility.md)**.
+
+---
+
 ## Read these, in this order
 
 | | |
@@ -172,6 +193,18 @@ Column contract: **[SCHEMA.md](SCHEMA.md)**.
 | **[FAQ.md](FAQ.md)** | |
 | **[OVERVIEW.md](OVERVIEW.md)** | the competition as a whole — context, why the 2027 format changed, the calendar |
 
+
+---
+
+## How to run
+
+To reproduce the final submission CSV from a clean clone:
+
+1. **Install dependencies** (requires **Python 3.12**):
+   ```bash
+   python3.12 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements-modeling.txt
 
 ---
 
