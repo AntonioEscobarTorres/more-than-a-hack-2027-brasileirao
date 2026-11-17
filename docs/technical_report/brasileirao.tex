@@ -26,7 +26,7 @@
 
 \author{Team \texttt{brasileirao}: Ahmed~Amer~Hachem, Antônio~Escobar~Torres, Bernardo~Silva~Andrade, Fernando~Horita~Siratuti and Hugo~Henrique~Marques%
 \thanks{More than a Hack 2027, Phase 1 (ball possession). FC Barcelona (home, \texttt{H}) vs Athletic Club (away, \texttt{A}), LaLiga 2024--25, matchday 2.}%
-\thanks{Code: \url{https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao}, tag \texttt{submission-v1}.}}
+\thanks{Code: \url{https://github.com/AntonioEscobarTorres/more-than-a-hack-2027-brasileirao}, tag \texttt{submission-v1.1}.}}
 
 \markboth{More than a Hack 2027 --- Technical report, team brasileirao, November~2026}%
 {Team brasileirao: Frame-level ball possession with an HMM over calibrated evidence}
@@ -302,12 +302,12 @@ python evaluation/validate_submission.py \
 \end{small}
 The single command runs the preprocessing (with the fused ball), the three first-stage models, the two second stages and the decoder.
 \begin{itemize}
-\item \textbf{Code:} tag \texttt{submission-v1} (commit \texttt{e68d883}), config \texttt{configs/final.yaml}.
+\item \textbf{Code:} tag \texttt{submission-v1.1}, config \texttt{configs/final.yaml}. The method is the code-freeze tag \texttt{submission-v1} (commit \texttt{e68d883}); \texttt{v1.1} adds only the dependency pins below, documentation and one test.
 \item \textbf{Versions:} Python 3.12; numpy 2.0.2, pandas 2.3.3, pyarrow 21.0.0, scipy 1.13.1, kloppy 3.18.0, PyYAML 6.0.2, scikit-learn 1.5.2, joblib 1.6.0, threadpoolctl 3.8.0 (exact pins in the repository).
 \item \textbf{Models:} committed under \texttt{models/} (about 0.5\,MB each); inference refuses another scikit-learn version or feature list.
 \item \textbf{Determinism:} CPU, one thread (BLAS and tree models), fixed seeds, explicit \texttt{float64} sums instead of BLAS products, stable sorts. Clean clones on two machines with different CPU generations (Intel Core i7-10750H and i5-1235U) produced the same file, byte for byte (\texttt{docs/reproducibility.md}).
 \item \textbf{SHA-256 of \texttt{brasileirao.csv}:}\\ {\footnotesize\texttt{25064d90ff2808ffb325f43d51253a5d}\\\texttt{d58be765d70c2ddee6d608f5fb9f0503}}
-\item \textbf{IDSSE is not needed to reproduce the file.} It is needed only to refit the models; that code is in \texttt{modeling/external}, \texttt{modeling/calibration} and \texttt{modeling/scoring}, and \texttt{docs/reproducibility.md} gives the details.
+\item \textbf{IDSSE is not needed to reproduce the file.} It is needed only to refit the models; that code is in \texttt{modeling/external}, \texttt{modeling/calibration} and \texttt{modeling/scoring}. \texttt{docs/external\_data.md} gives the download and the degraded matches, and \texttt{reports/stack.md} the commands that refit the final models.
 \end{itemize}
 
 \section{How the provided match was used (compliance)}
