@@ -33,6 +33,7 @@ DURATION_SCALES = (0.5, 1.0, 2.0)
 D_BRIDGE_GRID = (25, 50)
 MIN_SPELL_GRID = (13, 25)
 D_CROSS_GRID = (0, 25, 50, 75)
+BETA_GRID = (0.0, 0.25, 0.5, 1.0)  # F2-07: weight of the hazard in the H<->A exits
 ROBUST_DEGRADES = ("default", "hidelo", "hidehi")
 METRIC = "spell_f1_mean"
 SPELL_RATIO = "spell_ratio"
@@ -67,6 +68,13 @@ def with_decoder(cfg: dict, **updates) -> dict:
             dec[key] = merged
         else:
             dec[key] = value
+    return validate_config(out)
+
+
+def with_hazard(cfg: dict, **updates) -> dict:
+    """Copy ``cfg`` with selected ``hazard`` fields updated (F2-07)."""
+    out = copy.deepcopy(cfg)
+    out["hazard"].update(updates)
     return validate_config(out)
 
 
@@ -205,13 +213,20 @@ def _lam_neighbours(point, points):
 
 
 def sweep_lambdas(cfg: dict, *, degrade: str = "default", matches=None,
-                  grid: Sequence[float] = LAM_GRID) -> list[dict]:
-    """Stage 1: ``lam_team × lam_dead`` grid."""
+                  grid: Sequence[float] = LAM_GRID, dead_grid: Sequence[float] | None = None,
+                  evaluate_fn=None) -> list[dict]:
+    """Stage 1: ``lam_team × lam_dead`` grid (``dead_grid`` defaults to ``grid``).
+
+    ``evaluate_fn(cfg, degrade) -> {mean, se, ...}`` defaults to :func:`evaluate_point`.
+    """
+    if evaluate_fn is None:
+        def evaluate_fn(c, deg):  # noqa: F811 — default binding
+            return evaluate_point(c, degrade=deg, matches=matches)
     points = []
     for lam_team in grid:
-        for lam_dead in grid:
+        for lam_dead in (grid if dead_grid is None else dead_grid):
             trial = with_decoder(cfg, lam_team=float(lam_team), lam_dead=float(lam_dead))
-            stats = evaluate_point(trial, degrade=degrade, matches=matches)
+            stats = evaluate_fn(trial, degrade)
             points.append({
                 "id": _point_id("lam", lam_team=lam_team, lam_dead=lam_dead),
                 "stage": "lam",
@@ -221,6 +236,37 @@ def sweep_lambdas(cfg: dict, *, degrade: str = "default", matches=None,
                 **stats,
             })
     return points
+
+
+def sweep_beta(cfg: dict, *, degrade: str = "default", matches=None,
+               grid: Sequence[float] = BETA_GRID, evaluate_fn=None) -> list[dict]:
+    """F2-07 stage: ``hazard.beta`` on a fixed config (``hazard.kind`` must not be ``none``)."""
+    if cfg["hazard"]["kind"] == "none":
+        raise ValueError("sweep_beta needs hazard.kind != 'none'")
+    if evaluate_fn is None:
+        def evaluate_fn(c, deg):  # noqa: F811 — default binding
+            return evaluate_point(c, degrade=deg, matches=matches)
+    points = []
+    for beta in grid:
+        trial = with_hazard(cfg, beta=float(beta))
+        stats = evaluate_fn(trial, degrade)
+        points.append({
+            "id": _point_id("beta", beta=beta),
+            "stage": "beta",
+            "beta": float(beta),
+            "lam_team": float(cfg["decoder"]["lam_team"]),
+            "lam_dead": float(cfg["decoder"]["lam_dead"]),
+            "cfg": trial,
+            **stats,
+        })
+    return points
+
+
+def _beta_neighbours(point, points):
+    """Immediate neighbours on the ``beta`` grid."""
+    values = sorted({p["beta"] for p in points})
+    i = values.index(point["beta"])
+    return [p for p in points if p is not point and abs(values.index(p["beta"]) - i) == 1]
 
 
 def sweep_min_dwell(cfg: dict, *, degrade: str = "default", matches=None,
@@ -549,6 +595,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "BETA_GRID",
     "D_BRIDGE_GRID",
     "D_CROSS_GRID",
     "DURATION_SCALES",
@@ -571,11 +618,13 @@ __all__ = [
     "select_robust",
     "spell_ratio_from_frame",
     "summarize",
+    "sweep_beta",
     "sweep_duration_scale",
     "sweep_lambdas",
     "sweep_min_dwell",
     "sweep_postprocess",
     "with_decoder",
+    "with_hazard",
     "with_postprocess",
     "write_v1s",
 ]

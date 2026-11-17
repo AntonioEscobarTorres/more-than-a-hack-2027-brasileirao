@@ -1,15 +1,21 @@
 """Per-half Viterbi decoder with minimum dwell via an expanded-state chain (C5 / F2-02).
 
-``decode_match(scores, half, force_d, params)`` decodes each contiguous ``half ∈ {1, 2}``
-block independently, maps ``half == 0`` to ``X``, and finally forces ``force_d`` frames
-to ``D``.
+``decode_match(scores, half, force_d, params, *, exit_logit=None)`` decodes each contiguous
+``half ∈ {1, 2}`` block independently, maps ``half == 0`` to ``X``, and finally forces
+``force_d`` frames to ``D``.
+
+``exit_logit`` (F2-07, decision D-025) makes the H↔A exits of the terminal H and A
+sub-states frame dependent (an input-output HMM driven by the possession-change hazard of
+F1-08); see :func:`modeling.decode.params.team_exit_logs`. The transition *into* frame ``t``
+uses ``exit_logit[t]``, so ``exit_logit`` at the first frame of a block is never used. With
+``exit_logit=None`` the constant-transition code path runs unchanged.
 """
 from __future__ import annotations
 
 import numpy as np
 
 from modeling.contracts import LABEL_DTYPE, STATES
-from modeling.decode.params import DecoderParams
+from modeling.decode.params import D, TEAM_STATES, DecoderParams, team_exit_logs
 
 _NEG_INF = -np.inf
 _LOG_ONE_THIRD = np.log(1.0 / 3.0)
@@ -111,6 +117,33 @@ def _dense_predecessors(params: DecoderParams):
     return state_of, terminal_idx, pred_src, pred_log
 
 
+def _team_exit_slots(state_of, terminal_idx, pred_src):
+    """``(rows, cols)`` of the 6 modulated edges in the dense predecessor table, plus their order.
+
+    For each team state ``s`` (H, then A) the slots are, in order: the terminal self-loop, the
+    exit to ``(other, 1)`` and the exit to ``(D, 1)``. An edge absent from the table (probability
+    0, never attached) is skipped, so its log-probability stays ``-inf``. Returns
+    ``(rows, cols, keys)`` with ``keys[i] = (s, j)``, ``j`` = 0 stay, 1 other, 2 D.
+    """
+    first = {}
+    k_total = int(state_of.shape[0])
+    for j in range(k_total):
+        first.setdefault(int(state_of[j]), j)          # (s, 1): first sub-state of s
+    rows, cols, keys = [], [], []
+    for s in TEAM_STATES:
+        other = TEAM_STATES[1] if s == TEAM_STATES[0] else TEAM_STATES[0]
+        term = int(terminal_idx[s])
+        for j, dest in enumerate((term, first[other], first[D])):
+            hit = np.flatnonzero(pred_src[dest] == term)
+            if hit.size > 1:
+                raise RuntimeError("duplicated predecessor {} of sub-state {}".format(term, dest))
+            if hit.size == 1:
+                rows.append(dest)
+                cols.append(int(hit[0]))
+                keys.append((s, j))
+    return np.asarray(rows, dtype=np.int64), np.asarray(cols, dtype=np.int64), keys
+
+
 def _viterbi_block(scores: np.ndarray, params: DecoderParams) -> np.ndarray:
     """Decode one contiguous half block. ``scores`` is float64 ``(T, 3)``.
 
@@ -151,6 +184,56 @@ def _viterbi_block(scores: np.ndarray, params: DecoderParams) -> np.ndarray:
     return state_of[path_sub].astype(np.int8, copy=False)
 
 
+def _viterbi_block_modulated(scores: np.ndarray, params: DecoderParams,
+                             exit_logit: np.ndarray) -> np.ndarray:
+    """:func:`_viterbi_block` with frame-dependent H↔A exits (F2-07); same tie-breaking.
+
+    ``exit_logit`` is float64 ``(T,)``. At each frame ``t >= 1`` the 6 entries of the predecessor
+    table that hold the rows of the terminal H and A sub-states are replaced by their modulated
+    values of frame ``t``; every other entry keeps its constant value.
+    """
+    t_len = int(scores.shape[0])
+    if t_len == 0:
+        return np.empty(0, dtype=np.int8)
+    if exit_logit.shape != (t_len,):
+        raise ValueError("exit_logit block must have shape ({},), got {}".format(
+            t_len, exit_logit.shape))
+
+    state_of, terminal_idx, pred_src, pred_log = _dense_predecessors(params)
+    k_total = int(state_of.shape[0])
+    rows = np.arange(k_total)
+    emit = scores[:, state_of.astype(np.int64)]
+
+    slot_rows, slot_cols, keys = _team_exit_slots(state_of, terminal_idx, pred_src)
+    logs = team_exit_logs(params, exit_logit)
+    # (T, n_slots): value of every modulated edge at every frame, in slot order.
+    slot_vals = np.column_stack([logs[s][j] for s, j in keys]) if keys else \
+        np.empty((t_len, 0), dtype=np.float64)
+    plog = pred_log.copy()
+
+    delta = np.full(k_total + 1, _NEG_INF, dtype=np.float64)
+    for s in range(3):
+        j = int(terminal_idx[s])
+        delta[j] = _LOG_ONE_THIRD + scores[0, s]
+
+    ptr = np.full((t_len, k_total), -1, dtype=np.int16)
+    for t in range(1, t_len):
+        plog[slot_rows, slot_cols] = slot_vals[t]       # transition into frame t uses x_t
+        candidates = delta[pred_src] + plog
+        best = np.argmax(candidates, axis=1)
+        best_v = candidates[rows, best]
+        ptr[t] = pred_src[rows, best]
+        delta[:k_total] = best_v + emit[t]
+
+    end = int(np.argmax(delta[:k_total]))
+    path_sub = np.empty(t_len, dtype=np.int64)
+    path_sub[t_len - 1] = end
+    for t in range(t_len - 1, 0, -1):
+        path_sub[t - 1] = ptr[t, path_sub[t]]
+
+    return state_of[path_sub].astype(np.int8, copy=False)
+
+
 def _contiguous_blocks(half: np.ndarray):
     """Yield ``(h, start, stop)`` for every contiguous run with ``half == h`` and ``h in {1,2}``."""
     n = half.shape[0]
@@ -165,7 +248,8 @@ def _contiguous_blocks(half: np.ndarray):
         i = j
 
 
-def decode_match(scores, half, force_d, params: DecoderParams) -> np.ndarray:
+def decode_match(scores, half, force_d, params: DecoderParams, *,
+                 exit_logit=None) -> np.ndarray:
     """Decode a full match into labels ``H``/``A``/``D``/``X`` (dtype ``<U1``).
 
     Parameters
@@ -178,6 +262,10 @@ def decode_match(scores, half, force_d, params: DecoderParams) -> np.ndarray:
         bool array ``(n,)``; those frames are set to ``D`` after decoding.
     params:
         ``DecoderParams`` with ``min_dwell``, ``p_stay`` / ``log_p_stay`` and ``log_exit``.
+    exit_logit:
+        ``None`` (constant transitions, the F2-02 code path, unchanged) or a finite array
+        ``(n,)``: the logit added to the H↔A exits of the terminal H and A sub-states at each
+        frame (F2-07). Values at ``half == 0`` and at the first frame of each block are unused.
     """
     scores = np.asarray(scores, dtype=np.float64)
     half = np.asarray(half)
@@ -197,11 +285,23 @@ def decode_match(scores, half, force_d, params: DecoderParams) -> np.ndarray:
                          "{} bad frames".format(int(bad[0]), int(bad.size)))
     if not np.isin(half, (0, 1, 2)).all():
         raise ValueError("half must only contain 0, 1 or 2")
+    if exit_logit is not None:
+        exit_logit = np.asarray(exit_logit, dtype=np.float64)
+        if exit_logit.shape != (n,):
+            raise ValueError("exit_logit must have shape ({},), got {}".format(
+                n, exit_logit.shape))
+        inside = half != 0
+        if not np.isfinite(exit_logit[inside]).all():
+            raise ValueError("exit_logit must be finite inside the halves")
 
     # Default outside play; blocks overwrite with H/A/D.
     state_codes = np.full(n, 3, dtype=np.int8)  # X = 3
     for _h, start, stop in _contiguous_blocks(half):
-        block_states = _viterbi_block(scores[start:stop], params)
+        if exit_logit is None:
+            block_states = _viterbi_block(scores[start:stop], params)
+        else:
+            block_states = _viterbi_block_modulated(scores[start:stop], params,
+                                                    exit_logit[start:stop])
         state_codes[start:stop] = block_states
 
     if force.any():
