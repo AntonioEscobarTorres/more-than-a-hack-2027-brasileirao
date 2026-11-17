@@ -223,6 +223,8 @@ DECODER_SCHEMA = {
     "mean_duration_s": {s: _POS for s in _STATE_KEYS},
     "exit_split": {s: {t: _UNIT for t in _STATE_KEYS if t != s} for s in _STATE_KEYS},
     "min_dwell_frames": {s: Int(ge=1) for s in _STATE_KEYS},
+    # F2-08 (D-025): geometric stages after the min_dwell chain; 1 = the F2-01 geometric duration.
+    "duration_stages": {s: Int(ge=1) for s in _STATE_KEYS},
 }
 
 POSTPROCESS_SCHEMA = {
@@ -291,6 +293,12 @@ def _check_hmm(cfg: dict) -> None:
                 "decoder.mean_duration_s.{} ({} s = {} frames) must exceed "
                 "decoder.min_dwell_frames.{} ({})".format(
                     state, dec["mean_duration_s"][state], mean_frames, state, dwell))
+        stages = dec["duration_stages"][state]
+        if not mean_frames - dwell + 1 > stages:
+            raise ConfigError(
+                "decoder.mean_duration_s.{0} − decoder.min_dwell_frames.{0} + 1 ({1} frames) must "
+                "exceed decoder.duration_stages.{0} ({2})".format(
+                    state, mean_frames - dwell + 1, stages))
 
 
 def validate_config(raw: dict, expected_name: str | None = None) -> dict:

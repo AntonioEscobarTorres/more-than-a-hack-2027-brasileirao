@@ -1,8 +1,8 @@
-"""Immutable decoder parameters (task F2-01).
+"""Immutable decoder parameters (task F2-01; duration stages, task F2-08).
 
 ``DecoderParams.from_config`` converts the ``decoder`` section of an HMM config into
 float64 arrays used by the Viterbi decoder, including ``p_stay`` derived from the
-mean duration and minimum dwell.
+mean duration, the minimum dwell and the number of duration stages (D-025).
 """
 from __future__ import annotations
 
@@ -17,22 +17,31 @@ from modeling.decode.emission import DEFAULT_NEG
 _STATE_INDEX = {name: i for i, name in enumerate(STATES)}
 
 
-def _p_stay_from_mean(mean_frames: float, min_dwell: int) -> float:
-    """Stay probability so the expected segment length equals ``mean_frames``.
+def _p_stay_from_mean(mean_frames: float, min_dwell: int, stages: int = 1) -> float:
+    """Per-stage stay probability so the expected segment length equals ``mean_frames``.
 
-    After reaching the terminal sub-state, each step stays with ``p`` or exits with
-    ``1 − p``. Expected length = ``min_dwell − 1 + 1/(1 − p)``, which equals
-    ``mean_frames`` when ``p = 1 − 1/(mean_frames − min_dwell + 1)``.
+    After the ``min_dwell − 1`` chain sub-states, the label passes through ``stages`` stages;
+    each step stays in the current stage with ``p`` or advances (from the last stage: exits) with
+    ``1 − p``. Expected length = ``min_dwell − 1 + stages/(1 − p)``, which equals ``mean_frames``
+    when ``p = 1 − stages/(mean_frames − min_dwell + 1)``. With ``stages == 1`` this is the
+    F2-01 formula, bit for bit.
     """
     mean_frames = float(mean_frames)
     min_dwell = int(min_dwell)
+    stages = int(stages)
     if not mean_frames > min_dwell:
         raise ValueError(
             "mean_duration_frames ({}) must exceed min_dwell ({})".format(
                 mean_frames, min_dwell
             )
         )
-    return 1.0 - 1.0 / (mean_frames - min_dwell + 1.0)
+    if stages < 1:
+        raise ValueError("duration_stages must be >= 1, got {}".format(stages))
+    if not mean_frames - min_dwell + 1.0 > stages:
+        raise ValueError(
+            "mean_duration_frames − min_dwell + 1 ({}) must exceed duration_stages ({})".format(
+                mean_frames - min_dwell + 1.0, stages))
+    return 1.0 - float(stages) / (mean_frames - min_dwell + 1.0)
 
 
 @dataclass(frozen=True)
@@ -48,6 +57,8 @@ class DecoderParams:
     p_stay: np.ndarray  # (3,) float64
     log_p_stay: np.ndarray  # (3,) float64
     log_exit: np.ndarray  # (3, 3) float64; log((1-p_stay[s]) * exit_split[s,s'])
+    # (3,) int64, each >= 1 (F2-08); None means one stage per state (the F2-01 chain).
+    duration_stages: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         # Frozen dataclass: use object.__setattr__ for array copies / casts.
@@ -69,10 +80,15 @@ class DecoderParams:
         object.__setattr__(
             self, "log_exit",
             np.asarray(self.log_exit, dtype=np.float64).reshape(3, 3).copy())
+        stages = np.ones(3, dtype=np.int64) if self.duration_stages is None \
+            else np.asarray(self.duration_stages, dtype=np.int64).reshape(3).copy()
+        if (stages < 1).any():
+            raise ValueError("duration_stages must be >= 1 for every state, got {}".format(stages))
+        object.__setattr__(self, "duration_stages", stages)
         # Frozen means frozen: the arrays are read-only too, so no caller can edit the
         # transition table in place after the params were validated.
         for name in ("mean_duration_frames", "exit_split", "min_dwell", "p_stay",
-                     "log_p_stay", "log_exit"):
+                     "log_p_stay", "log_exit", "duration_stages"):
             getattr(self, name).setflags(write=False)
         object.__setattr__(self, "lam_team", float(self.lam_team))
         object.__setattr__(self, "lam_dead", float(self.lam_dead))
@@ -84,7 +100,8 @@ class DecoderParams:
 
         ``mean_duration_s`` is converted with ``fps``; ``p_stay`` follows the
         closed-form that makes the expected segment length equal
-        ``mean_duration_frames``.
+        ``mean_duration_frames``. ``duration_stages`` is required by the config schema (C7);
+        a hand-built mapping without it gets one stage per state.
         """
         fps = float(fps)
         if not fps > 0:
@@ -96,6 +113,8 @@ class DecoderParams:
 
         mean_duration_frames = np.empty(3, dtype=np.float64)
         min_dwell = np.empty(3, dtype=np.int64)
+        stages_cfg = cfg_decoder.get("duration_stages")
+        duration_stages = np.ones(3, dtype=np.int64)
         for name, idx in _STATE_INDEX.items():
             mean_duration_frames[idx] = float(cfg_decoder["mean_duration_s"][name]) * fps
             min_dwell[idx] = int(cfg_decoder["min_dwell_frames"][name])
@@ -106,6 +125,17 @@ class DecoderParams:
                 raise ValueError(
                     "mean_duration_frames[{}] ({}) must exceed min_dwell[{}] ({})".format(
                         name, mean_duration_frames[idx], name, min_dwell[idx]))
+            if stages_cfg is not None:
+                duration_stages[idx] = int(stages_cfg[name])
+                if duration_stages[idx] < 1:
+                    raise ValueError("duration_stages[{}] must be >= 1, got {}".format(
+                        name, duration_stages[idx]))
+                if not mean_duration_frames[idx] - min_dwell[idx] + 1.0 > duration_stages[idx]:
+                    raise ValueError(
+                        "mean_duration_frames[{0}] − min_dwell[{0}] + 1 ({1}) must exceed "
+                        "duration_stages[{0}] ({2})".format(
+                            name, mean_duration_frames[idx] - min_dwell[idx] + 1.0,
+                            duration_stages[idx]))
 
         exit_split = np.zeros((3, 3), dtype=np.float64)
         for src, si in _STATE_INDEX.items():
@@ -125,7 +155,8 @@ class DecoderParams:
 
         p_stay = np.empty(3, dtype=np.float64)
         for s in range(3):
-            p_stay[s] = _p_stay_from_mean(mean_duration_frames[s], int(min_dwell[s]))
+            p_stay[s] = _p_stay_from_mean(mean_duration_frames[s], int(min_dwell[s]),
+                                          int(duration_stages[s]))
 
         log_p_stay = np.log(p_stay)
         one_minus = 1.0 - p_stay
@@ -147,4 +178,5 @@ class DecoderParams:
             p_stay=p_stay,
             log_p_stay=log_p_stay,
             log_exit=log_exit,
+            duration_stages=duration_stages,
         )

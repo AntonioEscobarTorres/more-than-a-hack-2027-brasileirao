@@ -27,6 +27,7 @@ def _hmm_cfg(**decoder_over) -> dict:
             "exit_split": {"H": {"A": 0.5, "D": 0.5}, "A": {"H": 0.5, "D": 0.5},
                            "D": {"H": 0.5, "A": 0.5}},
             "min_dwell_frames": {"H": 12, "A": 12, "D": 25},
+            "duration_stages": {"H": 1, "A": 1, "D": 1},
         },
         "postprocess": {
             "midpoint_neutral_switch": False,
@@ -125,6 +126,7 @@ def test_overlay_decoder_from_idsse_file(tmp_path):
             "mean_duration_s": {"H": 7.0, "A": 6.0, "D": 25.0},
             "exit_split": base["decoder"]["exit_split"],
             "min_dwell_frames": {"H": 12, "A": 12, "D": 25},
+            "duration_stages": {"H": 1, "A": 1, "D": 1},
         }
     }, sort_keys=False), encoding="utf-8")
     cfg = sweep.load_base_config(path, dec)

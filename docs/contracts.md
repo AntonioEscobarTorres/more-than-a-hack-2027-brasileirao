@@ -30,6 +30,7 @@ Fonte: Seção 2.4 do [plano de implementação](plano/plano_5_frentes.md). Muda
 - **C5 Decodificador:** `modeling.decode.viterbi.decode_match(scores, half, force_d, params) -> np.ndarray[dtype "<U1"]`.
   - Decodifica cada tempo (`half` = 1 e 2) separadamente.
   - `half == 0` → `X`; dentro dos blocos, nunca `X`.
+  - Durações (F2-08, D-025): `params.duration_stages` = `r_s` (config `decoder.duration_stages`). Para o estado `s`, `m_s − 1` subestados da cadeia do `min_dwell` (sem laço) e depois `r_s` estágios, cada um com laço `p_s` e avanço `1 − p_s`; só o último estágio (o subestado terminal) sai para outro estado, com `(1 − p_s)·exit_split[s, ·]`, e só ele recebe a distribuição inicial. `p_s = 1 − r_s/(mean_s − m_s + 1)` mantém a média; erro se `mean_s − m_s + 1 <= r_s`. Com `r_s = 1` a topologia, a ordem dos subestados e os valores são os de antes, byte a byte.
 - **C6 Submissão:** `modeling.io.write_submission(labels, path, n_expected=None)`.
   - Cabeçalho `frame,label`, UTF-8, `\n`, uma linha por frame `0..n−1`.
   - Depois de gravar, relê com `pm.read_label_csv` e chama `pm.validate_submission(df, n_expected)`; levanta erro se houver mensagem.

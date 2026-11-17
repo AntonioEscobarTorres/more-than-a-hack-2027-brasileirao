@@ -3,6 +3,11 @@
 ``decode_match(scores, half, force_d, params)`` decodes each contiguous ``half ∈ {1, 2}``
 block independently, maps ``half == 0`` to ``X``, and finally forces ``force_d`` frames
 to ``D``.
+
+Durations (F2-08, decision D-025): after the ``min_dwell`` chain, a label holds through
+``duration_stages[s]`` stages with self-loop ``p_stay[s]``, so the segment length is a shifted
+negative binomial with the configured mean. One stage is the F2-01 geometric duration; the
+sub-states, their order and the transition values are then exactly the original ones.
 """
 from __future__ import annotations
 
@@ -15,20 +20,28 @@ _NEG_INF = -np.inf
 _LOG_ONE_THIRD = np.log(1.0 / 3.0)
 
 
-def _expand_topology(min_dwell: np.ndarray):
+def _expand_topology(min_dwell: np.ndarray, duration_stages=None):
     """Build the expanded sub-state index and sparse predecessor lists.
 
     Sub-states are ordered H, A, D; within each label ``s``, indices run
-    ``(s, 1) … (s, m_s)``. Returns ``(K, state_of, dwell_of, is_terminal, preds)``
+    ``(s, 1) … (s, m_s − 1)`` (the ``min_dwell`` chain, no self-loop) followed by the
+    ``r_s = duration_stages[s]`` stages ``(s, m_s) … (s, m_s + r_s − 1)``. The last stage is
+    the *terminal* sub-state: it alone exits to other labels. With ``r_s == 1`` the layout is the
+    F2-02 one. Returns ``(K, state_of, dwell_of, is_terminal, terminal_idx, offsets, preds)``
     where ``preds[j]`` is a list of ``(i, log_a_ij)`` predecessors of sub-state ``j``.
     """
     min_dwell = np.asarray(min_dwell, dtype=np.int64).reshape(3)
     if (min_dwell < 1).any():
         raise ValueError("min_dwell must be >= 1 for every state, got {}".format(min_dwell))
+    stages = np.ones(3, dtype=np.int64) if duration_stages is None \
+        else np.asarray(duration_stages, dtype=np.int64).reshape(3)
+    if (stages < 1).any():
+        raise ValueError("duration_stages must be >= 1 for every state, got {}".format(stages))
+    length = min_dwell + stages - 1  # sub-states per label
     offsets = np.zeros(3, dtype=np.int64)
-    offsets[1] = min_dwell[0]
-    offsets[2] = min_dwell[0] + min_dwell[1]
-    k_total = int(min_dwell.sum())
+    offsets[1] = length[0]
+    offsets[2] = length[0] + length[1]
+    k_total = int(length.sum())
     if k_total > 32767:
         raise ValueError("expanded state count K={} exceeds int16 range".format(k_total))
 
@@ -37,12 +50,12 @@ def _expand_topology(min_dwell: np.ndarray):
     is_terminal = np.zeros(k_total, dtype=bool)
     terminal_idx = np.empty(3, dtype=np.int16)
     for s in range(3):
-        m = int(min_dwell[s])
-        for k in range(1, m + 1):
+        n_sub = int(length[s])
+        for k in range(1, n_sub + 1):
             j = int(offsets[s]) + (k - 1)
             state_of[j] = s
             dwell_of[j] = k
-            if k == m:
+            if k == n_sub:
                 is_terminal[j] = True
                 terminal_idx[s] = j
 
@@ -51,9 +64,11 @@ def _expand_topology(min_dwell: np.ndarray):
     for s in range(3):
         m = int(min_dwell[s])
         base = int(offsets[s])
-        # Chain: (s,k) → (s,k+1) with log-prob 0.
+        # Chain: (s,k) → (s,k+1) with log-prob 0, up to the first stage (s, m).
         for k in range(1, m):
             preds[base + k].append((base + k - 1, 0.0))
+        # Stage self-loops and stage advances (s, k) → (s, k+1), k >= m: filled by the
+        # caller from log_p_stay / log(1 − p_stay).
         # Terminal self-loop with log p_stay[s] — filled by caller via log_p_stay.
         # Exit into (s', 1) — filled by caller via log_exit.
         # Placeholder: topology only knows structure; log values attached below.
@@ -69,10 +84,25 @@ def _attach_transition_logs(
     terminal_idx: np.ndarray,
     log_p_stay: np.ndarray,
     log_exit: np.ndarray,
+    duration_stages=None,
+    log_advance=None,
 ) -> None:
-    """Fill self-loop and exit edges on the predecessor lists (mutates ``preds``)."""
+    """Fill stage, self-loop and exit edges on the predecessor lists (mutates ``preds``).
+
+    Each stage ``(s, k)``, ``k >= m_s``, loops with ``log_p_stay[s]``; every stage but the last
+    advances to the next with ``log_advance[s] = log(1 − p_stay[s])``; the last (terminal) stage
+    exits with ``log_exit[s, ·]``. With one stage per state only the terminal edges exist.
+    """
+    stages = np.ones(3, dtype=np.int64) if duration_stages is None \
+        else np.asarray(duration_stages, dtype=np.int64).reshape(3)
+    if (stages > 1).any() and log_advance is None:
+        raise ValueError("log_advance is required when a state has more than one stage")
     for s in range(3):
         term = int(terminal_idx[s])
+        first_stage = term - int(stages[s]) + 1
+        for j in range(first_stage, term):
+            preds[j].append((j, float(log_p_stay[s])))
+            preds[j + 1].append((j, float(log_advance[s])))
         preds[term].append((term, float(log_p_stay[s])))
         for sp in range(3):
             if sp == s:
@@ -92,14 +122,21 @@ def _dense_predecessors(params: DecoderParams):
 
     Returns ``(state_of, terminal_idx, pred_src, pred_log)``. Row ``j`` lists the predecessors
     of sub-state ``j`` sorted by source index; unused slots point at the sentinel index ``K``
-    (whose score is always -inf) with log-prob -inf. Every sub-state has at most 3 predecessors.
+    (whose score is always -inf) with log-prob -inf. Every sub-state has at most 3 predecessors
+    (the first stage: chain end or two exits, plus its self-loop).
     """
     min_dwell = params.min_dwell
+    stages = params.duration_stages
     k_total, state_of, _dwell_of, _is_terminal, terminal_idx, offsets, preds = (
-        _expand_topology(min_dwell)
+        _expand_topology(min_dwell, stages)
     )
+    log_advance = None
+    if (stages > 1).any():
+        with np.errstate(divide="ignore"):
+            log_advance = np.log(1.0 - params.p_stay)
     _attach_transition_logs(
-        preds, min_dwell, offsets, terminal_idx, params.log_p_stay, params.log_exit
+        preds, min_dwell, offsets, terminal_idx, params.log_p_stay, params.log_exit,
+        stages, log_advance,
     )
     width = max(1, max(len(row) for row in preds))
     pred_src = np.full((k_total, width), k_total, dtype=np.int64)
@@ -129,7 +166,8 @@ def _viterbi_block(scores: np.ndarray, params: DecoderParams) -> np.ndarray:
 
     # delta has one extra sentinel slot (index K) that stays -inf for padded predecessors.
     delta = np.full(k_total + 1, _NEG_INF, dtype=np.float64)
-    # Init: only terminal sub-states (s, m_s) get log(1/3) + scores[0, s].
+    # Init: only terminal sub-states (the last stage of each s) get log(1/3) + scores[0, s]: a
+    # half starts inside a segment that has already passed its min_dwell (D-025).
     for s in range(3):
         j = int(terminal_idx[s])
         delta[j] = _LOG_ONE_THIRD + scores[0, s]

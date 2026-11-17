@@ -54,6 +54,7 @@ _DECODER = {
     "exit_split": {"H": {"A": 0.5, "D": 0.5}, "A": {"H": 0.5, "D": 0.5},
                    "D": {"H": 0.5, "A": 0.5}},
     "min_dwell_frames": {"H": 12, "A": 12, "D": 25},
+    "duration_stages": {"H": 1, "A": 1, "D": 1},
 }
 _POST = {"midpoint_neutral_switch": False, "boundary_shift_file": None, "d_bridge_frames": 0,
          "d_cross_frames": 0, "min_spell_frames": 0}

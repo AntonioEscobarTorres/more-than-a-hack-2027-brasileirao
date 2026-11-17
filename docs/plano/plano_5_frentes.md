@@ -239,6 +239,7 @@ Não criar pasta ou pacote chamado `eval` (sombreia a função embutida `eval` d
 - **C5 Decodificador:** `modeling.decode.viterbi.decode_match(scores, half, force_d, params) -> np.ndarray[dtype "<U1"]`.
   - Decodifica cada tempo (`half` = 1 e 2) separadamente.
   - `half == 0` → `X`; dentro dos blocos, nunca `X`.
+  - Durações (F2-08, D-025): `params.duration_stages` = `r_s` (config `decoder.duration_stages`). Para o estado `s`, `m_s − 1` subestados da cadeia do `min_dwell` (sem laço) e depois `r_s` estágios, cada um com laço `p_s` e avanço `1 − p_s`; só o último estágio (o subestado terminal) sai para outro estado, com `(1 − p_s)·exit_split[s, ·]`, e só ele recebe a distribuição inicial. `p_s = 1 − r_s/(mean_s − m_s + 1)` mantém a média; erro se `mean_s − m_s + 1 <= r_s`. Com `r_s = 1` a topologia, a ordem dos subestados e os valores são os de antes, byte a byte.
 - **C6 Submissão:** `modeling.io.write_submission(labels, path, n_expected=None)`.
   - Cabeçalho `frame,label`, UTF-8, `\n`, uma linha por frame `0..n−1`.
   - Depois de gravar, relê com `pm.read_label_csv` e chama `pm.validate_submission(df, n_expected)`; levanta erro se houver mensagem.
@@ -1474,6 +1475,7 @@ O pré-pontapé não entra no logit; ele é a máscara `force_d` (C4).
 - `lam_team=0.2`, `lam_dead=0.2`. Os frames a 25 fps são fortemente autocorrelacionados, e λ < 1 evita contar a mesma evidência 25 vezes por segundo.
 - Duração média: `H`/`A` = 15 s, `D` = 20 s. Saindo de H: 50% → A, 50% → D; saindo de A: 50% → H, 50% → D; saindo de D: 50% → H, 50% → A.
 - `min_dwell`: `H`/`A` = 12 frames, `D` = 25 frames. `neg=-1e6`. Distribuição inicial uniforme.
+- `duration_stages` (F2-08, D-025): `H`/`A`/`D` = 1, a duração geométrica depois do `min_dwell`. `r > 1` estágios dão uma binomial negativa deslocada com a mesma média.
 - `configs/decoder_idsse.yaml` (F2-03) substitui as durações e o `exit_split` pelos valores do IDSSE.
 
 ### A.5 Pós-processamento
@@ -1541,6 +1543,7 @@ decoder:
   mean_duration_s: {H: 15.0, A: 15.0, D: 20.0}
   exit_split: {H: {A: 0.5, D: 0.5}, A: {H: 0.5, D: 0.5}, D: {H: 0.5, A: 0.5}}
   min_dwell_frames: {H: 12, A: 12, D: 25}
+  duration_stages: {H: 1, A: 1, D: 1}   # F2-08 (D-025): estágios depois do min_dwell; 1 = geométrica
 postprocess:
   midpoint_neutral_switch: false
   boundary_shift_file: null    # ex.: configs/calib/boundary.yaml (F2-05)
