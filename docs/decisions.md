@@ -65,7 +65,7 @@ Modelo:
 | [D-026](#d-026--dead_logit-gbdt-features-cenários-coerentes-e-resultado-f3-08) | 2026-11-16 | `dead_logit` GBDT: features, cenários coerentes e resultado (F3-08) | Vigente (adoção pela F2-06) |
 | [D-027](#d-027--durações-semi-markov-no-decodificador-e-o-config-v2_gbdt_nb-f2-08) | 2026-11-16 | Durações semi-Markov no decodificador e o config `v2_gbdt_nb` (F2-08) | Vigente (adoção pela F2-06) |
 | [D-028](#d-028--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-17 | Seleção da F2-06 e o `configs/final.yaml` | Substituída pela D-029 (o config ficou em `configs/final_d028.yaml`, plano B) |
-| [D-029](#d-029--segundo-estágio-sobre-as-evidências-e-hazard-gbdt-f2-09) | 2026-11-17 | Segundo estágio sobre as evidências e hazard GBDT (F2-09); novo `configs/final.yaml` | Vigente (checagens locais pendentes) |
+| [D-029](#d-029--segundo-estágio-sobre-as-evidências-e-hazard-gbdt-f2-09) | 2026-11-17 | Segundo estágio sobre as evidências e hazard GBDT (F2-09); novo `configs/final.yaml` | Vigente |
 
 ## Decisões
 
@@ -1239,8 +1239,8 @@ Modelo:
 
 - **Data:** 2026-11-17
 - **Autor:** F5 (Ahmed)
-- **Status:** Vigente. Faltam as checagens locais no BAR-ATH do config novo (abaixo); se uma
-  eliminatória der `FAIL`, envia-se `configs/final_d028.yaml`.
+- **Status:** Vigente. Todas as checagens locais no BAR-ATH do config novo deram `PASS` (abaixo); o
+  plano B (`configs/final_d028.yaml`) não foi necessário.
 - **Decisão:** o `configs/final.yaml` passa a ter três peças novas, todas treinadas só no IDSSE degradado
   (`default`), com o protocolo de sempre (deixa-um-jogo-de-fora, ganho pareado > 1 EP e estresse):
   1. **Hazard GBDT** (`hazard.kind: gbdt`, `configs/calib/hazard_gbdt.yaml`, `models/hazard_gbdt/`): o
@@ -1300,15 +1300,18 @@ Modelo:
     mesmo resultado bit a bit em dois processos (teste de fumaça num jogo do IDSSE);
   - 1.303 testes passam (`tests/test_modeling_stack.py` e `tests/test_tools_stack_feature_shift.py`
     novos).
-- **Checagens locais no BAR-ATH (pendentes; só `PASS`/`FAIL` e estatísticas dos rótulos previstos):**
-  `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing` (SHA-256 do CSV),
-  `tools/check_public_window.py --pred outputs/final.csv --master <master fundido>`,
-  `tools/deadball_diagnostics.py --pred outputs/final.csv --master <master fundido> --config configs/final.yaml`,
-  `tools/stack_feature_shift.py --master <master fundido>` (novo: faixa das features do hazard GBDT e
-  dos dois segundos estágios, concordância de sinal entre o `team_logit` final e o de primeiro estágio,
-  taxa média do hazard) e `tools/dead_stability.py --config configs/final.yaml`. As entradas de
-  primeiro estágio não mudaram (`gbdt_feature_shift` e `dead_feature_shift` já `PASS`, D-028). Se uma
-  eliminatória der `FAIL`, envia-se `configs/final_d028.yaml`.
+- **Checagens locais no BAR-ATH (17/11, só `PASS`/`FAIL` e estatísticas dos rótulos previstos saíram da
+  máquina):** `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing` (config
+  `a84e8120…`) gera `outputs/final.csv` com SHA-256
+  `25064d90ff2808ffb325f43d51253a5dd58be765d70c2ddee6d608f5fb9f0503`; 158.857 frames avaliados, H 0,3190,
+  A 0,2207, D 0,4603; 177 posses no 1º tempo e 193 no 2º. Com o master fundido
+  (`<dados>/processed_fused/master_features.parquet`): `tools/check_public_window.py` `PASS` nas 7;
+  `tools/deadball_diagnostics.py --config configs/final.yaml` `PASS` (as informativas (iv) e (v) também);
+  `tools/stack_feature_shift.py` (novo: faixa das features do hazard GBDT e dos dois segundos estágios,
+  concordância de sinal entre o `team_logit` final e o de primeiro estágio, taxa média do hazard) `PASS` em
+  (a)–(d) e (f) e na informativa (e). `tools/dead_stability.py --config configs/final.yaml` `PASS` nos três
+  pares. As entradas de primeiro estágio não mudaram (`gbdt_feature_shift` e `dead_feature_shift` já `PASS`,
+  D-028). O plano B não foi necessário.
 
 ## Registro de envios
 

@@ -91,13 +91,15 @@ python -m modeling.scoring.stack_sweep --config configs/final.yaml --jobs 7 --wr
 python -m modeling.scoring.external_eval --config configs/final.yaml --degrade fused
 ```
 
-## Local checks on BAR-ATH (a person runs them; PASS/FAIL only)
+## Local checks on BAR-ATH (a person ran them on 17/11; PASS/FAIL only)
 
-- `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing`: **pending**
-- `tools/check_public_window.py --pred outputs/final.csv --master <fused master>`: **pending**
-- `tools/deadball_diagnostics.py --pred outputs/final.csv --master <fused master> --config configs/final.yaml`: **pending**
-- `tools/stack_feature_shift.py --master <fused master>` (new, checks (a)-(d) and (f) eliminatory): **pending**
-- `tools/dead_stability.py --config configs/final.yaml`: **pending**
+- `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing`: config
+  `a84e8120…`, CSV SHA-256 `25064d90ff2808ffb325f43d51253a5dd58be765d70c2ddee6d608f5fb9f0503`
+- `tools/check_public_window.py --pred outputs/final.csv --master <fused master>`: **PASS** (all 7)
+- `tools/deadball_diagnostics.py --pred outputs/final.csv --master <fused master> --config configs/final.yaml`:
+  **PASS** (informative (iv) and (v) too)
+- `tools/stack_feature_shift.py --master <fused master>`: **PASS** on (a)-(d) and (f), informative (e) PASS
+- `tools/dead_stability.py --config configs/final.yaml`: **PASS** on the three pairs
 - unchanged inputs, already PASS for D-028: `gbdt_feature_shift` (team first stage), `dead_feature_shift` (dead GBDT).
 
-If any eliminatory check FAILs, submit `configs/final_d028.yaml` (the D-028 config, CSV `f9e363ea…`, all checks PASS).
+Plan B (`configs/final_d028.yaml`, CSV `f9e363ea…`) was not needed.
