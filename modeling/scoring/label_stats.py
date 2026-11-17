@@ -30,6 +30,8 @@ FPS = 25.0
 A4_LAM_TEAM = 0.2
 A4_LAM_DEAD = 0.2
 A4_MIN_DWELL = {"H": 12, "A": 12, "D": 25}
+# F2-08 (D-027): one duration stage per state, the geometric duration of F2-01.
+DURATION_STAGES = {"H": 1, "A": 1, "D": 1}
 
 _STATE_INDEX = {name: i for i, name in enumerate(STATES)}
 _CODE_TO_STATE = {LABEL_CODES[s]: s for s in STATES}
@@ -353,6 +355,7 @@ def decoder_idsse_config(stats: IdsseLabelStats) -> dict:
             for s in STATES
         },
         "min_dwell_frames": dict(A4_MIN_DWELL),
+        "duration_stages": dict(DURATION_STAGES),
     }
 
 

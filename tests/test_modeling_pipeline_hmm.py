@@ -79,6 +79,7 @@ def test_v1_config_is_appendix_a(v1_cfg):
         "exit_split": {"H": {"A": 0.5, "D": 0.5}, "A": {"H": 0.5, "D": 0.5},
                        "D": {"H": 0.5, "A": 0.5}},
         "min_dwell_frames": {"H": 12, "A": 12, "D": 25},
+        "duration_stages": {"H": 1, "A": 1, "D": 1},
     }
     assert v1_cfg["postprocess"] == {"midpoint_neutral_switch": False,
                                      "boundary_shift_file": None, "d_bridge_frames": 0,
