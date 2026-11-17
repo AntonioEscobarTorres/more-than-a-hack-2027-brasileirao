@@ -183,3 +183,51 @@ def test_write_final_and_report(tmp_path):
         }],
     }, local_checks={"csv_valid": "PASS"})
     assert "Winner" in report and "PASS" in report
+
+
+def test_ladder_has_the_hazard_step_before_fused():
+    ids = [s["id"] for s in sel.default_ladder()]
+    assert ids.index("team_gbdt") < ids.index("hazard") < ids.index("fused") == len(ids) - 1
+    step = {s["id"]: s for s in sel.default_ladder()}["hazard"]
+    assert step["require_stress"] is True and step["force_accept"] is False
+
+
+def test_hazard_and_fused_steps_rebuild_the_committed_configs():
+    """v2 -> team GBDT -> hazard -> fused is v2_gbdt_fused_hzn2 up to the name (D-024/D-025)."""
+    from modeling import paths
+    from modeling.config import config_hash, load_config
+
+    steps = {s["id"]: s for s in sel.default_ladder()}
+    cur = steps["v2"]["build"](None)
+    expected = {"team_gbdt": "v2_gbdt", "hazard": "v2_gbdt_hzn2",
+                "fused": "v2_gbdt_fused_hzn2"}
+    for sid, ref_name in expected.items():
+        cur = steps[sid]["build"](cur)
+        ref = load_config(paths.repo_root() / "configs" / "{}.yaml".format(ref_name))
+        assert config_hash({**cur, "name": ref_name}) == config_hash(ref), sid
+
+
+def test_ladder_configs_use_repo_relative_paths():
+    """A winner written to final.yaml must not carry a machine-specific absolute path."""
+    steps = {s["id"]: s for s in sel.default_ladder()}
+    cur = steps["v2"]["build"](None)
+    for sid in ("dead_pooled", "boundary_shift", "hazard"):
+        cand = steps[sid]["build"](cur)
+        for section in ("dead", "hazard"):
+            f = cand[section].get("calibrated_file")
+            assert f is None or not f.startswith("/"), (sid, f)
+        f = cand["postprocess"]["boundary_shift_file"]
+        assert f is None or not f.startswith("/"), sid
+
+
+def test_report_renders_the_seed_step():
+    tables = {"M1": 0.40, "M2": 0.42, "M3": 0.41}
+
+    def fake_eval(cfg, degrade):
+        return _table(tables)
+
+    steps = [{"id": "seed", "label": "seed", "build": lambda _c: {"name": "a"},
+              "require_stress": True, "force_accept": True, "absolute": True}]
+    result = sel.run_ladder(steps, evaluate_fn=fake_eval)
+    text = sel.render_report(result)
+    assert "seeded ladder with `a`" in text

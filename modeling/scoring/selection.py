@@ -134,15 +134,19 @@ def evaluate_step(
     }
 
 
+# F2-07 (D-025, item 8): hazard without ``ball_dir_change`` and ``beta`` 2, the F2-07
+# recommendation (``configs/v2_gbdt_hzn2.yaml``); ``lam_team`` 0.3 was kept by its re-sweep of λ.
+HAZARD_FILE = "configs/calib/hazard_nodir.yaml"
+HAZARD_BETA = 2.0
+
+
 def default_ladder() -> list[dict[str, Any]]:
-    """Ladder steps available without F3-08 / F2-07 / F2-08.
+    """Ladder steps available without F3-08 / F2-08 (both still open).
 
     Each item is ``{"id", "label", "build": fn(current_cfg) -> candidate_cfg,
     "require_stress": bool, "force_accept": bool}``.
     ``force_accept`` is for ``team_tag_prior`` (pre-registered, no gain rule).
     """
-    root = paths.repo_root()
-
     def from_file(name: str):
         def build(_current):
             return _load_named(name)
@@ -157,7 +161,7 @@ def default_ladder() -> list[dict[str, Any]]:
     def with_dead_pooled(current):
         return mutate(
             current, name="{}_dead_pooled".format(current["name"]),
-            dead={"calibrated_file": str(root / "configs" / "calib" / "dead_pooled.yaml")})
+            dead={"calibrated_file": "configs/calib/dead_pooled.yaml"})
 
     def with_team_gbdt(current):
         # Keep the winner's dead/decoder/postprocess; swap team to the F1-07 GBDT bundle.
@@ -167,6 +171,12 @@ def default_ladder() -> list[dict[str, Any]]:
             team=gbdt["team"],
             decoder={"lam_team": gbdt["decoder"]["lam_team"],
                      "lam_dead": gbdt["decoder"]["lam_dead"]})
+
+    def with_hazard(current):
+        # F2-07: hazard-guided H/A exits in the decoder; nothing else changes.
+        return mutate(current, name="{}_hzn2".format(current["name"]),
+                      hazard={"kind": "calibrated", "calibrated_file": HAZARD_FILE,
+                              "beta": HAZARD_BETA})
 
     def with_fused(current):
         # BAR-ATH uses ball_source=fused; IDSSE gain is measured on degrade=fused masters
@@ -217,9 +227,11 @@ def default_ladder() -> list[dict[str, Any]]:
         {"id": "boundary_shift", "label": "boundary_shift_file (F2-05)",
          "build": with_post(
              "boundary",
-             boundary_shift_file=str(root / "configs" / "calib" / "boundary.yaml")),
+             boundary_shift_file="configs/calib/boundary.yaml"),
          "require_stress": True, "force_accept": False},
-        # F2-07 / F2-08 skipped while open.
+        # F2-08 (semi-Markov durations) skipped while open.
+        {"id": "hazard", "label": "hazard-guided transitions (F2-07, D-025, beta 2)",
+         "build": with_hazard, "require_stress": True, "force_accept": False},
         {"id": "fused", "label": "ball_source fused (F4-06, D-024)",
          "build": with_fused, "require_stress": False, "force_accept": False,
          "fused_idsse": True},
@@ -270,6 +282,7 @@ def run_ladder(
                 "label": step["label"],
                 "accepted": True,
                 "forced": True,
+                "absolute": True,
                 "candidate_name": candidate["name"],
                 "primary": {
                     "degrade": PRIMARY_DEGRADE,
@@ -435,6 +448,7 @@ def render_report(result: Mapping[str, Any], *,
         "deadball_diagnostics (±40% plausibility)": "pending",
         "stability dead default/hidelo/hidehi (<5% label change)": "pending",
         "gbdt_feature_shift (if fused/gbdt)": "pending",
+        "hazard_feature_shift (if hazard; tactical and fused masters)": "pending",
     }
     if local_checks:
         checks.update(local_checks)
@@ -443,8 +457,11 @@ def render_report(result: Mapping[str, Any], *,
     lines.append("")
     lines.append("## Skipped optional steps")
     lines.append("")
-    lines.append("- F3-08 dead GBDT: issue still open — ladder continues without it.")
-    lines.append("- F2-07 hazard / F2-08 semi-Markov: still open — skipped.")
+    lines.append("- F3-08 dead GBDT (#83): still open (PR #152 not merged) — ladder continues "
+                 "without it.")
+    lines.append("- F2-08 semi-Markov durations (#126): still open — skipped.")
+    lines.append("- `team_tag_prior` (F1-05 item 8): 0 on IDSSE, so not part of the gain rule; "
+                 "its pre-registered BAR-ATH agreement check was not run, so it stays off.")
     lines.append("")
     return "\n".join(lines)
 
