@@ -971,6 +971,11 @@ Modelo:
      `default`, ganho em todos os modos, abaixo do pico de 2,5 e longe da troca excessiva de 4). A escolha entre
      eles é da F2-06/F5; `beta` 2 é a recomendação desta tarefa. Os configs `v1s_hz`, `v2_hz` e `v2_gbdt_hz`
      usam o hazard com `ball_dir_change` e **não devem ser enviados**.
+  9. **Com a bola fundida (D-024).** O hazard sem `ball_dir_change` também ajuda em cima do `v2_gbdt_fused`, nos
+     mestres IDSSE `fused` (7 partidas, `holdout = partida`): 0,4958 → 0,5014 com `beta` 1 (+0,0056 ± 0,0021) e
+     0,5097 com `beta` 2 (+0,0139 ± 0,0031); `beta` 2,5 dá 0,5150. Config: `configs/v2_gbdt_fused_hzn2.yaml`
+     (`beta` 2). A ordem dos passos (hazard antes ou depois da bola fundida) é da F2-06; para enviar esse config,
+     a checagem do hazard roda também no master fundido (comando abaixo).
 - **Opções consideradas:**
   - renormalizar sempre, com `x = 0` no lugar de `None`: descartada, porque a especificação exige o código antigo
     intacto, e um empate decidido pelo arredondamento de `Z_t` mudaria rótulos;
@@ -1000,7 +1005,9 @@ Modelo:
     [`reports/sensitivity_hazard_v2_gbdt.md`](../reports/sensitivity_hazard_v2_gbdt.md) e
     [`reports/sensitivity_hazard_v2_gbdt_nodir.md`](../reports/sensitivity_hazard_v2_gbdt_nodir.md). Só IDSSE.
 - **Antes de enviar um config com o hazard** (execução local, só `PASS`/`FAIL` sai da máquina):
-  `python tools/hazard_feature_shift.py --hazard-file configs/calib/hazard_nodir.yaml --degrade default hidelo hidehi`. A ferramenta compara as features e a
+  `python tools/hazard_feature_shift.py --hazard-file configs/calib/hazard_nodir.yaml --degrade default hidelo hidehi`.
+  Para um config com `ball_source: fused`, rodar também
+  `python tools/hazard_feature_shift.py --hazard-file configs/calib/hazard_nodir.yaml --master <dados>/processed_fused/master_features.parquet --degrade fused`. A ferramenta compara as features e a
   saída do hazard entre o IDSSE e o BAR-ATH: (a) features dentro da faixa do IDSSE e (b) probabilidade média de troca
   a ±25% do IDSSE são eliminatórias; (c) fração de `h ≥ 1` é informativa. Com cada partida do IDSSE no lugar do
   BAR-ATH, (a) e (b) dão `PASS` nas 35 combinações (7 partidas × 5 modos). Se der `FAIL`, envia-se o mesmo config com
