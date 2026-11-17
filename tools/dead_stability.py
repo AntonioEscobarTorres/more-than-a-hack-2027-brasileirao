@@ -7,7 +7,8 @@ Local execution only (a person runs it on the match data; F2-06, update of 11/11
 
 The BAR-ATH is predicted three times with the given config, changing only
 ``dead.calibrated_file``: the dead_logit fitted on ``default`` (``configs/calib/dead.yaml``), on
-``hidelo`` and on ``hidehi`` (F3-04, item 7). For every pair of runs the share of frames inside
+``hidelo`` and on ``hidehi`` (F3-04, item 7; with ``dead.kind: gbdt`` the F3-08 GBDT fits
+``configs/calib/dead_gbdt{,_hidelo,_hidehi}.yaml``). For every pair of runs the share of frames inside
 the halves (``half != 0``) whose label changes must be below ``MAX_CHANGED_SHARE`` (5%).
 
 By default it prints only PASS/FAIL per pair. ``--verbose`` adds the shares, for the person at
@@ -43,19 +44,31 @@ from modeling.make_submission import _master_location  # noqa: E402
 from modeling.pipeline import predict_labels  # noqa: E402
 
 DEFAULT_CONFIG = REPO_ROOT / "configs" / "final.yaml"
+# dead.kind -> the dead_logit fitted on each degradation (F3-04 logistic; F3-08 GBDT).
 DEAD_VARIANTS = {
-    "default": "configs/calib/dead.yaml",
-    "hidelo": "configs/calib/dead_hidelo.yaml",
-    "hidehi": "configs/calib/dead_hidehi.yaml",
+    "calibrated": {
+        "default": "configs/calib/dead.yaml",
+        "hidelo": "configs/calib/dead_hidelo.yaml",
+        "hidehi": "configs/calib/dead_hidehi.yaml",
+    },
+    "gbdt": {
+        "default": "configs/calib/dead_gbdt.yaml",
+        "hidelo": "configs/calib/dead_gbdt_hidelo.yaml",
+        "hidehi": "configs/calib/dead_gbdt_hidehi.yaml",
+    },
 }
 # Fixed by the F2-06 specification (update of 11/11, item 5), not tuned.
 MAX_CHANGED_SHARE = 0.05
 
 
-def variant_configs(cfg: dict, variants: Mapping[str, str] = DEAD_VARIANTS) -> dict[str, dict]:
+def variant_configs(cfg: dict, variants: Mapping[str, str] | None = None) -> dict[str, dict]:
     """One config per dead calibration; only ``dead.calibrated_file`` changes."""
-    if cfg.get("pipeline") != "hmm" or cfg["dead"]["kind"] != "calibrated":
-        raise ValueError("the stability check needs an hmm config with dead.kind: calibrated")
+    kind = cfg["dead"]["kind"] if cfg.get("pipeline") == "hmm" else None
+    if kind not in DEAD_VARIANTS:
+        raise ValueError("the stability check needs an hmm config with dead.kind in {}".format(
+            sorted(DEAD_VARIANTS)))
+    if variants is None:
+        variants = DEAD_VARIANTS[kind]
     out = {}
     for key, path in variants.items():
         v = copy.deepcopy(cfg)

@@ -73,6 +73,15 @@ CANDIDATES = {
     "dead_gbdt_pooled": (POOLED_MODES, POOLED_SUBSAMPLE, "configs/calib/dead_pooled.yaml",
                          "GBDT dead_logit fitted on default, hidelo and hidehi together"),
 }
+# F2-06 stability check only (update of 11/11, item 5; ``tools/dead_stability.py``), as the
+# ``dead_hidelo``/``dead_hidehi`` files of F3-04. Never part of the default run; never used for a CSV.
+STABILITY_CANDIDATES = {
+    "dead_gbdt_hidelo": (("hidelo",), SUBSAMPLE, "configs/calib/dead_hidelo.yaml",
+                         "GBDT dead_logit fitted on hidelo only (F2-06 stability check only)"),
+    "dead_gbdt_hidehi": (("hidehi",), SUBSAMPLE, "configs/calib/dead_hidehi.yaml",
+                         "GBDT dead_logit fitted on hidehi only (F2-06 stability check only)"),
+}
+ALL_CANDIDATES = {**CANDIDATES, **STABILITY_CANDIDATES}
 
 # Robustness scenarios of F3-04 (item 4) written on the GBDT features, with window values coherent
 # with each story. The values are inputs of the check, not match data. The frame values are those
@@ -679,16 +688,16 @@ def run(params: Mapping, matches: Sequence[str], *, out_dir: Path, model_dir: Pa
     """
     if load_fn is None:
         from modeling.external.files import load_external as load_fn
-    unknown = [c for c in candidates if c not in CANDIDATES]
+    unknown = [c for c in candidates if c not in ALL_CANDIDATES]
     if unknown:
         raise ValueError("unknown candidates {}".format(unknown))
     root = paths.repo_root()
     fold_root = paths.ext_dir() if fold_root is None else Path(fold_root)
-    ref_files = {name: str((reference_files or {}).get(name, CANDIDATES[name][2]))
+    ref_files = {name: str((reference_files or {}).get(name, ALL_CANDIDATES[name][2]))
                  for name in candidates}
     references = {f: cd.load_calibration(resolve_repo_path(f)) for f in ref_files.values()}
     modes = list(dict.fromkeys(list(EVAL_MODES) + [m for c in candidates
-                                                   for m in CANDIDATES[c][0]]))
+                                                   for m in ALL_CANDIDATES[c][0]]))
     t0 = time.time()
     data = load_all(matches, modes, params, window_sizes, references, load_fn)
     log("features of {} matches x {} modes in {:.0f}s".format(len(matches), len(modes),
@@ -703,7 +712,7 @@ def run(params: Mapping, matches: Sequence[str], *, out_dir: Path, model_dir: Pa
 
     docs, files = {}, {}
     for name in candidates:
-        train_modes, step, _, description = CANDIDATES[name]
+        train_modes, step, _, description = ALL_CANDIDATES[name]
         ref_file = ref_files[name]
         all_path = Path(model_dir) / name / "all.joblib"
         fold_dir = fold_root / "models" / name
@@ -757,6 +766,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--matches", default="all",
                         help="all or comma-separated IDSSE match ids (default: all)")
     parser.add_argument("--no-pooled", action="store_true", help="skip the pooled candidate")
+    parser.add_argument("--candidates", nargs="+", choices=sorted(ALL_CANDIDATES),
+                        help="explicit candidate list (overrides --no-pooled); the "
+                             "dead_gbdt_hidelo/hidehi fits serve only the F2-06 stability check")
     parser.add_argument("--out-dir", default="configs/calib")
     parser.add_argument("--model-dir", default="models")
     parser.add_argument("--report", default="reports/calibration_dead_gbdt.md")
@@ -776,7 +788,10 @@ def main(argv=None) -> int:
     for path in args.decoder_configs:
         c = load_config(resolve_repo_path(path))
         base_cfgs[c.get("name", Path(path).stem)] = c
-    candidates = ("dead_gbdt",) if args.no_pooled else tuple(CANDIDATES)
+    if args.candidates:
+        candidates = tuple(args.candidates)
+    else:
+        candidates = ("dead_gbdt",) if args.no_pooled else tuple(CANDIDATES)
     out = run(cfg["dead"]["params"], matches, out_dir=resolve_repo_path(args.out_dir),
               model_dir=resolve_repo_path(args.model_dir),
               report_path=resolve_repo_path(args.report), candidates=candidates,
@@ -791,7 +806,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["CANDIDATES", "DEFAULT_LAM_GRID", "EVAL_MODES", "MODEL_PARAMS", "POOLED_MODES",
+__all__ = ["ALL_CANDIDATES", "CANDIDATES", "STABILITY_CANDIDATES", "DEFAULT_LAM_GRID", "EVAL_MODES", "MODEL_PARAMS", "POOLED_MODES",
            "POOLED_SUBSAMPLE", "REPORTED_ONLY", "SCENARIOS", "SUBSAMPLE", "calibrate",
            "calibration_document", "cell_window", "gap_runs", "scenario_cell_mask",
            "scenario_cells",

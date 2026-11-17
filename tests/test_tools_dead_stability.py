@@ -21,20 +21,31 @@ def test_variants_change_only_the_dead_file():
     out = ds.variant_configs(cfg)
     assert set(out) == {"default", "hidelo", "hidehi"}
     for key, v in out.items():
-        assert v["dead"]["calibrated_file"] == ds.DEAD_VARIANTS[key]
+        assert v["dead"]["calibrated_file"] == ds.DEAD_VARIANTS["calibrated"][key]
         a = {k: x for k, x in v.items() if k != "dead"}
         b = {k: x for k, x in cfg.items() if k != "dead"}
         assert a == b
         assert {k: x for k, x in v["dead"].items() if k != "calibrated_file"} == \
             {k: x for k, x in cfg["dead"].items() if k != "calibrated_file"}
     assert cfg["dead"]["calibrated_file"] == "configs/calib/dead.yaml"  # input untouched
-    for path in ds.DEAD_VARIANTS.values():
-        assert (paths.repo_root() / path).is_file()
+    for kind in ds.DEAD_VARIANTS.values():
+        for path in kind.values():
+            assert (paths.repo_root() / path).is_file(), path
+
+
+def test_gbdt_dead_uses_the_gbdt_fits():
+    cfg = _cfg()
+    cfg["dead"]["kind"] = "gbdt"
+    cfg["dead"]["calibrated_file"] = "configs/calib/dead_gbdt.yaml"
+    out = ds.variant_configs(cfg)
+    assert {k: v["dead"]["calibrated_file"] for k, v in out.items()} == ds.DEAD_VARIANTS["gbdt"]
+    assert all(v["dead"]["kind"] == "gbdt" for v in out.values())
 
 
 def test_variants_need_a_calibrated_dead():
     cfg = _cfg()
     cfg["dead"]["kind"] = "rules_v1"
+    cfg["dead"]["calibrated_file"] = None
     with pytest.raises(ValueError):
         ds.variant_configs(cfg)
 
@@ -84,3 +95,13 @@ def test_end_to_end_on_the_mock_master(tmp_path, capsys):
     assert rc in (0, 1)
     assert len(out) == 4 and out[-1] in ("overall: PASS", "overall: FAIL")
     assert not any(re.search(r"\d\.\d", line) for line in out)
+
+
+def test_stability_fits_are_never_in_the_default_calibration_run():
+    from modeling.calibration import dead_gbdt as cg
+
+    assert not set(cg.STABILITY_CANDIDATES) & set(cg.CANDIDATES)
+    assert cg.ALL_CANDIDATES["dead_gbdt_hidelo"][0] == ("hidelo",)
+    assert cg.ALL_CANDIDATES["dead_gbdt_hidehi"][0] == ("hidehi",)
+    args = cg.build_parser().parse_args([])
+    assert args.candidates is None

@@ -185,33 +185,47 @@ def test_write_final_and_report(tmp_path):
     assert "Winner" in report and "PASS" in report
 
 
-def test_ladder_has_the_hazard_step_before_fused():
+def test_ladder_has_the_gbdt_hazard_and_fused_steps_in_order():
     ids = [s["id"] for s in sel.default_ladder()]
-    assert ids.index("team_gbdt") < ids.index("hazard") < ids.index("fused") == len(ids) - 1
-    step = {s["id"]: s for s in sel.default_ladder()}["hazard"]
-    assert step["require_stress"] is True and step["force_accept"] is False
+    assert (ids.index("dead_pooled") < ids.index("team_gbdt") < ids.index("dead_gbdt")
+            < ids.index("hazard") < ids.index("fused") == len(ids) - 1)
+    steps = {s["id"]: s for s in sel.default_ladder()}
+    for sid in ("dead_gbdt", "hazard"):
+        assert steps[sid]["require_stress"] is True and steps[sid]["force_accept"] is False
 
 
-def test_hazard_and_fused_steps_rebuild_the_committed_configs():
-    """v2 -> team GBDT -> hazard -> fused is v2_gbdt_fused_hzn2 up to the name (D-024/D-025)."""
+def test_steps_change_only_their_own_section():
+    """v2 -> team GBDT is v2_gbdt; each later step changes only its own section (D-024/25/26)."""
     from modeling import paths
     from modeling.config import config_hash, load_config
 
     steps = {s["id"]: s for s in sel.default_ladder()}
-    cur = steps["v2"]["build"](None)
-    expected = {"team_gbdt": "v2_gbdt", "hazard": "v2_gbdt_hzn2",
-                "fused": "v2_gbdt_fused_hzn2"}
-    for sid, ref_name in expected.items():
-        cur = steps[sid]["build"](cur)
-        ref = load_config(paths.repo_root() / "configs" / "{}.yaml".format(ref_name))
-        assert config_hash({**cur, "name": ref_name}) == config_hash(ref), sid
+    cur = steps["team_gbdt"]["build"](steps["v2"]["build"](None))
+    ref = load_config(paths.repo_root() / "configs" / "v2_gbdt.yaml")
+    assert config_hash({**cur, "name": "v2_gbdt"}) == config_hash(ref)
+
+    def strip(cfg, *sections):
+        return {k: v for k, v in cfg.items() if k not in ("name",) + sections}
+
+    nxt = steps["dead_gbdt"]["build"](cur)
+    assert nxt["dead"]["kind"] == "gbdt"
+    assert nxt["dead"]["calibrated_file"] == "configs/calib/dead_gbdt.yaml"
+    assert nxt["dead"]["params"] == cur["dead"]["params"]
+    assert strip(nxt, "dead") == strip(cur, "dead")
+    cur, nxt = nxt, steps["hazard"]["build"](nxt)
+    hz = load_config(paths.repo_root() / "configs" / "v2_gbdt_hzn2.yaml")["hazard"]
+    assert nxt["hazard"] == hz
+    assert strip(nxt, "hazard") == strip(cur, "hazard")
+    cur, nxt = nxt, steps["fused"]["build"](nxt)
+    assert nxt["ball_source"] == "fused"
+    assert strip(nxt, "ball_source") == strip(cur, "ball_source")
 
 
 def test_ladder_configs_use_repo_relative_paths():
     """A winner written to final.yaml must not carry a machine-specific absolute path."""
     steps = {s["id"]: s for s in sel.default_ladder()}
     cur = steps["v2"]["build"](None)
-    for sid in ("dead_pooled", "boundary_shift", "hazard"):
+    for sid in ("dead_pooled", "dead_gbdt", "boundary_shift", "hazard"):
         cand = steps[sid]["build"](cur)
         for section in ("dead", "hazard"):
             f = cand[section].get("calibrated_file")

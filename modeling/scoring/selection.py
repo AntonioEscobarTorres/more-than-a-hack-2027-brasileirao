@@ -138,10 +138,12 @@ def evaluate_step(
 # recommendation (``configs/v2_gbdt_hzn2.yaml``); ``lam_team`` 0.3 was kept by its re-sweep of λ.
 HAZARD_FILE = "configs/calib/hazard_nodir.yaml"
 HAZARD_BETA = 2.0
+# F3-08 (D-026): the ``default`` GBDT dead_logit; the pooled fit ties with it (D-026, evidence).
+DEAD_GBDT_FILE = "configs/calib/dead_gbdt.yaml"
 
 
 def default_ladder() -> list[dict[str, Any]]:
-    """Ladder steps available without F3-08 / F2-08 (both still open).
+    """Ladder steps available without F2-08 (still open).
 
     Each item is ``{"id", "label", "build": fn(current_cfg) -> candidate_cfg,
     "require_stress": bool, "force_accept": bool}``.
@@ -172,6 +174,11 @@ def default_ladder() -> list[dict[str, Any]]:
             decoder={"lam_team": gbdt["decoder"]["lam_team"],
                      "lam_dead": gbdt["decoder"]["lam_dead"]})
 
+    def with_dead_gbdt(current):
+        # F3-08 (D-026): GBDT dead_logit fitted on default; nothing else changes (lam_dead kept).
+        return mutate(current, name="{}_deadgbdt".format(current["name"]),
+                      dead={"kind": "gbdt", "calibrated_file": DEAD_GBDT_FILE})
+
     def with_hazard(current):
         # F2-07: hazard-guided H/A exits in the decoder; nothing else changes.
         return mutate(current, name="{}_hzn2".format(current["name"]),
@@ -199,7 +206,8 @@ def default_ladder() -> list[dict[str, Any]]:
          "build": with_dead_pooled, "require_stress": True, "force_accept": False},
         {"id": "team_gbdt", "label": "team GBDT (F1-07, D-023)",
          "build": with_team_gbdt, "require_stress": True, "force_accept": False},
-        # F3-08 dead GBDT skipped (issue still open).
+        {"id": "dead_gbdt", "label": "dead GBDT (F3-08, D-026)",
+         "build": with_dead_gbdt, "require_stress": True, "force_accept": False},
         {"id": "post_midpoint", "label": "postprocess midpoint (F2-05 isolated)",
          "build": with_post("midpoint", midpoint_neutral_switch=True),
          "require_stress": True, "force_accept": False},
@@ -457,8 +465,6 @@ def render_report(result: Mapping[str, Any], *,
     lines.append("")
     lines.append("## Skipped optional steps")
     lines.append("")
-    lines.append("- F3-08 dead GBDT (#83): still open (PR #152 not merged) — ladder continues "
-                 "without it.")
     lines.append("- F2-08 semi-Markov durations (#126): still open — skipped.")
     lines.append("- `team_tag_prior` (F1-05 item 8): 0 on IDSSE, so not part of the gain rule; "
                  "its pre-registered BAR-ATH agreement check was not run, so it stays off.")
