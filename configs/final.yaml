@@ -22,7 +22,7 @@ team:
     touch_require_abrupt: false
   calibrated_file: configs/calib/team_gbdt.yaml
 dead:
-  kind: calibrated
+  kind: gbdt
   params:
     long_gap_frames: 12
     exit_line_m: 3.0
@@ -54,9 +54,9 @@ dead:
       tag_sp_prox: 1.0
       tag_sp_after: -1.0
       tag_goal_window: 2.0
-  calibrated_file: configs/calib/dead.yaml
+  calibrated_file: configs/calib/dead_gbdt.yaml
 decoder:
-  lam_team: 0.3
+  lam_team: 0.4
   lam_dead: 0.2
   mean_duration_s:
     H: 7.6395
@@ -76,6 +76,10 @@ decoder:
     H: 12
     A: 12
     D: 25
+  duration_stages:
+    H: 1
+    A: 1
+    D: 1
 postprocess:
   midpoint_neutral_switch: false
   boundary_shift_file: null

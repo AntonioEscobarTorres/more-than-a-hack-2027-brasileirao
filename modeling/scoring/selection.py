@@ -241,6 +241,12 @@ def default_ladder() -> list[dict[str, Any]]:
         # Update of 13/11: the hazard step re-sweeps only λ.
         return resweep_lambda(with_hazard(current), evaluate_fn)
 
+    def durations_control(current, evaluate_fn):
+        # D-027 item 7: the same λ re-sweep with the current stages, so a gain of the
+        # re-sweep alone is not credited to the stages.
+        return resweep_lambda(mutate(current, name="{}_lamctrl".format(current["name"])),
+                              evaluate_fn)
+
     def with_durations(current, evaluate_fn):
         # F2-08 (D-027): stages fitted for this decoder, then re-sweep only λ.
         stages = calibrated_stages(current)
@@ -303,7 +309,7 @@ def default_ladder() -> list[dict[str, Any]]:
              boundary_shift_file="configs/calib/boundary.yaml"),
          "require_stress": True, "force_accept": False},
         {"id": "durations", "label": "semi-Markov durations (F2-08, D-027), λ re-swept",
-         "build": with_durations, "needs_eval": True,
+         "build": with_durations, "needs_eval": True, "control_build": durations_control,
          "require_stress": True, "force_accept": False},
         {"id": "hazard", "label": "hazard-guided transitions (F2-07, D-025, beta 2), λ re-swept",
          "build": with_hazard_lam, "needs_eval": True,
@@ -430,6 +436,19 @@ def run_ladder(
             decision = evaluate_step(
                 current, candidate, evaluate_fn=evaluate_fn,
                 require_stress=step.get("require_stress", True))
+            if decision["accepted"] and step.get("control_build") is not None:
+                # The step must also beat its control with the same rule (D-027, item 7).
+                control = step["control_build"](current, evaluate_fn)
+                vs_control = evaluate_step(
+                    control, candidate, evaluate_fn=evaluate_fn,
+                    require_stress=step.get("require_stress", True))
+                decision["control"] = {"name": control.get("name"),
+                                       "primary": vs_control["primary"],
+                                       "stress": vs_control["stress"],
+                                       "accepted": vs_control["accepted"]}
+                if not vs_control["accepted"]:
+                    decision["accepted"] = False
+                    decision["candidate"] = current
             if decision["accepted"]:
                 current = decision["candidate"]
         decision["id"] = step["id"]
@@ -509,6 +528,11 @@ def render_report(result: Mapping[str, Any], *,
         lines.append("- **accepted:** {}".format(step["accepted"]))
         if step.get("forced"):
             lines.append("- forced accept (pre-registered rule)")
+        ctrl = step.get("control")
+        if ctrl is not None:
+            cp = ctrl["primary"]
+            lines.append("- vs control `{}`: default Δ {:+.4f}±{:.4f}, accepted={}".format(
+                ctrl["name"], cp["mean_delta"], cp["se_delta"], ctrl["accepted"]))
         for row in step.get("stress", []):
             lines.append(
                 "- stress `{}`: Δ {:+.4f}±{:.4f} ok={} "
@@ -528,11 +552,13 @@ def render_report(result: Mapping[str, Any], *,
     lines.append("Agents never run these. Record PASS/FAIL only.")
     lines.append("")
     checks = {
-        "csv_valid": "pending",
+        "csv_valid (make_submission, SHA-256 recorded)": "pending",
         "check_public_window": "pending",
         "deadball_diagnostics (±40% plausibility)": "pending",
-        "stability dead default/hidelo/hidehi (<5% label change)": "pending",
-        "gbdt_feature_shift (if fused/gbdt)": "pending",
+        "stability dead default/hidelo/hidehi (<5% label change, tools/dead_stability.py)":
+            "pending",
+        "dead_feature_shift (if dead calibrated/gbdt; --calibration of the winner)": "pending",
+        "gbdt_feature_shift (if team gbdt; fused master if fused)": "pending",
         "hazard_feature_shift (if hazard; tactical and fused masters)": "pending",
     }
     if local_checks:

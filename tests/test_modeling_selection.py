@@ -293,3 +293,27 @@ def test_resweep_lambda_picks_a_grid_point():
     assert out["decoder"]["lam_team"] in LAM_GRID and out["decoder"]["lam_dead"] in LAM_GRID
     assert {k: v for k, v in out.items() if k != "decoder"} == \
         {k: v for k, v in base.items() if k != "decoder"}
+
+
+def test_step_must_also_beat_its_control():
+    """A gain that the control (λ re-sweep alone) also gets is not credited (D-027 item 7)."""
+    base = {"M1": 0.40, "M2": 0.42, "M3": 0.43}
+    up = {"M1": 0.45, "M2": 0.46, "M3": 0.48}
+
+    def fake_eval(cfg, degrade):
+        return _table(up if cfg["name"] in ("cand", "ctrl") else base)
+
+    def run(control_name):
+        steps = [{"id": "seed", "label": "seed", "build": lambda _c: {"name": "cur"},
+                  "absolute": True, "require_stress": True, "force_accept": True},
+                 {"id": "step", "label": "step", "build": lambda c: {"name": "cand"},
+                  "control_build": lambda c, ev: {"name": control_name},
+                  "require_stress": True, "force_accept": False}]
+        return sel.run_ladder(steps, evaluate_fn=fake_eval)
+
+    same = run("ctrl")
+    assert same["history"][1]["accepted"] is False
+    assert same["history"][1]["control"]["accepted"] is False
+    assert same["winner"]["name"] == "cur"
+    weaker = run("cur")  # control scores like the current config: the step keeps its gain
+    assert weaker["history"][1]["accepted"] is True and weaker["winner"]["name"] == "cand"

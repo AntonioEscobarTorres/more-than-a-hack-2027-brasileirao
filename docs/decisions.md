@@ -64,7 +64,7 @@ Modelo:
 | [D-025](#d-025--transições-guiadas-pelo-hazard-io-hmm-f2-07) | 2026-11-16 | Transições guiadas pelo hazard (IO-HMM, F2-07) | Vigente |
 | [D-026](#d-026--dead_logit-gbdt-features-cenários-coerentes-e-resultado-f3-08) | 2026-11-16 | `dead_logit` GBDT: features, cenários coerentes e resultado (F3-08) | Vigente (adoção pela F2-06) |
 | [D-027](#d-027--durações-semi-markov-no-decodificador-e-o-config-v2_gbdt_nb-f2-08) | 2026-11-16 | Durações semi-Markov no decodificador e o config `v2_gbdt_nb` (F2-08) | Vigente (adoção pela F2-06) |
-| [D-028](#d-028--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-16 | Seleção da F2-06 e o `configs/final.yaml` | Vigente |
+| [D-028](#d-028--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-17 | Seleção da F2-06 e o `configs/final.yaml` | Vigente (checagens locais pendentes) |
 
 ## Decisões
 
@@ -1160,53 +1160,68 @@ Modelo:
 
 ### D-028 — Seleção da F2-06 e o `configs/final.yaml`
 
-- **Data:** 2026-11-16
-- **Autor:** Hugo (F2-06, #85; PR #153), com a revisão da F5 (Ahmed)
-- **Status:** Vigente
+- **Data:** 2026-11-17
+- **Autor:** Hugo (F2-06, #85; PR #153), com a revisão da F5 (Ahmed, PR #155)
+- **Status:** Vigente. Faltam as checagens locais no BAR-ATH do config novo (abaixo).
 - **Decisão:**
-  1. **Escada da Seção 6** (`python -m modeling.scoring.selection`) com as atualizações de 11/11, 13/11 e 16/11:
-     ganho pareado > 1 EP no `default` e nenhum modo de estresse (`harder`, `easier`, `hidelo`, `hidehi`) pior
-     por mais de 1 EP. Aceitos: `baseline` → `v1` → `v1s` → `v2_base` → `v2` → GBDT do time (D-023) → hazard
-     (D-025) → bola fundida (D-024). Rejeitados: `dead` `pooled`, os pós-processamentos (`midpoint`,
-     `d_bridge`, `min_spell`, `d_cross`) e o `boundary_shift`.
-  2. **Hazard:** `hazard_nodir` com `beta` 2 (D-025, item 8, a recomendação da F2-07; o `beta` 1 da grade
-     pré-registrada também passa a regra, com +0,0067 ± 0,0022). Vem antes da bola fundida, como pede a
-     atualização de 16/11. O passo `fused` compara os mestres IDSSE `fused` e `default` com o mesmo modelo e
-     não tem estresse (não existem versões `fused` dos outros modos).
-  3. **`configs/final.yaml`** (`name: final`, hash `d7e9b1f5…`): mesmos parâmetros do
-     `configs/v2_gbdt_fused_hzn2.yaml` (hash igual trocando só o `name`). Fora da escada: F3-08 (#83, PR #152
-     aberto), F2-08 (#126, aberta) e `team_tag_prior` (a checagem pré-registrada da F1-05, item 8, não foi
-     rodada; fica desligado).
-  4. **Checagem de estabilidade** (atualização de 11/11, item 5): `tools/dead_stability.py` prevê o BAR-ATH
-     com o `dead` ajustado em `default`, `hidelo` e `hidehi` e dá `PASS` se menos de 5% dos frames dos tempos
-     mudarem de rótulo entre quaisquer dois. Se der `FAIL`: o mesmo config com `configs/calib/dead_pooled.yaml`,
+  1. **Escada da Seção 6** (`python -m modeling.scoring.selection --jobs 7`) com as atualizações de 11/11, 13/11 e
+     16/11: ganho pareado > 1 EP no `default` e nenhum modo de estresse (`harder`, `easier`, `hidelo`, `hidehi`)
+     pior por mais de 1 EP. Aceitos, nesta ordem: `baseline` → `v1` → `v1s` → `v2_base` → `v2` → GBDT do time
+     (D-023) → GBDT da bola morta (D-026) → durações semi-Markov (D-027) → hazard (D-025) → bola fundida (D-024).
+     Os estágios das durações saíram depois, pelo controle do item 3.
+     Rejeitados: `dead` `pooled`, os pós-processamentos (`midpoint`, `d_bridge`, `min_spell`, `d_cross`) e o
+     `boundary_shift`. `team_tag_prior` fica desligado (a checagem pré-registrada da F1-05, item 8, não foi rodada).
+  2. **Passos com λ re-varrido** (atualização de 13/11): durações e hazard re-varrem só λ (etapa 1 da F2-05, platô a
+     1 EP e melhor pior caso em `default`/`hidelo`/`hidehi`). Durações: estágios pela calibração da F2-08 para o
+     decodificador da vez (H 1, A 1, D 2), λ (0,4; 0,4). Hazard: `hazard_nodir`, `beta` 2 (D-025, item 8), λ
+     (0,4; 0,2). O passo `fused` compara os mestres IDSSE `fused` e `default` com o mesmo modelo, sem estresse.
+  3. **Controle das durações (D-027, item 7) e `configs/final.yaml`.** A regra da F2-06 compara cada passo só com
+     a candidata atual, e o passo das durações passou por pouco (+0,0043 ± 0,0034). O controle da D-027 (a mesma
+     re-varredura de λ com 1 estágio) mostrou que o ganho é todo do λ: estágios contra o controle +0,0000 ± 0,0025
+     no `default` (−0,0013 a +0,0003 no estresse). Na vencedora da escada, tirar os estágios (`r_D` 2 → 1, mesmo λ)
+     dá −0,0003 ± 0,0010 (`default`), −0,0011 a 0,0000 (estresse) e −0,0007 ± 0,0011 nos mestres `fused`
+     (0,5399 com estágios, **0,5406** sem). Decisão da F5 (17/11): o `final.yaml` fica **sem os estágios**. Hash
+     `08a6a70f…`: `v2_gbdt` + `dead` GBDT (`configs/calib/dead_gbdt.yaml`) + hazard `beta` 2 + `ball_source:
+     fused`, com `lam_team` 0,4, `lam_dead` 0,2 e `duration_stages` 1. O λ (0,4; 0,2) é o da re-varredura do passo
+     do hazard (escolhido com os estágios ligados); a escada não foi rodada de novo sem eles. O código passou a
+     exigir que o passo das durações ganhe também do controle (`control_build`), então uma nova rodada rejeita
+     os estágios e re-varre o λ do hazard sobre a base sem eles (pode escolher outro λ).
+  4. **Checagem de estabilidade** (atualização de 11/11, item 5): `tools/dead_stability.py` prevê o BAR-ATH com o
+     `dead` ajustado em `default`, `hidelo` e `hidehi` (para o GBDT, `configs/calib/dead_gbdt{,_hidelo,_hidehi}.yaml`,
+     ajustes novos só para esta checagem, regenerados byte a byte) e dá `PASS` se menos de 5% dos frames dos tempos
+     mudarem de rótulo entre quaisquer dois. Se der `FAIL`: o mesmo config com `configs/calib/dead_gbdt_pooled.yaml`,
      ou a candidata anterior da escada que passe.
-  5. **Revisão da F5:** o PR original pulava a F2-07 (aberta quando a escada foi escrita), citava uma D-025 que
-     não entrou no PR (o número já era da F2-07) e gravava caminhos absolutos nos configs do `dead_pooled` e do
-     `boundary_shift`. Corrigido, junto com o bloco do `baseline` no relatório e a ferramenta do item 4, que
-     não existia.
+  5. **Plano B:** se alguma checagem local eliminatória do config novo der `FAIL`, envia-se o
+     `configs/v2_gbdt_fused_hzn2.yaml`, já validado no BAR-ATH (D-025, item 10; CSV `ae80daec…`). Ele foi a
+     vencedora da primeira rodada desta revisão, antes do merge da F3-08 e da F2-08 (com o `final.yaml` de então,
+     `d7e9b1f5…`: `dead_stability` `PASS` e o mesmo CSV `ae80daec…`).
+  6. **Revisão da F5:** o PR original pulava a F2-07, citava uma D-025 que não entrou no PR (o número já era da
+     F2-07) e gravava caminhos absolutos nos configs do `dead_pooled` e do `boundary_shift`. Depois entraram no
+     `main` a F3-08 (#152) e a F2-08 (#154), que viraram passos da escada. Corrigido, junto com o bloco do
+     `baseline` no relatório e a ferramenta do item 4, que não existia.
 - **Opções consideradas:**
-  - `final.yaml` = `v2_gbdt_fused` (a versão original do PR, sem o hazard): descartada, porque pula um passo
-    disponível que passa a regra (+0,0141 ± 0,0031 no `default`, todos os modos positivos);
-  - hazard depois da bola fundida: dá o mesmo config; a ordem segue a atualização de 16/11.
+  - `final.yaml` = `v2_gbdt_fused` (a versão original do PR): descartada, porque pula três passos que passam a regra;
+  - manter os estágios (`r_D` 2, o resultado literal da escada, 0,5399): descartada pelo controle do item 3;
+  - rodar a escada de novo com a regra do controle (~1 h): descartada pelo prazo; registrada como ressalva no item 3;
+  - hazard sem re-varrer λ (como na primeira rodada): descartada, porque a atualização de 13/11 pede a re-varredura.
 - **Evidência (spellF1 no IDSSE degradado, 7 partidas,
   [`reports/selection.md`](../reports/selection.md)):**
 
-  | Passo | `default` (atual → candidata) | Δ pareado | Estresse |
+  | Passo | `default` (atual → candidata) | Δ pareado | Estresse (Δ) |
   | :--- | :--- | ---: | :--- |
   | GBDT do time | 0,4019 → 0,4895 | +0,0876 ± 0,0098 | todos positivos |
-  | hazard (`beta` 2) | 0,4895 → 0,5036 | +0,0141 ± 0,0031 | `harder` +0,0128, `easier` +0,0144, `hidelo` +0,0130, `hidehi` +0,0139 |
-  | bola fundida | 0,5036 → 0,5097 | +0,0061 ± 0,0020 | sem estresse (D-024) |
+  | GBDT da bola morta | 0,4895 → 0,5200 | +0,0305 ± 0,0014 | +0,0253 a +0,0355 |
+  | durações, λ (0,4; 0,4) | 0,5200 → 0,5243 | +0,0043 ± 0,0034 | +0,0027 a +0,0089 |
+  | hazard, λ (0,4; 0,2) | 0,5243 → 0,5362 | +0,0119 ± 0,0043 | +0,0102 a +0,0181 |
+  | bola fundida | 0,5362 → 0,5399 | +0,0037 ± 0,0018 | sem estresse (D-024) |
 
-  - Checagens locais no BAR-ATH: as do `v2_gbdt_fused_hzn2` (D-025, item 10) valem para o `final.yaml`, que
-    tem os mesmos parâmetros: `check_public_window`, `deadball_diagnostics`, `gbdt_feature_shift` e
-    `hazard_feature_shift` `PASS`; CSV `ae80daec…`.
-  - Checagens locais do `final.yaml` (16/11, só `PASS`/`FAIL` e estatísticas dos rótulos previstos saíram da
-    máquina): `python tools/dead_stability.py --config configs/final.yaml` `PASS` nos três pares;
-    `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing` (config `d7e9b1f5…`)
-    gera `outputs/final.csv` com SHA-256
-    `ae80daecb916802399fedfedd2c897cc04b5913192437874e361fe261754a7c7`, idêntico ao do `v2_gbdt_fused_hzn2`;
-    158.857 frames avaliados, H 0,3218, A 0,2047, D 0,4736; 150 posses no 1º tempo e 182 no 2º.
+  | controle das durações (item 3) | estágios contra λ re-varrido sem estágios | +0,0000 ± 0,0025 | −0,0013 a +0,0003 |
+  | **`final.yaml`** (sem estágios) | `fused`: 0,5406 | — | — |
+
+  - Razão de posses previstas / verdadeiras no `default`: 0,657 (`v2_gbdt`) → 0,640 (bola morta GBDT) → 0,685
+    (durações) → 0,705 (hazard) → 0,711 (fundida, com estágios).
+  - Checagens locais já válidas para o config novo (D-025, item 10): `gbdt_feature_shift` (seção `team` igual) e
+    `hazard_feature_shift` (o hazard não depende do `dead` nem do decodificador), `PASS`.
 
 ## Registro de envios
 
