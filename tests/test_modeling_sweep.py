@@ -36,6 +36,7 @@ def _hmm_cfg(**decoder_over) -> dict:
             "d_cross_frames": 0,
             "min_spell_frames": 0,
         },
+        "hazard": {"kind": "none", "calibrated_file": None, "beta": 0.0},
     }
     cfg["decoder"].update(decoder_over)
     return validate_config(cfg)

@@ -1,8 +1,8 @@
 # ---- configs/degrade_fused.yaml ----
 # Copy of configs/degrade_default.yaml. The ONLY intended differences are `name` (it must match the
 # file name, see modeling.config.load_config) and target_ball_visible.
-# NOTE: target_ball_visible below is a PLACEHOLDER copied from default. A human must replace it
-# with the ball-visible fraction measured locally on the evaluated frames of the fused master.
+# target_ball_visible is the ball-visible fraction on the graded frames of the BAR-ATH fused master,
+# measured locally (F4-06, human run); the F5 review re-measured it (PASS within 0.005, D-024).
 name: fused
 target_ball_visible: 0.6113
 target_ball_visible_tolerance: 0.01

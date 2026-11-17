@@ -1,4 +1,4 @@
-"""Synthetic tests for the semi-Markov (negative binomial) durations of the decoder (F2-08, D-025).
+"""Synthetic tests for the semi-Markov (negative binomial) durations of the decoder (F2-08, D-027).
 
 Nothing here reads the match data or the external IDSSE files: scores and segment lengths are
 random or built by hand, the master is ``preprocessing.make_mock_master`` and configs are
@@ -654,3 +654,54 @@ def test_v2_gbdt_nb_is_v2_gbdt_with_calibrated_stages_and_reswept_lambda():
     expected["name"] = "v2_gbdt_nb"
     expected["decoder"].update(lam_team=0.4, lam_dead=0.4, duration_stages=calib["all"])
     assert nb == expected
+
+
+# -- interaction with the hazard-guided exits of F2-07 (D-025) ----------------------------------
+
+def _reference_block_modulated(scores: np.ndarray, params: DecoderParams, x) -> np.ndarray:
+    """Dense Viterbi with a per-frame matrix: the F2-08 chain, and the F2-07 modulation applied to
+    the row of the last stage of H and of A (``q_o e^x / Z``, ``p / Z``, ``q_d / Z``)."""
+    base, state_of, terminal = _spec_matrix(params)
+    h, a = CODE["H"], CODE["A"]
+
+    def matrix(xt):
+        mat = base.copy()
+        for s, other in ((h, a), (a, h)):
+            term = terminal[s]
+            row = mat[term].copy()
+            first_other = int(np.flatnonzero(state_of == other)[0])
+            row[first_other] *= np.exp(xt)
+            mat[term] = row / row.sum()
+        with np.errstate(divide="ignore"):
+            return np.log(mat)
+
+    t_len, k_total = scores.shape[0], base.shape[0]
+    delta = np.full(k_total, -np.inf)
+    for s in range(3):
+        delta[terminal[s]] = np.log(1.0 / 3.0) + scores[0, s]
+    ptr = np.zeros((t_len, k_total), dtype=np.int64)
+    for t in range(1, t_len):
+        cand = delta[:, None] + matrix(x[t])
+        ptr[t] = np.argmax(cand, axis=0)
+        delta = cand[ptr[t], np.arange(k_total)] + scores[t, state_of]
+    path = np.empty(t_len, dtype=np.int64)
+    path[-1] = int(np.argmax(delta))
+    for t in range(t_len - 1, 0, -1):
+        path[t - 1] = ptr[t, path[t]]
+    return state_of[path].astype(np.int8)
+
+
+@pytest.mark.parametrize("min_dwell,stages", [
+    ((1, 1, 1), (2, 3, 1)), ((3, 2, 4), (2, 2, 2)), ((5, 5, 1), (1, 1, 3)), ((2, 4, 2), (4, 1, 2))])
+@pytest.mark.parametrize("seed", [0, 1])
+def test_hazard_modulation_acts_on_the_last_stage(min_dwell, stages, seed):
+    rng = np.random.default_rng(1000 + 10 * seed + sum(stages))
+    n = 160
+    scores = rng.normal(scale=1.5, size=(n, 3))
+    x = rng.normal(scale=3.0, size=n)
+    params = _params(min_dwell=min_dwell, mean_extra=8.0, stages=stages)
+    labels = decode_match(scores, *_one_block(n), params, exit_logit=x)
+    np.testing.assert_array_equal(_codes(labels), _reference_block_modulated(scores, params, x))
+    # zero exit logit = the constant decoder with stages (no tie changes on these scores)
+    zero = decode_match(scores, *_one_block(n), params, exit_logit=np.zeros(n))
+    np.testing.assert_array_equal(zero, decode_match(scores, *_one_block(n), params))

@@ -1,6 +1,6 @@
 # Semi-Markov durations: `decoder.duration_stages` (F2-08)
 
-Decision: [D-025](../docs/decisions.md). Task: [`docs/tasks/F2-08.md`](../docs/tasks/F2-08.md).
+Decision: [D-027](../docs/decisions.md). Task: [`docs/tasks/F2-08.md`](../docs/tasks/F2-08.md).
 
 Everything here comes from the public IDSSE matches: the calibration uses their true labels, and the
 selection step scores the degraded IDSSE masters (`holdout = match`). BAR-ATH was never read.
@@ -27,8 +27,9 @@ selection step scores the degraded IDSSE masters (`holdout = match`). BAR-ATH wa
   and the stages make them costly); with `lam_dead ≤ 0.2` they mostly hurt. The gain is modest
   (1.4 EP against `v2_gbdt`), and λ (0.4, 0.4) is the best of 25 points of the stage arm, so it is
   slightly optimistic; the control went through the same selection.
-- Not evaluated: the combination with the hazard of F2-07 (`v2_gbdt_hz`, PR #149). It needs both
-  branches on `main`; the ladder of F2-06 puts F2-08 first.
+- Not evaluated: the combination with the hazard of F2-07 (D-025, `v2_gbdt_hz`). The code supports
+  it (the hazard modulates the exits of the last stage; tested against a dense reference), but the
+  stages and the hazard were each chosen on `v2_gbdt` alone; combining them is a step of F2-06.
 
 Commands:
 

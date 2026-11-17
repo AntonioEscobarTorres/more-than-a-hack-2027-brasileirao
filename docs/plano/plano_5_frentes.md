@@ -236,10 +236,12 @@ Não criar pasta ou pacote chamado `eval` (sombreia a função embutida `eval` d
     - evidência forte de time empurra "vivo" no máximo `lam_team · log 2` por frame.
   - **Não usar a fórmula da v1** (`S_D = logσ(d)`, `S_H = logσ(−d) + logσ(t)`): com `d = 0` ela dá `S_H = S_D + logσ(t) < S_D` para qualquer `t`, e D vence sempre.
 - **C4 Máscara** `force_d: bool[n]` (frames que obrigatoriamente são `D`). Na emissão: `S_D = 0` e `S_H = S_A = neg`.
-- **C5 Decodificador:** `modeling.decode.viterbi.decode_match(scores, half, force_d, params) -> np.ndarray[dtype "<U1"]`.
+- **C5 Decodificador:** `modeling.decode.viterbi.decode_match(scores, half, force_d, params, *, exit_logit=None) -> np.ndarray[dtype "<U1"]`.
   - Decodifica cada tempo (`half` = 1 e 2) separadamente.
   - `half == 0` → `X`; dentro dos blocos, nunca `X`.
-  - Durações (F2-08, D-025): `params.duration_stages` = `r_s` (config `decoder.duration_stages`). Para o estado `s`, `m_s − 1` subestados da cadeia do `min_dwell` (sem laço) e depois `r_s` estágios, cada um com laço `p_s` e avanço `1 − p_s`; só o último estágio (o subestado terminal) sai para outro estado, com `(1 − p_s)·exit_split[s, ·]`, e só ele recebe a distribuição inicial. `p_s = 1 − r_s/(mean_s − m_s + 1)` mantém a média; erro se `mean_s − m_s + 1 <= r_s`. Com `r_s = 1` a topologia, a ordem dos subestados e os valores são os de antes, byte a byte.
+  - `exit_logit` (F2-07, D-025): com `None`, as transições são constantes e o código é o de antes, sem nenhuma alteração. Senão é um `float64[n]`, finito dentro dos tempos. No frame `t`, só as saídas do subestado terminal de H e de A mudam: `q_o' = q_o·e^{x_t}/Z_t`, `p' = p/Z_t`, `q_d' = q_d/Z_t`, com `Z_t = p + q_d + q_o·e^{x_t}` (em log, com `logaddexp`). D e a cadeia do `min_dwell` não mudam. A transição que **chega** ao frame `t` usa `x_t`, então o valor do primeiro frame de cada tempo e os de `half == 0` não são usados.
+  - O C8 passa `exit_logit = beta · h`, com `h` o hazard da F1-08 (seção `hazard` do config), ou `None` quando `hazard.kind` é `none` ou `beta` é 0.
+  - Durações (F2-08, D-027): `params.duration_stages` = `r_s` (config `decoder.duration_stages`). Para o estado `s`, `m_s − 1` subestados da cadeia do `min_dwell` (sem laço) e depois `r_s` estágios, cada um com laço `p_s` e avanço `1 − p_s`; só o último estágio (o subestado terminal) sai para outro estado, com `(1 − p_s)·exit_split[s, ·]`, e só ele recebe a distribuição inicial. `p_s = 1 − r_s/(mean_s − m_s + 1)` mantém a média; erro se `mean_s − m_s + 1 <= r_s`. Com `r_s = 1` a topologia, a ordem dos subestados e os valores são os de antes, byte a byte.
 - **C6 Submissão:** `modeling.io.write_submission(labels, path, n_expected=None)`.
   - Cabeçalho `frame,label`, UTF-8, `\n`, uma linha por frame `0..n−1`.
   - Depois de gravar, relê com `pm.read_label_csv` e chama `pm.validate_submission(df, n_expected)`; levanta erro se houver mensagem.
@@ -1475,7 +1477,7 @@ O pré-pontapé não entra no logit; ele é a máscara `force_d` (C4).
 - `lam_team=0.2`, `lam_dead=0.2`. Os frames a 25 fps são fortemente autocorrelacionados, e λ < 1 evita contar a mesma evidência 25 vezes por segundo.
 - Duração média: `H`/`A` = 15 s, `D` = 20 s. Saindo de H: 50% → A, 50% → D; saindo de A: 50% → H, 50% → D; saindo de D: 50% → H, 50% → A.
 - `min_dwell`: `H`/`A` = 12 frames, `D` = 25 frames. `neg=-1e6`. Distribuição inicial uniforme.
-- `duration_stages` (F2-08, D-025): `H`/`A`/`D` = 1, a duração geométrica depois do `min_dwell`. `r > 1` estágios dão uma binomial negativa deslocada com a mesma média.
+- `duration_stages` (F2-08, D-027): `H`/`A`/`D` = 1, a duração geométrica depois do `min_dwell`. `r > 1` estágios dão uma binomial negativa deslocada com a mesma média.
 - `configs/decoder_idsse.yaml` (F2-03) substitui as durações e o `exit_split` pelos valores do IDSSE.
 
 ### A.5 Pós-processamento
@@ -1543,12 +1545,16 @@ decoder:
   mean_duration_s: {H: 15.0, A: 15.0, D: 20.0}
   exit_split: {H: {A: 0.5, D: 0.5}, A: {H: 0.5, D: 0.5}, D: {H: 0.5, A: 0.5}}
   min_dwell_frames: {H: 12, A: 12, D: 25}
-  duration_stages: {H: 1, A: 1, D: 1}   # F2-08 (D-025): estágios depois do min_dwell; 1 = geométrica
+  duration_stages: {H: 1, A: 1, D: 1}   # F2-08 (D-027): estágios depois do min_dwell; 1 = geométrica
 postprocess:
   midpoint_neutral_switch: false
   boundary_shift_file: null    # ex.: configs/calib/boundary.yaml (F2-05)
   d_bridge_frames: 0
   min_spell_frames: 0
+hazard:                        # F2-07 (D-025): hazard da F1-08 nas saídas H↔A do decodificador
+  kind: none                   # none | calibrated
+  calibrated_file: null        # obrigatório se kind != none, ex.: configs/calib/hazard.yaml
+  beta: 0.0                    # >= 0; exit_logit = beta · h; kind none ou beta 0 = decodificador de antes
 ```
 `configs/baseline.yaml` usa só `name`, `pipeline: baseline`, `ball_source` e `baseline`.
 

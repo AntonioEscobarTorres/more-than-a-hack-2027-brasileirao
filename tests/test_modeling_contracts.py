@@ -101,6 +101,7 @@ HMM_CFG = {
         "d_cross_frames": 0,
         "min_spell_frames": 0,
     },
+    "hazard": {"kind": "none", "calibrated_file": None, "beta": 0.0},
 }
 
 

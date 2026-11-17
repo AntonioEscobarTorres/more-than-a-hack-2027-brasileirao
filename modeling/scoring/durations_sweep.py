@@ -1,4 +1,4 @@
-"""Duration-stage step of the selection ladder on external IDSSE masters (task F2-08, D-025).
+"""Duration-stage step of the selection ladder on external IDSSE masters (task F2-08, D-027).
 
 Given a base config and the ``all`` stage counts of a ``configs/calib/durations*.yaml`` file
 (:mod:`modeling.calibration.durations`), this module
