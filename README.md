@@ -117,6 +117,18 @@ spatiotemporal and event data in elite soccer.* Scientific Data 12, 195.
 
 ---
 
+## Technical report
+
+Our technical document (team `brasileirao`): approach, assets used and dropped, external data,
+possession rules, validation protocol, limitations, reproduction and compliance.
+
+- **PDF:** [docs/technical_report/brasileirao.pdf](docs/technical_report/brasileirao.pdf), the file sent
+  with the submission.
+- **LaTeX source:** [docs/technical_report/brasileirao.tex](docs/technical_report/brasileirao.tex)
+  (`pdflatex`, IEEEtran; figures are drawn in TikZ, no image files).
+
+---
+
 ## How to run (preprocessing)
 
 Build `<data dir>/processed/master_features.parquet` from a fresh data bundle with one command.
