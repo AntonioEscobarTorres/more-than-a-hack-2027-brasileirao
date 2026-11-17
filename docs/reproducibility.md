@@ -75,7 +75,8 @@ The single-command pipeline was executed from scratch on two independent machine
 | **Predicted Possessions** | half 1 = 177, half 2 = 193 (total = 370, mean = 9.3 s) | half 1 = 177, half 2 = 193 (total = 370, mean = 9.3 s) |
 | **Verification Result** | **IDENTICAL** | **IDENTICAL** |
 
-Both runs used a clean clone of `main` at `9d72bcd` (same method code as the tag `submission-v1`), a
+Both runs used a clean clone of `main` at `9d72bcd` (same method code as the tags `submission-v1` and
+`submission-v1.1`; `v1.1` adds the dependency pins), a
 fresh venv with the pinned versions above, and the full pipeline from the raw data. The two CPUs differ in
 generation (Comet Lake vs Alder Lake), but neither has AVX-512, so both runs used the AVX2 kernels of
 numpy. A run on an AVX-512 or ARM CPU would test a different SIMD path.
