@@ -64,7 +64,7 @@ Modelo:
 | [D-025](#d-025--transições-guiadas-pelo-hazard-io-hmm-f2-07) | 2026-11-16 | Transições guiadas pelo hazard (IO-HMM, F2-07) | Vigente |
 | [D-026](#d-026--dead_logit-gbdt-features-cenários-coerentes-e-resultado-f3-08) | 2026-11-16 | `dead_logit` GBDT: features, cenários coerentes e resultado (F3-08) | Vigente (adoção pela F2-06) |
 | [D-027](#d-027--durações-semi-markov-no-decodificador-e-o-config-v2_gbdt_nb-f2-08) | 2026-11-16 | Durações semi-Markov no decodificador e o config `v2_gbdt_nb` (F2-08) | Vigente (adoção pela F2-06) |
-| [D-028](#d-028--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-17 | Seleção da F2-06 e o `configs/final.yaml` | Vigente (checagens locais pendentes) |
+| [D-028](#d-028--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-17 | Seleção da F2-06 e o `configs/final.yaml` | Vigente |
 
 ## Decisões
 
@@ -1162,7 +1162,7 @@ Modelo:
 
 - **Data:** 2026-11-17
 - **Autor:** Hugo (F2-06, #85; PR #153), com a revisão da F5 (Ahmed, PR #155)
-- **Status:** Vigente. Faltam as checagens locais no BAR-ATH do config novo (abaixo).
+- **Status:** Vigente
 - **Decisão:**
   1. **Escada da Seção 6** (`python -m modeling.scoring.selection --jobs 7`) com as atualizações de 11/11, 13/11 e
      16/11: ganho pareado > 1 EP no `default` e nenhum modo de estresse (`harder`, `easier`, `hidelo`, `hidehi`)
@@ -1222,6 +1222,16 @@ Modelo:
     (durações) → 0,705 (hazard) → 0,711 (fundida, com estágios).
   - Checagens locais já válidas para o config novo (D-025, item 10): `gbdt_feature_shift` (seção `team` igual) e
     `hazard_feature_shift` (o hazard não depende do `dead` nem do decodificador), `PASS`.
+  - **Checagens locais do `final.yaml` (17/11, só `PASS`/`FAIL` e estatísticas dos rótulos previstos saíram da
+    máquina):** `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing` (config
+    `08a6a70f…`) gera `outputs/final.csv` com SHA-256
+    `f9e363ea09243acbe73de4bcd60f8aa4b6d752fedbc590111ab1c635143c21fd`; 158.857 frames avaliados, H 0,3327,
+    A 0,2239, D 0,4433; 167 posses no 1º tempo e 199 no 2º. Com o master fundido
+    (`<dados>/processed_fused/master_features.parquet`): `tools/check_public_window.py` `PASS` nas 7;
+    `tools/deadball_diagnostics.py --config configs/final.yaml` `PASS` (as informativas (iv) e (v) também);
+    `tools/dead_feature_shift.py --calibration configs/calib/dead_gbdt.yaml --degrade fused` `PASS` em (a)–(c)
+    e na informativa (d). `tools/dead_stability.py --config configs/final.yaml` (ajustes GBDT `default`/`hidelo`/
+    `hidehi`) `PASS` nos três pares. O plano B (item 5) não foi necessário.
 
 ## Registro de envios
 
