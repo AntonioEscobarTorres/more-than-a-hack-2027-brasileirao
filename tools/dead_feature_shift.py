@@ -27,7 +27,8 @@ Eliminatory checks (decide the overall result and the exit code):
 Informative check (printed as PASS/FAIL, never changes the overall result: the true share of dead
 ball may differ between matches):
 
-  (d)  share of half frames with ``d_fit > 0`` (model ``all`` of ``--calibration``) within
+  (d)  share of half frames with ``d_fit > 0`` (model ``all`` of ``--calibration``: a logistic
+       F3-04 file or a GBDT F3-08 file such as ``configs/calib/dead_gbdt.yaml``) within
        ``D_EVIDENCE_SHARE_TOL_REL`` (relative) of the reference.
 
 Exit code 0 on PASS, 1 on FAIL, 2 if the inputs could not be loaded.
@@ -48,7 +49,9 @@ import pandas as pd  # noqa: E402
 
 import games  # noqa: E402
 from modeling import io  # noqa: E402
-from modeling.calibration.dead import calibrated_d_fit, load_calibration  # noqa: E402
+from modeling.calibration import dead as calibration_dead  # noqa: E402
+from modeling.calibration.dead import calibrated_d_fit  # noqa: E402
+from modeling.deadball import dead_gbdt  # noqa: E402
 from modeling.config import load_config  # noqa: E402
 from modeling.deadball.features import build_deadball_features  # noqa: E402
 from modeling.external.files import IDSSE_MATCHES, load_external  # noqa: E402
@@ -76,6 +79,17 @@ def _n_frames() -> int:
     return int(games.GAMES[games.GAME]["n_video_frames"])
 
 
+def load_calibration(path) -> dict:
+    """A calibrated dead file: logistic (F3-04) or GBDT (F3-08, ``variant: gbdt``)."""
+    import yaml
+
+    with open(path, encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle)
+    if isinstance(raw, dict) and raw.get("variant") == dead_gbdt.VARIANT:
+        return dead_gbdt.load_calibration(path)
+    return calibration_dead.load_calibration(path)
+
+
 def master_statistics(master: pd.DataFrame, params: dict, calibration: dict) -> dict:
     """Statistics of one master on its half frames (no labels)."""
     in_half = master["half"].to_numpy() != 0
@@ -86,7 +100,10 @@ def master_statistics(master: pd.DataFrame, params: dict, calibration: dict) -> 
     quantiles = ([float(q) for q in np.percentile(finite_speed, QUANTILES)]
                  if finite_speed.size else None)
     params_file = {**params, "calibrated_file": "unused"}
-    d = calibrated_d_fit(master, params_file, calibration, None)[in_half]
+    if calibration.get("variant") == dead_gbdt.VARIANT:
+        d = dead_gbdt.calibrated_gbdt_d_fit(master, params_file, calibration, None)[in_half]
+    else:
+        d = calibrated_d_fit(master, params_file, calibration, None)[in_half]
     return {
         "speed_finite": bool(np.isfinite(speed).all()),
         "still_finite": bool(np.isfinite(still).all()),
@@ -179,7 +196,7 @@ def main(argv=None) -> int:
             for degrade in args.degrade:
                 master, _ = load_external(match, degrade)
                 degraded.append(master_statistics(master, params, calibration))
-    except (OSError, ValueError, KeyError) as exc:  # ConfigError is a ValueError
+    except (OSError, ValueError, KeyError, RuntimeError) as exc:  # ConfigError is a ValueError
         print("FAIL  could not load inputs: {}".format(type(exc).__name__))
         return 2
     results = run_checks(reference, degraded)
