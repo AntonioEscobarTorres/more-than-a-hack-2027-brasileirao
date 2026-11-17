@@ -1,0 +1,162 @@
+# F2-09 (D-029), fitted on IDSSE only by python -m modeling.calibration.stack_gbdt; do not edit by hand.
+variant: gbdt
+sklearn_version: 1.5.2
+model_file: models/hazard_gbdt/all.joblib
+fold_dir: models/hazard_gbdt
+h_clip: 8.0
+hazard_settings:
+  target_w_frames: 12
+  bridge_d_frames: 0
+  acc_clip_mps2: 100.0
+  dist_clip_m: 30.0
+  gap_clip_frames: 1500.0
+  h_clip: 8.0
+  team_params:
+    pitch_l_m: 105.3
+    pitch_w_m: 68.0
+    kappa: 3.0
+    sigma_d: 2.0
+    r_ctrl: 2.0
+    l_prox: 3.0
+    v_rel: 6.0
+    ball_conf_filled: 0.6
+    contest_factor: 0.5
+    rel_w_when_nan: 0.5
+    collective:
+      win_frames: 25
+      w_adv: 0.0
+      w_spread: 0.0
+      w_speed: 0.0
+control_params:
+  pitch_l_m: 105.3
+  pitch_w_m: 68.0
+  kappa: 3.0
+  sigma_d: 2.0
+  r_ctrl: 2.0
+  l_prox: 3.0
+  v_rel: 6.0
+  ball_conf_filled: 0.6
+  contest_factor: 0.5
+  rel_w_when_nan: 0.5
+  collective:
+    win_frames: 25
+    w_adv: 0.0
+    w_spread: 0.0
+    w_speed: 0.0
+  touch_require_abrupt: false
+  bridge_median_frames: 7
+  bridge_tau_frames:
+  - 15
+  - 35
+  r_touch_m: 1.5
+  touch_min_frames: 5
+  touch_win_frames: 9
+  touch_dir_change_rad: 0.5
+  touch_acc_mps2: 8.0
+  window_sizes:
+  - 12
+  - 25
+  - 50
+  include_bridge: true
+  exclude_features:
+  - n_tracked_home
+  - n_tracked_away
+  - ev_coll_spread
+  - n_still_home
+  - n_still_away
+  - ball_speed
+  - since_last_obs
+  - until_next_obs
+model_params:
+  max_iter: 300
+  learning_rate: 0.05
+  max_leaf_nodes: 31
+  min_samples_leaf: 500
+  l2_regularization: 1.0
+  early_stopping: false
+  random_state: 0
+features:
+- near_flip_12
+- dlogit_12
+- near_flip_25
+- dlogit_25
+- ball_acc
+- abs_d_diff
+- d_min
+- near_flip
+- dlogit
+- gap_length
+- since_last_obs
+- until_next_obs
+- ctl_prod_10
+- ctl_absdiff_10
+- ctl_absb_10
+- ctl_absf_10
+- ctl_prod_25
+- ctl_absdiff_25
+- ctl_absb_25
+- ctl_absf_25
+- ctl_prod_50
+- ctl_absdiff_50
+- ctl_absb_50
+- ctl_absf_50
+- ctl_prod_100
+- ctl_absdiff_100
+- ctl_absb_100
+- ctl_absf_100
+- ctl_prod_200
+- ctl_absdiff_200
+- ctl_absb_200
+- ctl_absf_200
+- tch_prod_25
+- tch_absdiff_25
+- tch_prod_75
+- tch_absdiff_75
+- tch_prod_200
+- tch_absdiff_200
+- ctlmass_bwd_25
+- ctlmass_fwd_25
+- ctlmass_bwd_100
+- ctlmass_fwd_100
+- dd_prod_100
+- dd_absdiff_100
+- dd_prod_200
+- dd_absdiff_200
+meta:
+  degrade: default
+  target_w_frames: 12
+  bridge_d_frames: 0
+  subsample_every: 5
+  hazard_fit: configs/hazard_fit_nodir.yaml
+  matches:
+  - J03WMX
+  - J03WN1
+  - J03WOH
+  - J03WOY
+  - J03WPY
+  - J03WQQ
+  - J03WR9
+  pi_all: 0.09762800115707261
+  all_model_bytes: 557330
+  fold_metrics:
+    J03WMX:
+      auc: 0.7900158325034436
+      log_loss: 0.2935451288476004
+    J03WN1:
+      auc: 0.7981017927652108
+      log_loss: 0.3227699008961091
+    J03WOH:
+      auc: 0.8234464157945087
+      log_loss: 0.25321907684943384
+    J03WOY:
+      auc: 0.8094899359317836
+      log_loss: 0.27313332355826864
+    J03WPY:
+      auc: 0.8286573835665838
+      log_loss: 0.2375613228421667
+    J03WQQ:
+      auc: 0.8066727454302645
+      log_loss: 0.23603309930368443
+    J03WR9:
+      auc: 0.8370499445903008
+      log_loss: 0.20993395826431585

@@ -1,0 +1,47 @@
+# F2-09 (D-029), fitted on IDSSE only by python -m modeling.calibration.stack_gbdt; do not edit by hand.
+variant: gbdt
+sklearn_version: 1.5.2
+model_file: models/team_stack/all.joblib
+fold_dir: models/team_stack
+model_params:
+  max_iter: 300
+  learning_rate: 0.05
+  max_leaf_nodes: 31
+  min_samples_leaf: 500
+  l2_regularization: 1.0
+  early_stopping: false
+  random_state: 0
+features:
+- t
+- t_past_6
+- t_fut_6
+- t_past_12
+- t_fut_12
+- t_past_25
+- t_fut_25
+- t_past_50
+- t_fut_50
+- t_past_100
+- t_fut_100
+- t_past_200
+- t_fut_200
+- h_past_max_12
+- h_fut_max_12
+- h_past_max_50
+- h_fut_max_50
+- h
+meta:
+  degrade: default
+  subsample_step: 5
+  matches:
+  - J03WMX
+  - J03WN1
+  - J03WOH
+  - J03WOY
+  - J03WPY
+  - J03WQQ
+  - J03WR9
+  first_stage: configs/calib/team_gbdt.yaml
+  hazard: models/hazard_gbdt
+  nested: 'fold m: rows of j != m with t and h from models trained without m and j'
+  all_model_bytes: 499618

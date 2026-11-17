@@ -105,19 +105,17 @@ def variant_params(section: dict) -> dict:
     return {**params, "calibrated_file": str(path)}
 
 
-def hazard_exit_logit(master: pd.DataFrame, cfg: dict, *,
-                      holdout: str | None = None) -> np.ndarray | None:
-    """F2-07: ``exit_logit = beta * h`` (float64) for the decoder, or ``None`` when it is off.
+def hazard_values(master: pd.DataFrame, cfg: dict, *,
+                  holdout: str | None = None) -> np.ndarray | None:
+    """F1-08 / F2-09: the hazard ``h`` (float64, before ``beta``), or ``None`` when ``kind`` is none.
 
-    ``None`` (the hazard is not even computed) when ``cfg["hazard"]["kind"]`` is ``none`` or
-    ``beta == 0``, so the decoder runs its constant-transition code path. Otherwise ``h`` is the
-    ``HAZARD_KINDS[kind]`` variant (F1-08) with ``params = {"calibrated_file": <absolute path>}``
-    (the hazard section has no ``params`` of its own; :func:`variant_params`, D-011) and the
-    ``holdout`` fold. ``h`` must be finite, one value per row and 0 where ``half == 0``.
+    ``h`` is the ``HAZARD_KINDS[kind]`` variant with ``params = {"calibrated_file": <absolute
+    path>}`` (the hazard section has no ``params`` of its own; :func:`variant_params`, D-011) and the
+    ``holdout`` fold. It must be finite, one value per row and 0 where ``half == 0``.
     """
     section = cfg["hazard"]
-    kind, beta = section["kind"], float(section["beta"])
-    if kind == "none" or beta == 0.0:
+    kind = section["kind"]
+    if kind == "none":
         return None
     variants.load_kinds()
     if kind not in variants.HAZARD_KINDS:
@@ -132,17 +130,44 @@ def hazard_exit_logit(master: pd.DataFrame, cfg: dict, *,
         raise ValueError("hazard must be finite on every row")
     if (h[master["half"].to_numpy() == 0] != 0).any():
         raise ValueError("hazard must be 0 where half == 0")
-    return beta * h.astype(np.float64)
+    return h.astype(np.float64)
 
 
-def hmm_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = None) -> np.ndarray:
-    """HMM pipeline (F5-04): evidence -> emission -> per-half Viterbi -> post-processing.
+def _exit_logit_from(h: np.ndarray | None, cfg: dict) -> np.ndarray | None:
+    beta = float(cfg["hazard"]["beta"])
+    if h is None or beta == 0.0:
+        return None
+    return beta * h
 
-    Each variant receives its ``params`` section (``cfg["team"]["params"]``,
-    ``cfg["dead"]["params"]``), the convention of ``team_logit_rules_v1`` and
-    ``dead_logit_rules_v1`` (decision D-008), plus ``params["calibrated_file"]`` when the section
-    sets one (:func:`variant_params`, decision D-011). The hazard section (F2-07) only reaches the
-    decoder, as ``exit_logit`` (:func:`hazard_exit_logit`).
+
+def hazard_exit_logit(master: pd.DataFrame, cfg: dict, *,
+                      holdout: str | None = None) -> np.ndarray | None:
+    """F2-07: ``exit_logit = beta * h`` (float64) for the decoder, or ``None`` when it is off.
+
+    ``None`` (the hazard is not even computed) when ``cfg["hazard"]["kind"]`` is ``none`` or
+    ``beta == 0``, so the decoder runs its constant-transition code path. Otherwise ``h`` is
+    :func:`hazard_values` (the ``HAZARD_KINDS[kind]`` variant of F1-08 / F2-09 for the ``holdout``
+    fold).
+    """
+    section = cfg["hazard"]
+    if section["kind"] == "none" or float(section["beta"]) == 0.0:
+        return None
+    return _exit_logit_from(hazard_values(master, cfg, holdout=holdout), cfg)
+
+
+def _section_on(cfg: dict, name: str) -> bool:
+    section = cfg.get(name)
+    return section is not None and section["kind"] != "none"
+
+
+def evidence_logits(master: pd.DataFrame, cfg: dict, *, holdout: str | None = None
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """``(team_logit, dead_logit, h)`` that reach the decoder (``h`` before ``beta``, or ``None``).
+
+    First-stage evidence from the registered kinds (D-008, D-011); with a ``stack`` section
+    (F2-09, D-029) the team_logit is the second stage over the first one and the hazard, and with
+    a ``dead_stack`` section the dead_logit is the second stage over the dead GBDT ``d_fit`` and the
+    hazard (the Smart Tagging prior of the dead section is added after it).
     """
     variants.load_kinds()
     team_kind, dead_kind = cfg["team"]["kind"], cfg["dead"]["kind"]
@@ -159,11 +184,44 @@ def hmm_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = None) -
     dead = variants.DEAD_KINDS[dead_kind](master, variant_params(cfg["dead"]), holdout=holdout)
     validate_logits(team, dead, n, half=half)
 
+    stack_on, dead_stack_on = _section_on(cfg, "stack"), _section_on(cfg, "dead_stack")
+    need_h = stack_on or dead_stack_on or (cfg["hazard"]["kind"] != "none"
+                                           and float(cfg["hazard"]["beta"]) != 0.0)
+    h = hazard_values(master, cfg, holdout=holdout) if need_h else None
+    if stack_on or dead_stack_on:
+        from .evidence.stack import dead_stack_logit, stack_team_logit
+        if stack_on:
+            team = stack_team_logit(team, h, half, cfg["stack"], holdout=holdout)
+        if dead_stack_on:
+            from .deadball.dead import dead_tag_prior
+            from .deadball.dead_gbdt import gbdt_d_fit
+            dparams = variant_params(cfg["dead"])
+            d_fit = gbdt_d_fit(master, dparams, holdout)
+            dead = dead_stack_logit(d_fit, h, half, cfg["dead_stack"],
+                                    tag_prior=dead_tag_prior(master, dparams), holdout=holdout)
+        validate_logits(team, dead, n, half=half)
+    return team, dead, h
+
+
+def hmm_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = None) -> np.ndarray:
+    """HMM pipeline (F5-04): evidence -> emission -> per-half Viterbi -> post-processing.
+
+    Each variant receives its ``params`` section (``cfg["team"]["params"]``,
+    ``cfg["dead"]["params"]``), the convention of ``team_logit_rules_v1`` and
+    ``dead_logit_rules_v1`` (decision D-008), plus ``params["calibrated_file"]`` when the section
+    sets one (:func:`variant_params`, decision D-011). The hazard section (F2-07) reaches the
+    decoder as ``exit_logit = beta * h`` and, with an optional ``stack`` section (F2-09, D-029),
+    the second-stage ``team_logit``; ``dead_stack`` gives the second-stage ``dead_logit``
+    (:func:`evidence_logits`, :mod:`modeling.evidence.stack`).
+    """
+    half = master["half"].to_numpy()
+    team, dead, h = evidence_logits(master, cfg, holdout=holdout)
+
     force_d = build_force_d(master)
     params = DecoderParams.from_config(cfg["decoder"], fps=games.GAMES[games.GAME]["fps"])
     scores = logits_to_logscores(team, dead, params.lam_team, params.lam_dead, force_d,
                                  neg=params.neg)
-    exit_logit = hazard_exit_logit(master, cfg, holdout=holdout)
+    exit_logit = _exit_logit_from(h, cfg)
     labels = decode_match(scores, half, force_d, params, exit_logit=exit_logit)
 
     labels, post_stats = _postprocess_fn()(labels, master, team, dead, force_d,
@@ -191,5 +249,6 @@ def predict_labels(master: pd.DataFrame, cfg: dict, *, holdout: str | None = Non
     return labels
 
 
-__all__ = ["final_imposition", "hazard_exit_logit", "hmm_labels", "predict_labels",
+__all__ = ["evidence_logits", "final_imposition", "hazard_exit_logit", "hazard_values", "hmm_labels",
+           "predict_labels",
            "variant_params"]

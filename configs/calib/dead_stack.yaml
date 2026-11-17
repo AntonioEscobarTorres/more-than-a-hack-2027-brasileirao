@@ -1,0 +1,79 @@
+# F2-09 (D-029), fitted on IDSSE only by python -m modeling.calibration.dead_stack; do not edit by hand.
+variant: gbdt
+target: dead
+sklearn_version: 1.5.2
+model_file: models/dead_stack/all.joblib
+fold_dir: models/dead_stack
+model_params:
+  max_iter: 300
+  learning_rate: 0.05
+  max_leaf_nodes: 31
+  min_samples_leaf: 500
+  l2_regularization: 1.0
+  early_stopping: false
+  random_state: 0
+features:
+- d
+- h
+- d_past_6
+- d_fut_6
+- d_past_12
+- d_fut_12
+- d_past_25
+- d_fut_25
+- d_past_50
+- d_fut_50
+- d_past_100
+- d_fut_100
+- d_past_200
+- d_fut_200
+- h_past_max_12
+- h_fut_max_12
+- h_past_max_50
+- h_fut_max_50
+meta:
+  degrade: default
+  subsample: 5
+  matches:
+  - J03WMX
+  - J03WN1
+  - J03WOH
+  - J03WOY
+  - J03WPY
+  - J03WQQ
+  - J03WR9
+  first_stage: configs/calib/dead_gbdt.yaml
+  hazard: configs/calib/hazard_gbdt.yaml
+  nested: 'fold m: rows of j != m with d_fit and h from models trained without m and
+    j'
+  pi_d_all: 0.44838728980910775
+  all_model_bytes: 500148
+  fold_metrics:
+    J03WMX:
+      auc_first: 0.989292805036769
+      auc_stack: 0.9939864149549876
+      log_loss_stack: 0.10007201885088256
+    J03WN1:
+      auc_first: 0.9885492171650155
+      auc_stack: 0.9939863294579189
+      log_loss_stack: 0.10010002798798054
+    J03WOH:
+      auc_first: 0.9868182722228892
+      auc_stack: 0.9899397591969529
+      log_loss_stack: 0.12977505392399566
+    J03WOY:
+      auc_first: 0.9886027785211461
+      auc_stack: 0.9917577528258851
+      log_loss_stack: 0.11584312517895894
+    J03WPY:
+      auc_first: 0.9915374677308765
+      auc_stack: 0.9958343584473629
+      log_loss_stack: 0.08337118176599691
+    J03WQQ:
+      auc_first: 0.9770635154147901
+      auc_stack: 0.9856145114983921
+      log_loss_stack: 0.156886320219125
+    J03WR9:
+      auc_first: 0.9837933704504689
+      auc_stack: 0.9935621919413901
+      log_loss_stack: 0.10283248026064801
