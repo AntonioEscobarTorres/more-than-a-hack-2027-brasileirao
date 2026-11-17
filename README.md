@@ -171,9 +171,10 @@ To reproduce the final submission CSV from a clean clone:
    pip install -r requirements-modeling.txt
    ```
 2. **Place the match data** in `./data` at the repository root (as in [DATA.md](DATA.md)), or set `MTAH_DATA_DIR`.
-3. **Run the single submission command**:
+   The command reads `MTAH_DATA_DIR` first, so `unset MTAH_DATA_DIR` when the data is in `./data`.
+3. **Run the single submission command** (it also runs the preprocessing; do not pass `--skip-preprocessing`):
    ```bash
-   python -m modeling.make_submission --config configs/final.yaml --out outputs/<team_name>.csv
+   python -m modeling.make_submission --config configs/final.yaml --out outputs/brasileirao.csv
    ```
 4. **Verify the output CSV SHA-256**:
    - Expected CSV SHA-256: `25064d90ff2808ffb325f43d51253a5dd58be765d70c2ddee6d608f5fb9f0503`
@@ -193,18 +194,6 @@ To reproduce the final submission CSV from a clean clone:
 | **[FAQ.md](FAQ.md)** | |
 | **[OVERVIEW.md](OVERVIEW.md)** | the competition as a whole — context, why the 2027 format changed, the calendar |
 
-
----
-
-## How to run
-
-To reproduce the final submission CSV from a clean clone:
-
-1. **Install dependencies** (requires **Python 3.12**):
-   ```bash
-   python3.12 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements-modeling.txt
 
 ---
 
