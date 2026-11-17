@@ -61,6 +61,7 @@ Modelo:
 | [D-022](#d-022--toque-só-por-persistência-e-o-config-v2_base-checagem-do-toque-no-bar-ath) | 2026-11-16 | Toque só por persistência e o config `v2_base` (checagem do toque no BAR-ATH) | Vigente |
 | [D-023](#d-023--team_logit-gbdt-e-o-config-v2_gbdt-revisão-da-f1-07) | 2026-11-16 | `team_logit` GBDT e o config `v2_gbdt` (revisão da F1-07) | Vigente |
 | [D-024](#d-024--bola-fundida-da-transmissão-f4-06-revisão-da-d-020) | 2026-11-16 | Bola fundida da transmissão (F4-06): revisão da D-020 | Vigente (opção B) |
+| [D-025](#d-025--seleção-f2-06-vencedora-v2_gbdt_fused) | 2026-11-16 | Seleção F2-06: vencedora `v2_gbdt_fused` | Vigente |
 
 ## Decisões
 
@@ -924,6 +925,24 @@ Modelo:
   - a #84 foi reaberta e fechada como feita;
   - a candidata é `configs/v2_gbdt_fused.yaml` (o `v2_gbdt` com `ball_source: fused`). Ela entra na escada da F2-06 como último passo de dados. Se a F2-06 não terminar a tempo, é ela que vai para o envio, no lugar do `v2_gbdt`;
   - antes de qualquer envio com ela: rodar `make_submission` (que gera `processed_fused`), `tools/gbdt_feature_shift.py` e `tools/check_public_window.py` sobre o master fundido, e registrar o CSV.
+
+### D-025 — Seleção F2-06: vencedora `v2_gbdt_fused`
+
+- **Data:** 2026-11-16
+- **Autor:** Hugo (F2, F2-06)
+- **Status:** Vigente
+- **Decisão:** a escada da Seção 6 (implementada em `modeling/scoring/selection.py`) escolhe
+  `configs/final.yaml` = `v2_gbdt` com `ball_source: fused` (equivalente a `configs/v2_gbdt_fused.yaml`).
+  Passos aceitos (ganho pareado > 1 EP no `default` e estresse ok, quando aplicável):
+  `baseline` → `v1` → `v1s` → `v2_base` → `v2` → `team_gbdt` → `fused`.
+  Rejeitados: `dead_pooled`, todas as regras de pós-processamento isoladas e `boundary_shift_file`.
+  F3-08 / F2-07 / F2-08 ficaram de fora (ainda abertas ou opcionais).
+- **Opções consideradas:**
+  - parar em `v2` ou `v2_gbdt` tático: descartadas — o GBDT e o `fused` passaram a regra de ganho;
+  - aceitar pós-processamento / boundary da F2-05: descartado — ganho nulo ou negativo no `default`.
+- **Evidência:** [`reports/selection.md`](../reports/selection.md); spellF1 IDSSE
+  `v2_gbdt` 0,4895±0,0083 → `fused` 0,4958±0,0083 (Δ +0,0064±0,0020, alinhado à D-024).
+  Checagens BAR-ATH da vencedora: **pending** (execução local humana).
 
 ## Registro de envios
 
