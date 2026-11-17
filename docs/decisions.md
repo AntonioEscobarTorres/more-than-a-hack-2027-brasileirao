@@ -62,7 +62,7 @@ Modelo:
 | [D-023](#d-023--team_logit-gbdt-e-o-config-v2_gbdt-revisão-da-f1-07) | 2026-11-16 | `team_logit` GBDT e o config `v2_gbdt` (revisão da F1-07) | Vigente |
 | [D-024](#d-024--bola-fundida-da-transmissão-f4-06-revisão-da-d-020) | 2026-11-16 | Bola fundida da transmissão (F4-06): revisão da D-020 | Vigente (opção B) |
 | [D-025](#d-025--transições-guiadas-pelo-hazard-io-hmm-f2-07) | 2026-11-16 | Transições guiadas pelo hazard (IO-HMM, F2-07) | Vigente |
-| [D-026](#d-026--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-16 | Seleção da F2-06 e o `configs/final.yaml` | Vigente (checagem de estabilidade pendente) |
+| [D-026](#d-026--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-16 | Seleção da F2-06 e o `configs/final.yaml` | Vigente |
 
 ## Decisões
 
@@ -1026,7 +1026,7 @@ Modelo:
 
 - **Data:** 2026-11-16
 - **Autor:** Hugo (F2-06, #85; PR #153), com a revisão da F5 (Ahmed)
-- **Status:** Vigente. Falta a checagem de estabilidade no BAR-ATH (item 4).
+- **Status:** Vigente
 - **Decisão:**
   1. **Escada da Seção 6** (`python -m modeling.scoring.selection`) com as atualizações de 11/11, 13/11 e 16/11:
      ganho pareado > 1 EP no `default` e nenhum modo de estresse (`harder`, `easier`, `hidelo`, `hidehi`) pior
@@ -1064,8 +1064,13 @@ Modelo:
 
   - Checagens locais no BAR-ATH: as do `v2_gbdt_fused_hzn2` (D-025, item 10) valem para o `final.yaml`, que
     tem os mesmos parâmetros: `check_public_window`, `deadball_diagnostics`, `gbdt_feature_shift` e
-    `hazard_feature_shift` `PASS`; CSV `ae80daec…`. Pendentes: `tools/dead_stability.py` e o CSV gerado a
-    partir do `final.yaml` (mesmo SHA-256 esperado).
+    `hazard_feature_shift` `PASS`; CSV `ae80daec…`.
+  - Checagens locais do `final.yaml` (16/11, só `PASS`/`FAIL` e estatísticas dos rótulos previstos saíram da
+    máquina): `python tools/dead_stability.py --config configs/final.yaml` `PASS` nos três pares;
+    `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing` (config `d7e9b1f5…`)
+    gera `outputs/final.csv` com SHA-256
+    `ae80daecb916802399fedfedd2c897cc04b5913192437874e361fe261754a7c7`, idêntico ao do `v2_gbdt_fused_hzn2`;
+    158.857 frames avaliados, H 0,3218, A 0,2047, D 0,4736; 150 posses no 1º tempo e 182 no 2º.
 
 ## Registro de envios
 

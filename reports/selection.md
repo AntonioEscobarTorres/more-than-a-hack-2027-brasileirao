@@ -432,10 +432,10 @@ Agents never run these. Record PASS/FAIL only.
 up to `name`), so the checks already run on that config (D-025, item 10) carry over; the CSV must
 still be regenerated from `configs/final.yaml` and its SHA-256 compared.
 
-- csv_valid: **PASS** (`v2_gbdt_fused_hzn2`, SHA-256 `ae80daec…`, D-025 item 10); regenerate from `final.yaml`: **pending**
+- csv_valid: **PASS** (`v2_gbdt_fused_hzn2`, SHA-256 `ae80daec…`, D-025 item 10); regenerated from `final.yaml` (config `d7e9b1f5…`): **same SHA-256** `ae80daec…`
 - check_public_window: **PASS** (D-025 item 10)
 - deadball_diagnostics (±40% plausibility, fused master): **PASS** (D-025 item 10)
-- stability dead default/hidelo/hidehi (<5% label change, `tools/dead_stability.py`): **pending**
+- stability dead default/hidelo/hidehi (<5% label change, `tools/dead_stability.py`): **PASS** (all three pairs)
 - gbdt_feature_shift (fused master, `--degrade fused`): **PASS** (D-025 item 10)
 - hazard_feature_shift (`hazard_nodir`, tactical and fused masters): **PASS** (D-025 item 10)
 
