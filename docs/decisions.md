@@ -63,7 +63,8 @@ Modelo:
 | [D-024](#d-024--bola-fundida-da-transmissão-f4-06-revisão-da-d-020) | 2026-11-16 | Bola fundida da transmissão (F4-06): revisão da D-020 | Vigente (opção B) |
 | [D-025](#d-025--transições-guiadas-pelo-hazard-io-hmm-f2-07) | 2026-11-16 | Transições guiadas pelo hazard (IO-HMM, F2-07) | Vigente |
 | [D-026](#d-026--dead_logit-gbdt-features-cenários-coerentes-e-resultado-f3-08) | 2026-11-16 | `dead_logit` GBDT: features, cenários coerentes e resultado (F3-08) | Vigente (adoção pela F2-06) |
-| [D-027](#d-027--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-16 | Seleção da F2-06 e o `configs/final.yaml` | Vigente |
+| [D-027](#d-027--durações-semi-markov-no-decodificador-e-o-config-v2_gbdt_nb-f2-08) | 2026-11-16 | Durações semi-Markov no decodificador e o config `v2_gbdt_nb` (F2-08) | Vigente (adoção pela F2-06) |
+| [D-028](#d-028--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-16 | Seleção da F2-06 e o `configs/final.yaml` | Vigente |
 
 ## Decisões
 
@@ -1090,7 +1091,74 @@ Modelo:
   - Antes de adotar: rodar localmente `python tools/dead_feature_shift.py --config configs/v2.yaml
     --calibration configs/calib/dead_gbdt.yaml --degrade default hidelo hidehi` (agora aceita o arquivo GBDT
     na checagem (d)) e `tools/check_public_window.py`.
-### D-027 — Seleção da F2-06 e o `configs/final.yaml`
+### D-027 — Durações semi-Markov no decodificador e o config `v2_gbdt_nb` (F2-08)
+
+- **Data:** 2026-11-16
+- **Autor:** Ahmed (F2-08, #126)
+- **Status:** Vigente
+- **Contexto:** depois do `min_dwell`, a duração de cada estado era geométrica. A F2-08 troca a geométrica por
+  `r_s` estágios (binomial negativa deslocada) com a mesma média, escolhendo `r_s` nas durações verdadeiras do
+  IDSSE. Mudança do C5 (topologia) e chave nova obrigatória no C7.
+- **Decisão:**
+  1. **Config:** `decoder.duration_stages: {H, A, D}`, inteiros `>= 1`, obrigatória em todo config `hmm` e no
+     `configs/decoder_idsse.yaml`; todos os configs que já existiam ficam com 1. Erro se
+     `mean_s − m_s + 1 <= r_s`. Os rótulos não mudam, mas o hash de todo config muda (a chave entra no JSON),
+     como já previsto na D-012, item 5.
+  2. **Topologia (C5):** para o estado `s`, `m_s − 1` subestados da cadeia sem laço e depois `r_s` estágios com
+     laço `p_s = 1 − r_s/(mean_s − m_s + 1)` e avanço `1 − p_s`. **Só o último estágio sai** para outro estado,
+     com `(1 − p_s)·exit_split[s, ·]`, e **só ele recebe a distribuição inicial** (o tempo começa com um segmento
+     que já passou do `min_dwell`, como antes). Com `r_s = 1`, subestados, ordem e valores são os de antes:
+     rótulos do mock idênticos byte a byte no `v1`, `v1s` e `v2_gbdt` (hashes gravados no teste),
+     `p_stay`/`log_exit` iguais bit a bit. A duração mínima passa a `m_s − 1 + r_s` frames.
+  3. **Compatível com a F2-07 (D-025):** o subestado terminal continua sendo o que sai para os outros estados, agora
+     o último estágio, então a modulação do hazard vale na saída do último estágio, como a especificação da F2-07
+     pede, sem mudança no código dela.
+  4. **Escolha de `r_s`** (`modeling/calibration/durations.py`): máxima verossimilhança em `{1, 2, 3, 4, 6, 8}`, com
+     `m_s` e `mean_s` do config candidato, nas durações verdadeiras do IDSSE (segmentação da F2-03, por tempo).
+     **Suporte:** um segmento mais curto que `m_s − 1 + r_s` tem probabilidade zero com `r_s` estágios. Por isso,
+     todo `r` é avaliado nos mesmos segmentos, os com `L >= m_s − 1 + 8`, com a verossimilhança truncada nesse
+     ponto. Ficam de fora 263 H, 252 A e 11 D (de 1539, 1522 e 713) no `v1s`, e 132, 120 e 3 no `v2_gbdt`. A
+     média continua a do config. Empate: o menor `r`.
+  5. **Resultado:** H e A ficam com 1 estágio em todo config e em toda dobra. As posses do IDSSE são 2 a 3 vezes
+     mais dispersas que a geométrica de mesma média, e a moda (1 a 2 s) fica logo depois do `min_dwell`; com a
+     média fixa, mais estágios só reduzem a dispersão (−400 a −600 de log-verossimilhança já com `r = 2`). D fica
+     com 1 no `v1s` (`configs/calib/durations.yaml`) e com 2 no `v2_gbdt` (`configs/calib/durations_v2_gbdt.yaml`),
+     iguais nas 7 dobras.
+  6. **Passo da escada (F2-06):** no `v1s`, base da especificação, é a identidade (nada a avaliar). No `v2_gbdt`,
+     `r_D = 2` com o λ atual perde; re-varrendo só λ (etapa 1 da F2-05) a escolha é λ (0,4; 0,4) e o passo é
+     **aceito**: `configs/v2_gbdt_nb.yaml`.
+  7. **Controle:** a mesma re-varredura de λ com 1 estágio escolhe o mesmo λ (0,4; 0,4) e não ganha nada; o ganho
+     é dos estágios. A varredura (`modeling/scoring/durations_sweep.py`) passou a incluir esse controle.
+- **Opções consideradas:**
+  - Verossimilhança sem truncar, cada `r` só nos segmentos que ele permite: descartada, porque compara `r`
+    diferentes em dados diferentes.
+  - Distribuição inicial uniforme entre os estágios (a estacionária): descartada, porque mudaria a inicialização
+    do caminho modulado da F2-07; a diferença afeta só o primeiro segmento de cada tempo.
+  - `r` diferente por dobra na avaliação: desnecessário, porque as 7 dobras escolhem o mesmo `r`.
+  - Ajustar a média junto com `r`: fora da especificação (a média do config é mantida).
+- **Evidência (spellF1 médio no IDSSE degradado, 7 partidas, `holdout` = partida; Δ pareado ± EP):**
+
+  | Config | `default` | `harder` | `easier` | `hidelo` | `hidehi` | posses previstas / verdadeiras (`default`) |
+  | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | `v2_gbdt` | 0,4895 | 0,4576 | 0,5191 | 0,4659 | 0,5237 | 0,657 |
+  | `v2_gbdt` + `r_D = 2` | 0,4865 | 0,4588 | 0,5171 | 0,4647 | 0,5205 | 0,647 |
+  | controle: λ (0,4; 0,4), `r_D = 1` | 0,4885 | 0,4627 | 0,5227 | 0,4672 | 0,5244 | 0,718 |
+  | **`v2_gbdt_nb`**: λ (0,4; 0,4), `r_D = 2` | **0,4928** | **0,4651** | **0,5259** | **0,4698** | **0,5280** | 0,704 |
+
+  `v2_gbdt_nb` − `v2_gbdt`: +0,0034 ± 0,0024 no `default`, +0,0039 a +0,0075 nos modos de estresse.
+  `v2_gbdt_nb` − controle: +0,0043 ± 0,0011, +0,0025 ± 0,0015, +0,0032 ± 0,0010, +0,0027 ± 0,0009 e
+  +0,0037 ± 0,0007. **Ressalva:** o efeito dos estágios depende do `lam_dead`: ajuda com `lam_dead >= 0,4`
+  (evidência de D mais forte cria D curtos espúrios que partem as posses) e atrapalha com `lam_dead <= 0,2`.
+  O ganho sobre o `v2_gbdt` é pequeno (1,4 EP). Relatório: `reports/durations.md`.
+- **Pendências:**
+  - a combinação com o hazard da F2-07 (D-025, `v2_gbdt_hz`) não foi avaliada. O código já permite (o hazard modula
+    a saída do último estágio, testado contra uma referência densa), mas os estágios e o hazard foram escolhidos
+    cada um sobre o `v2_gbdt` sozinho; a combinação é um passo próprio da F2-06;
+  - **checagens locais no BAR-ATH** antes de qualquer envio com o `v2_gbdt_nb` (execução local, humano): as features
+    não mudam em relação ao `v2_gbdt` (só o decodificador), mas o CSV precisa passar pelo
+    `tools/check_public_window.py` e pela checagem de estabilidade da F2-06, item 5.
+
+### D-028 — Seleção da F2-06 e o `configs/final.yaml`
 
 - **Data:** 2026-11-16
 - **Autor:** Hugo (F2-06, #85; PR #153), com a revisão da F5 (Ahmed)
