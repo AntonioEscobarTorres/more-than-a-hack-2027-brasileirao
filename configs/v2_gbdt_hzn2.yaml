@@ -1,4 +1,4 @@
-# v2_gbdt_hzn with hazard beta 2 (F2-07, D-024). beta 2 is outside the pre-registered grid
+# v2_gbdt_hzn with hazard beta 2 (F2-07, D-025). beta 2 is outside the pre-registered grid
 # {0, 0.25, 0.5, 1}: chosen from the informative off-grid section of
 # reports/sensitivity_hazard_v2_gbdt_nodir.md, below the peak (2.5) and away from the
 # over-switching at 4. Hazard without ball_dir_change (configs/calib/hazard_nodir.yaml).

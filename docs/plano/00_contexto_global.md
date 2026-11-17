@@ -215,7 +215,7 @@ Não criar pasta ou pacote chamado `eval` (sombreia a função embutida `eval` d
 - **C5 Decodificador:** `modeling.decode.viterbi.decode_match(scores, half, force_d, params, *, exit_logit=None) -> np.ndarray[dtype "<U1"]`.
   - Decodifica cada tempo (`half` = 1 e 2) separadamente.
   - `half == 0` → `X`; dentro dos blocos, nunca `X`.
-  - `exit_logit` (F2-07, D-024): com `None`, as transições são constantes e o código é o de antes, sem nenhuma alteração. Senão é um `float64[n]`, finito dentro dos tempos. No frame `t`, só as saídas do subestado terminal de H e de A mudam: `q_o' = q_o·e^{x_t}/Z_t`, `p' = p/Z_t`, `q_d' = q_d/Z_t`, com `Z_t = p + q_d + q_o·e^{x_t}` (em log, com `logaddexp`). D e a cadeia do `min_dwell` não mudam. A transição que **chega** ao frame `t` usa `x_t`, então o valor do primeiro frame de cada tempo e os de `half == 0` não são usados.
+  - `exit_logit` (F2-07, D-025): com `None`, as transições são constantes e o código é o de antes, sem nenhuma alteração. Senão é um `float64[n]`, finito dentro dos tempos. No frame `t`, só as saídas do subestado terminal de H e de A mudam: `q_o' = q_o·e^{x_t}/Z_t`, `p' = p/Z_t`, `q_d' = q_d/Z_t`, com `Z_t = p + q_d + q_o·e^{x_t}` (em log, com `logaddexp`). D e a cadeia do `min_dwell` não mudam. A transição que **chega** ao frame `t` usa `x_t`, então o valor do primeiro frame de cada tempo e os de `half == 0` não são usados.
   - O C8 passa `exit_logit = beta · h`, com `h` o hazard da F1-08 (seção `hazard` do config), ou `None` quando `hazard.kind` é `none` ou `beta` é 0.
 - **C6 Submissão:** `modeling.io.write_submission(labels, path, n_expected=None)`.
   - Cabeçalho `frame,label`, UTF-8, `\n`, uma linha por frame `0..n−1`.

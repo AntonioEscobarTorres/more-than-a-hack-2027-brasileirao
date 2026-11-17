@@ -4,7 +4,7 @@
 ``half ∈ {1, 2}`` block independently, maps ``half == 0`` to ``X``, and finally forces
 ``force_d`` frames to ``D``.
 
-``exit_logit`` (F2-07, decision D-024) makes the H↔A exits of the terminal H and A
+``exit_logit`` (F2-07, decision D-025) makes the H↔A exits of the terminal H and A
 sub-states frame dependent (an input-output HMM driven by the possession-change hazard of
 F1-08); see :func:`modeling.decode.params.team_exit_logs`. The transition *into* frame ``t``
 uses ``exit_logit[t]``, so ``exit_logit`` at the first frame of a block is never used. With

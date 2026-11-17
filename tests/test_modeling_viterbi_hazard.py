@@ -1,4 +1,4 @@
-"""Synthetic tests for the hazard-guided H<->A transitions of the decoder (task F2-07, D-024).
+"""Synthetic tests for the hazard-guided H<->A transitions of the decoder (task F2-07, D-025).
 
 Nothing here reads the match data or the external IDSSE files: scores are random or built by
 hand, the master is ``preprocessing.make_mock_master`` and configs are validated in memory.
@@ -612,7 +612,7 @@ def test_report_renders_stages_summary_and_extra_section(v1_cfg):
 
 
 def test_nodir_hazard_file_matches_its_fit_config():
-    """configs/calib/hazard_nodir.yaml = the F1-08 fit without ball_dir_change (D-024)."""
+    """configs/calib/hazard_nodir.yaml = the F1-08 fit without ball_dir_change (D-025)."""
     from modeling.calibration.hazard import load_fit_config
     from modeling.evidence.hazard import design_columns, load_hazard_file
 

@@ -1,4 +1,4 @@
-# F2-07 (D-024): configs/hazard_fit.yaml without ball_dir_change, the only feature that failed
+# F2-07 (D-025): configs/hazard_fit.yaml without ball_dir_change, the only feature that failed
 # check (a) of tools/hazard_feature_shift.py on BAR-ATH (PASS/FAIL only; the same rule as the
 # GBDT exclusions of D-023). Everything else is identical; the fit uses IDSSE only.
 # F1-08: fit settings of the possession-change hazard (IDSSE only; never the match data).

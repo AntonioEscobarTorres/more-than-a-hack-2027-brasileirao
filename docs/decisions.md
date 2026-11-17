@@ -60,7 +60,7 @@ Modelo:
 | [D-021](#d-021--team_logit-calibrado-com-a-variante-touch-e-o-config-v2-revisão-da-f1-05f1-06) | 2026-11-16 | `team_logit` calibrado com a variante `touch` e o config `v2` (F1-05/F1-06) | Vigente (toque substituído pela D-022) |
 | [D-022](#d-022--toque-só-por-persistência-e-o-config-v2_base-checagem-do-toque-no-bar-ath) | 2026-11-16 | Toque só por persistência e o config `v2_base` (checagem do toque no BAR-ATH) | Vigente |
 | [D-023](#d-023--team_logit-gbdt-e-o-config-v2_gbdt-revisão-da-f1-07) | 2026-11-16 | `team_logit` GBDT e o config `v2_gbdt` (revisão da F1-07) | Vigente |
-| [D-024](#d-024--transições-guiadas-pelo-hazard-io-hmm-f2-07) | 2026-11-16 | Transições guiadas pelo hazard (IO-HMM, F2-07) | Vigente |
+| [D-025](#d-025--transições-guiadas-pelo-hazard-io-hmm-f2-07) | 2026-11-16 | Transições guiadas pelo hazard (IO-HMM, F2-07) | Vigente |
 
 ## Decisões
 
@@ -902,7 +902,7 @@ Modelo:
   reenviar e o formulário permitir; nesse caso, antes do envio, rodar `tools/gbdt_feature_shift.py` e
   `tools/check_public_window.py` e registrar o novo CSV no registro de envios.
 
-### D-024 — Transições guiadas pelo hazard (IO-HMM, F2-07)
+### D-025 — Transições guiadas pelo hazard (IO-HMM, F2-07)
 
 - **Data:** 2026-11-16
 - **Autor:** Ahmed (F2-07, #125)

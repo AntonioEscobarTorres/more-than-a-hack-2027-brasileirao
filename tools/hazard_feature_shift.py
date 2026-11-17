@@ -1,6 +1,6 @@
 """Shift of the possession-change hazard inputs and outputs between the degraded IDSSE and the BAR-ATH.
 
-Local execution only (a person runs it on the match data; F2-07, decision D-024):
+Local execution only (a person runs it on the match data; F2-07, decision D-025):
 
     python tools/hazard_feature_shift.py
     python tools/hazard_feature_shift.py --degrade default hidelo hidehi --verbose

@@ -3,7 +3,7 @@
 ``DecoderParams.from_config`` converts the ``decoder`` section of an HMM config into
 float64 arrays used by the Viterbi decoder, including ``p_stay`` derived from the
 mean duration and minimum dwell. :func:`team_exit_logs` gives the frame-dependent
-transition row of the terminal H and A sub-states under an exit logit (IO-HMM, D-024).
+transition row of the terminal H and A sub-states under an exit logit (IO-HMM, D-025).
 """
 from __future__ import annotations
 
