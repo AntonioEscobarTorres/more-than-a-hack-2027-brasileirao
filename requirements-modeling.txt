@@ -2,3 +2,7 @@
 -r requirements-preprocessing.txt
 pyyaml==6.0.2
 scikit-learn==1.5.2
+# Transitive deps of scikit-learn, pinned so models/**/*.joblib load identically on any machine
+# and inference stays single-threaded (F5-06).
+joblib==1.6.0
+threadpoolctl==3.8.0
