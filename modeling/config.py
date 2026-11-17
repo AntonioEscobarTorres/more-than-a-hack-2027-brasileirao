@@ -20,7 +20,8 @@ PIPELINES = ("baseline", "hmm")
 BALL_SOURCES = ("tactical", "fused")
 TEAM_KIND_NAMES = ("none", "rules_v1", "calibrated", "gbdt")
 DEAD_KIND_NAMES = ("none", "rules_v1", "calibrated", "gbdt")
-HAZARD_KIND_NAMES = ("none", "calibrated")
+HAZARD_KIND_NAMES = ("none", "calibrated", "gbdt")
+STACK_KIND_NAMES = ("none", "gbdt")
 KINDS_WITH_FILE = ("calibrated", "gbdt")
 HMM_SECTIONS = ("team", "dead", "decoder", "postprocess", "hazard")
 EXIT_SPLIT_TOL = 1e-9
@@ -244,6 +245,14 @@ HAZARD_SCHEMA = {
     "beta": Float(ge=0.0),
 }
 
+# F2-09 (D-029): optional second-stage team_logit over the first-stage team_logit and the hazard.
+# Absent (the default) or kind none leaves the pipeline exactly as without the section, and an
+# absent section does not enter the config hash.
+STACK_SCHEMA = {
+    "kind": Str(STACK_KIND_NAMES),
+    "calibrated_file": Str(nullable=True),
+}
+
 TOP_COMMON = {
     "name": Str(),
     "pipeline": Str(PIPELINES),
@@ -254,7 +263,8 @@ PIPELINE_SCHEMAS = {
     "baseline": {**TOP_COMMON, "baseline": BASELINE_SCHEMA},
     "hmm": {**TOP_COMMON, "team": TEAM_SCHEMA, "dead": DEAD_SCHEMA,
             "decoder": DECODER_SCHEMA, "postprocess": POSTPROCESS_SCHEMA,
-            "hazard": HAZARD_SCHEMA},
+            "hazard": HAZARD_SCHEMA, "stack": Opt(STACK_SCHEMA),
+            "dead_stack": Opt(STACK_SCHEMA)},
 }
 
 
@@ -290,6 +300,30 @@ def _check_hmm(cfg: dict) -> None:
     if cfg["hazard"]["kind"] != "none" and cfg["hazard"]["calibrated_file"] is None:
         raise ConfigError("hazard.calibrated_file is required when hazard.kind is {!r}".format(
             cfg["hazard"]["kind"]))
+
+    stack = cfg.get("stack")
+    if stack is not None and stack["kind"] != "none":
+        if stack["calibrated_file"] is None:
+            raise ConfigError("stack.calibrated_file is required when stack.kind is {!r}".format(
+                stack["kind"]))
+        if cfg["hazard"]["kind"] == "none":
+            raise ConfigError("stack.kind {!r} needs a hazard (hazard.kind must not be 'none')".format(
+                stack["kind"]))
+        params = cfg["team"]["params"]
+        if params.get("w_tag_phase", 0.0) != 0.0 or params.get("w_sp_team", 0.0) != 0.0:
+            raise ConfigError("stack.kind {!r} needs the team tag prior off (it is trained on "
+                              "IDSSE, which has no tags)".format(stack["kind"]))
+    dead_stack = cfg.get("dead_stack")
+    if dead_stack is not None and dead_stack["kind"] != "none":
+        if dead_stack["calibrated_file"] is None:
+            raise ConfigError("dead_stack.calibrated_file is required when dead_stack.kind is "
+                              "{!r}".format(dead_stack["kind"]))
+        if cfg["hazard"]["kind"] == "none":
+            raise ConfigError("dead_stack.kind {!r} needs a hazard (hazard.kind must not be "
+                              "'none')".format(dead_stack["kind"]))
+        if cfg["dead"]["kind"] != "gbdt":
+            raise ConfigError("dead_stack.kind {!r} needs dead.kind 'gbdt'".format(
+                dead_stack["kind"]))
 
     dec = cfg["decoder"]
     for state, row in dec["exit_split"].items():
@@ -399,5 +433,5 @@ def config_hash(cfg: dict) -> str:
 
 
 __all__ = ["BALL_SOURCES", "ConfigError", "DEAD_KIND_NAMES", "HAZARD_KIND_NAMES", "HMM_SECTIONS",
-           "PIPELINES", "TEAM_KIND_NAMES",
+           "PIPELINES", "STACK_KIND_NAMES", "TEAM_KIND_NAMES",
            "config_hash", "load_config", "validate_broadcast_config", "validate_config"]

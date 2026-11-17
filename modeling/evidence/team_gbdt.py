@@ -19,7 +19,14 @@ Feature groups (:func:`gbdt_feature_layout`):
   collective features and ``d_diff``;
 - pairs: the raw home/away master columns of :data:`RAW_PAIRS`;
 - even: :data:`EVEN_COLUMNS` (ball confidence, ball speed, distances to the lines, gap timing);
-- windows: :mod:`modeling.evidence.windows`.
+- windows: :mod:`modeling.evidence.windows`;
+- control EMAs (F2-09, D-029; only when ``f_params`` sets ``ema_taus`` / ``touch_ema_taus``, so
+  older calibration files keep their exact layout): the pass-bridge signal ``c`` and the touch
+  feature ``f9`` of :func:`modeling.evidence.hazard_gbdt.control_signal`, smoothed backward
+  (``ctl_bwd_<tau>``, ``tch_bwd_<tau>``) and forward (``ctl_fwd_<tau>``, ``tch_fwd_<tau>``) inside
+  each half block; all odd. The bridge ``f10``/``f11`` only has their sum and geometric mean, so a
+  frame between a past that says one team and a future that says the other looks like "no
+  evidence"; the separate sides let the model place the switch.
 
 ``f_params["exclude_features"]`` removes features (a home/away pair as a whole when either side
 is named); D-023 removes the ones that fail the BAR-ATH range check of
@@ -81,6 +88,7 @@ def gbdt_feature_layout(f_params: Mapping) -> dict:
     pairs.extend(win["pairs"])
     odd.extend(win["odd"])
     even.extend(win["even"])
+    odd.extend(ema_feature_names(f_params))
     excluded = set(f_params.get("exclude_features", ()))
     unknown = excluded - set(odd) - set(even) - {c for p in pairs for c in p}
     if unknown:
@@ -93,6 +101,42 @@ def gbdt_feature_layout(f_params: Mapping) -> dict:
     if len(set(features)) != len(features):
         raise ValueError("duplicate GBDT feature names")
     return {"features": features, "pairs": pairs, "odd": odd, "even": even}
+
+
+def _ema_taus(f_params: Mapping, key: str) -> list[int]:
+    taus = [int(t) for t in f_params.get(key, ())]
+    if any(t < 1 for t in taus) or len(set(taus)) != len(taus):
+        raise ValueError("{} must be distinct positive integers, got {}".format(key, taus))
+    return taus
+
+
+def ema_feature_names(f_params: Mapping) -> list[str]:
+    """``ctl_bwd/fwd_<tau>`` for ``ema_taus`` then ``tch_bwd/fwd_<tau>`` for ``touch_ema_taus``."""
+    names = []
+    for tau in _ema_taus(f_params, "ema_taus"):
+        names.extend(["ctl_bwd_{}".format(tau), "ctl_fwd_{}".format(tau)])
+    for tau in _ema_taus(f_params, "touch_ema_taus"):
+        names.extend(["tch_bwd_{}".format(tau), "tch_fwd_{}".format(tau)])
+    return names
+
+
+def build_ema_features(master: pd.DataFrame, p: Mapping, f_params: Mapping) -> dict:
+    """The control EMA columns of :func:`ema_feature_names` (float64, NaN on ``half == 0``)."""
+    from .hazard_gbdt import control_signal, ema_pair
+
+    ctl_taus = _ema_taus(f_params, "ema_taus")
+    tch_taus = _ema_taus(f_params, "touch_ema_taus")
+    if not ctl_taus and not tch_taus:
+        return {}
+    half = master["half"].to_numpy()
+    c, f9 = control_signal(master, p)
+    out = {}
+    for prefix, signal, taus in (("ctl", c, ctl_taus), ("tch", f9, tch_taus)):
+        for tau in taus:
+            b, f = ema_pair(signal, half, tau)
+            out["{}_bwd_{}".format(prefix, tau)] = np.where(half != 0, b, np.nan)
+            out["{}_fwd_{}".format(prefix, tau)] = np.where(half != 0, f, np.nan)
+    return out
 
 
 def swap_permutation(layout: Mapping) -> tuple[np.ndarray, np.ndarray]:
@@ -131,6 +175,7 @@ def build_gbdt_features(master: pd.DataFrame, params: Mapping, f_params: Mapping
         include_touch=True, taus=taus)
     ev = build_control_features(master, p)
     win = build_window_features(master, p)
+    ema = build_ema_features(master, p, f_params)
 
     half = master["half"].to_numpy()
     cols: dict[str, np.ndarray] = {}
@@ -141,6 +186,8 @@ def build_gbdt_features(master: pd.DataFrame, params: Mapping, f_params: Mapping
             src = ev[name]
         elif name in win.columns:
             src = win[name]
+        elif name in ema:
+            src = pd.Series(ema[name], index=master.index)
         elif name in master.columns:
             src = master[name]
         else:
@@ -280,6 +327,6 @@ def team_logit_gbdt_impl(master: pd.DataFrame, params: Mapping, *, holdout=None)
 
 
 __all__ = ["BASE_ODD", "COLLECTIVE_ODD", "EVEN_COLUMNS", "GAP_MODELS", "RAW_PAIRS",
-           "antisymmetric_logit", "build_gbdt_features", "fold_model_path",
+           "antisymmetric_logit", "build_ema_features", "build_gbdt_features", "ema_feature_names", "fold_model_path",
            "gbdt_feature_layout", "load_gbdt_bundle", "load_gbdt_calibration",
            "resolve_repo_path", "swap_matrix", "swap_permutation", "team_logit_gbdt_impl"]

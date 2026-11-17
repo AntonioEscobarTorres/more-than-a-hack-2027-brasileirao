@@ -270,6 +270,37 @@ the rule and where it is implemented.*
   table, built from the kick-off frames published by the organisers (FAQ.md); nothing is inferred
   from the tracking. Implemented in `modeling/deadball/force.py`.
 - **No `X` inside the halves.** `X` is written only outside the graded halves. *(F2)*
+- **Second stage over the evidence (D-029).** Two diagnostics on degraded IDSSE fixed the last step.
+  With the team evidence replaced by the truth, the same decoder reaches spellF1 0.91; with the
+  dead-ball evidence replaced by the truth, only 0.59. And possession changes in open play (team to
+  team, with no dead ball between) are the bulk of the true boundaries (about 2,350 of 3,760), with
+  only 29% of them found within half a second. So the work went into *when* possession changes:
+  - *A GBDT hazard.* The possession-change hazard (F1-08) became a gradient-boosted model of the
+    same target (a team change within 12 frames), with features that compare the past with the
+    future: the pass-bridge control signal and the touch feature, smoothed backwards and forwards
+    in time (their product turns negative and their difference grows just before a change), the
+    same for the distance difference over 4 and 8 s, the amount of control evidence around the
+    frame, and the F1-08 features. Every feature is symmetric under a home/away swap, so it says
+    *whether* possession changes, never to whom. Held-out AUC 0.81 against 0.71 on `default`.
+  - *A second stage for the team evidence.* A second GBDT receives the first-stage team evidence
+    and the hazard in time windows (past and future means of the team evidence from 0.25 to 8 s,
+    past and future maxima of the hazard) and returns a new team evidence, antisymmetric by
+    construction. The HMM treats frames as independent given the state, so it cannot learn where,
+    between a past that says one team and a future that says the other, the switch happens; the
+    second stage learns it from IDSSE.
+  - *A second stage for the dead-ball evidence*, in the same way, over the dead-ball GBDT (before
+    the tag priors, which are added afterwards because IDSSE has no tags) and the hazard.
+  - *Tried and not kept:* the same backward and forward control and touch signals as features of
+    the first-stage team GBDT. They improved it alone, but on top of the two second stages they
+    added nothing (`default` 0.5653 against 0.5672 after the same re-sweep), so the parsimony rule
+    kept the first stage unchanged.
+
+  Second stages are trained without leaking the held-out match even indirectly: the fold model of
+  match *m* is trained on the other matches *j* with first-stage inputs from models fitted without
+  both *m* and *j*. The decoder weights and the hazard weight were re-swept on a grid fixed in
+  advance. Implemented in `modeling/evidence/hazard_gbdt.py`, `modeling/evidence/stack.py`,
+  `modeling/calibration/stack_gbdt.py`, `modeling/calibration/dead_stack.py` and
+  `modeling/scoring/stack_sweep.py`; results in `reports/stack.md`.
 
 ## 5. Validation protocol
 

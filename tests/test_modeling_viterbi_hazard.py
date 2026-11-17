@@ -397,7 +397,7 @@ def test_hazard_is_a_required_hmm_section():
 
 @pytest.mark.parametrize("hazard, message", [
     ({"kind": "calibrated"}, "hazard.calibrated_file is required"),
-    ({"kind": "gbdt", "calibrated_file": "x.yaml"}, "must be one of"),
+    ({"kind": "bogus", "calibrated_file": "x.yaml"}, "must be one of"),
     ({"beta": -0.1}, "must be >= 0"),
     ({"beta": True}, "expected a number"),
     ({"beta": float("nan")}, "finite"),
@@ -423,9 +423,12 @@ def test_every_committed_hmm_config_has_the_hazard_section():
             continue
         seen += 1
         hz = cfg["hazard"]
-        assert hz["kind"] in ("none", "calibrated")
-        if hz["kind"] == "calibrated":
+        assert hz["kind"] in ("none", "calibrated", "gbdt")
+        if hz["kind"] != "none":
             assert (REPO / hz["calibrated_file"]).is_file()
+        for name in ("stack", "dead_stack"):
+            if cfg.get(name) is not None and cfg[name]["kind"] != "none":
+                assert (REPO / cfg[name]["calibrated_file"]).is_file()
     assert seen >= 5
 
 

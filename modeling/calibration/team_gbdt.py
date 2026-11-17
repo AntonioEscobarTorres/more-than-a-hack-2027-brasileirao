@@ -79,13 +79,29 @@ SECTIONS = ("ball", "gap")
 
 def gbdt_feature_params(logistic_calib: Mapping, *, window_sizes: Sequence[int] = WINDOW_SIZES,
                         include_bridge: bool = True,
-                        exclude_features: Sequence[str] = EXCLUDE_FEATURES) -> dict:
-    """F1-05 feature parameters (touch thresholds, bridge taus) plus the window sizes."""
+                        exclude_features: Sequence[str] = EXCLUDE_FEATURES,
+                        ema_taus: Sequence[int] = (),
+                        touch_ema_taus: Sequence[int] = ()) -> dict:
+    """F1-05 feature parameters (touch thresholds, bridge taus) plus the window sizes.
+
+    ``ema_taus`` / ``touch_ema_taus`` (F2-09, D-029) add the control EMA features; they are written
+    only when non-empty, so the layout of the earlier files does not change.
+    """
     fp = copy.deepcopy(dict(logistic_calib["feature_params"]))
     fp["window_sizes"] = [int(w) for w in window_sizes]
     fp["include_bridge"] = bool(include_bridge)
     fp["exclude_features"] = [str(c) for c in exclude_features]
+    if ema_taus:
+        fp["ema_taus"] = [int(t) for t in ema_taus]
+    if touch_ema_taus:
+        fp["touch_ema_taus"] = [int(t) for t in touch_ema_taus]
     return fp
+
+
+def _fit_pair_job(task):
+    """Worker: the ``ball`` and ``gap`` models of one fold (or ``all``)."""
+    sections, perm, sign, model_params = task
+    return {s: fit_gbdt(X, y, perm, sign, model_params) for s, (X, y) in sections.items()}
 
 
 def match_samples(master: pd.DataFrame, gt: np.ndarray, params: Mapping, f_params: Mapping,
@@ -151,6 +167,9 @@ def calibrate_team_gbdt(
     fold_dir: str | Path = DEFAULT_FOLD_DIR,
     load_fn=None,
     log=print,
+    ema_taus: Sequence[int] = (),
+    touch_ema_taus: Sequence[int] = (),
+    jobs: int = 1,
 ) -> dict:
     """Train the fold and ``all`` model pairs, save them and return the calibration table.
 
@@ -172,7 +191,8 @@ def calibrate_team_gbdt(
     logistic = load_team_calibration(logistic_path)
     f_params = gbdt_feature_params(logistic, window_sizes=window_sizes,
                                    include_bridge=include_bridge,
-                                   exclude_features=exclude_features)
+                                   exclude_features=exclude_features, ema_taus=ema_taus,
+                                   touch_ema_taus=touch_ema_taus)
     layout = gbdt_feature_layout(f_params)
     features = layout["features"]
     perm, sign = swap_permutation(layout)
@@ -194,11 +214,23 @@ def calibrate_team_gbdt(
     fold_root = Path(fold_dir)
     if not fold_root.is_absolute():
         fold_root = paths.ext_dir() / fold_root
+    keys = list(matches) + ["__all__"]
+    tasks = [({s: stack(s, [m for m in matches if m != k]) for s in SECTIONS}, perm, sign,
+              dict(model_params)) for k in keys]
+    t_fit = time.time()
+    if int(jobs) > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(int(jobs)) as ex:
+            fitted = dict(zip(keys, ex.map(_fit_pair_job, tasks)))
+    else:
+        fitted = {k: _fit_pair_job(t) for k, t in zip(keys, tasks)}
+    del tasks
+    log("{} model pairs trained in {:.0f}s".format(len(keys), time.time() - t_fit))
+
     fold_metrics = {}
     for holdout in matches:
         t0 = time.time()
-        train = [m for m in matches if m != holdout]
-        models = {s: fit_gbdt(*stack(s, train), perm, sign, model_params) for s in SECTIONS}
+        models = fitted[holdout]
         save_bundle(fold_root / "{}.joblib".format(holdout), models, features)
         row = {}
         z_all, zl_all, y_all = [], [], []
@@ -218,10 +250,7 @@ def calibrate_team_gbdt(
         fold_metrics[holdout] = {k: float(v) for k, v in row.items()}
         log("fold {} trained in {:.0f}s".format(holdout, time.time() - t0))
 
-    t0 = time.time()
-    models = {s: fit_gbdt(*stack(s, matches), perm, sign, model_params) for s in SECTIONS}
-    all_path = save_bundle(resolve_repo_path(all_model_path), models, features)
-    log("all trained in {:.0f}s".format(time.time() - t0))
+    all_path = save_bundle(resolve_repo_path(all_model_path), fitted["__all__"], features)
 
     return {
         "variant": "gbdt",
@@ -376,13 +405,24 @@ def main(argv=None) -> int:
     parser.add_argument("--report", default="reports/calibration_team_gbdt.md")
     parser.add_argument("--lam-grid", nargs="*", type=float, default=list(DEFAULT_LAM_GRID))
     parser.add_argument("--no-bridge", action="store_true")
+    parser.add_argument("--ema-taus", nargs="*", type=int, default=[],
+                        help="control EMA time constants (F2-09); none = the F1-07 layout")
+    parser.add_argument("--touch-ema-taus", nargs="*", type=int, default=[])
+    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--no-eval", choices=GAP_MODELS, default=None,
+                        help="skip the lam_team evaluation and write the file with this gap model")
     args = parser.parse_args(argv)
 
     root = paths.repo_root()
     cfg = load_config(root / args.config)
     table = calibrate_team_gbdt(cfg, logistic_file=args.logistic, degrade=args.degrade,
                                 include_bridge=not args.no_bridge, all_model_path=args.model,
-                                fold_dir=args.fold_dir)
+                                fold_dir=args.fold_dir, ema_taus=args.ema_taus,
+                                touch_ema_taus=args.touch_ema_taus, jobs=args.jobs)
+    if args.no_eval is not None:
+        out = write_gbdt_yaml(table, root / args.out, gap_model=args.no_eval)
+        print("wrote {} and {}".format(out, args.model))
+        return 0
 
     out = root / args.out
     cfgs, files = {}, {}

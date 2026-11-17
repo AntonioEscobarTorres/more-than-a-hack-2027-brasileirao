@@ -64,7 +64,8 @@ Modelo:
 | [D-025](#d-025--transições-guiadas-pelo-hazard-io-hmm-f2-07) | 2026-11-16 | Transições guiadas pelo hazard (IO-HMM, F2-07) | Vigente |
 | [D-026](#d-026--dead_logit-gbdt-features-cenários-coerentes-e-resultado-f3-08) | 2026-11-16 | `dead_logit` GBDT: features, cenários coerentes e resultado (F3-08) | Vigente (adoção pela F2-06) |
 | [D-027](#d-027--durações-semi-markov-no-decodificador-e-o-config-v2_gbdt_nb-f2-08) | 2026-11-16 | Durações semi-Markov no decodificador e o config `v2_gbdt_nb` (F2-08) | Vigente (adoção pela F2-06) |
-| [D-028](#d-028--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-17 | Seleção da F2-06 e o `configs/final.yaml` | Vigente |
+| [D-028](#d-028--seleção-da-f2-06-e-o-configsfinalyaml) | 2026-11-17 | Seleção da F2-06 e o `configs/final.yaml` | Substituída pela D-029 (o config ficou em `configs/final_d028.yaml`, plano B) |
+| [D-029](#d-029--segundo-estágio-sobre-as-evidências-e-hazard-gbdt-f2-09) | 2026-11-17 | Segundo estágio sobre as evidências e hazard GBDT (F2-09); novo `configs/final.yaml` | Vigente (checagens locais pendentes) |
 
 ## Decisões
 
@@ -1162,7 +1163,8 @@ Modelo:
 
 - **Data:** 2026-11-17
 - **Autor:** Hugo (F2-06, #85; PR #153), com a revisão da F5 (Ahmed, PR #155)
-- **Status:** Vigente
+- **Status:** Substituída pela D-029. O config desta decisão está em `configs/final_d028.yaml` (mesmo
+  conteúdo, só o `name` mudou), com todas as checagens locais `PASS` (CSV `f9e363ea…`): é o plano B.
 - **Decisão:**
   1. **Escada da Seção 6** (`python -m modeling.scoring.selection --jobs 7`) com as atualizações de 11/11, 13/11 e
      16/11: ganho pareado > 1 EP no `default` e nenhum modo de estresse (`harder`, `easier`, `hidelo`, `hidehi`)
@@ -1232,6 +1234,81 @@ Modelo:
     `tools/dead_feature_shift.py --calibration configs/calib/dead_gbdt.yaml --degrade fused` `PASS` em (a)–(c)
     e na informativa (d). `tools/dead_stability.py --config configs/final.yaml` (ajustes GBDT `default`/`hidelo`/
     `hidehi`) `PASS` nos três pares. O plano B (item 5) não foi necessário.
+
+### D-029 — Segundo estágio sobre as evidências e hazard GBDT (F2-09)
+
+- **Data:** 2026-11-17
+- **Autor:** F5 (Ahmed)
+- **Status:** Vigente. Faltam as checagens locais no BAR-ATH do config novo (abaixo); se uma
+  eliminatória der `FAIL`, envia-se `configs/final_d028.yaml`.
+- **Decisão:** o `configs/final.yaml` passa a ter três peças novas, todas treinadas só no IDSSE degradado
+  (`default`), com o protocolo de sempre (deixa-um-jogo-de-fora, ganho pareado > 1 EP e estresse):
+  1. **Hazard GBDT** (`hazard.kind: gbdt`, `configs/calib/hazard_gbdt.yaml`, `models/hazard_gbdt/`): o
+     mesmo alvo da F1-08 (troca de time a menos de 12 frames), 46 features simétricas na troca de times:
+     as do `hazard_nodir` (sem `ball_dir_change`, D-025) nas janelas 12/25/50, e produto, diferença e
+     módulo das médias exponenciais para trás e para frente do sinal de controle da ponte de passe e do
+     toque, a massa de evidência em volta do frame e médias passadas/futuras de `d_diff`. AUC fora da
+     dobra no `default` 0,813 (logística da F1-08: 0,712).
+  2. **Segundo estágio do `team_logit`** (seção nova `stack`, `configs/calib/stack.yaml`,
+     `models/team_stack/`): GBDT sobre o `team_logit` do GBDT da F1-07 (médias passadas e futuras de 6
+     a 200 frames) e o hazard (máximos passados e futuros em 12 e 50 frames), antissimétrico por
+     construção. O HMM trata os frames como independentes dado o estado; o segundo estágio aprende no
+     IDSSE onde, entre um passado que diz um time e um futuro que diz o outro, a troca acontece.
+  3. **Segundo estágio do `dead_logit`** (seção nova `dead_stack`, `configs/calib/dead_stack.yaml`,
+     `models/dead_stack/`): GBDT sobre o `d_fit` do GBDT da F3-08 (antes do prior das tags, somado
+     depois, porque o IDSSE não tem tags) e o hazard, em janelas. AUC fora da dobra 0,986 → 0,992,
+     melhor nas 7 dobras.
+  4. **Decodificador re-varrido** numa grade fixada antes da rodada (`modeling/scoring/stack_sweep.py`:
+     platô a 1 EP no `default`, depois o melhor pior caso em `default`/`hidelo`/`hidehi`): `beta` 1,5,
+     `lam_team` 0,4, `lam_dead` 0,4. O resto do `final.yaml` da D-028 não muda (time e bola morta de
+     primeiro estágio, bola fundida, durações de 1 estágio).
+  5. **Aninhamento:** o modelo da dobra do jogo `m` é treinado nos outros jogos `j` com as entradas de
+     primeiro estágio de `j` vindas de modelos treinados sem `m` e sem `j` (21 modelos de par por
+     primeiro estágio; só o `gap` logístico do time fica deixa-um-de-fora). Assim nenhuma dobra vê o
+     próprio jogo, nem indiretamente. Uma checagem de rascunho com as mesmas features deu 0,5615
+     (`fused`) aninhado contra 0,5580 sem aninhar: nenhum sinal de vazamento.
+  6. **Seções opcionais:** sem `stack`/`dead_stack` (ou com `kind: none`) o pipeline é exatamente o de
+     antes e o hash dos configs antigos não muda.
+- **Opções consideradas:**
+  - parar no `final.yaml` da D-028: descartada, o ganho abaixo é de 4 a 9 EP em todos os modos;
+  - só o hazard GBDT, sem segundo estágio: cerca de +0,005 no `fused` (rascunho), pouco;
+  - segundo estágio sem o hazard como entrada: piorou (rascunho); as duas peças só funcionam juntas;
+  - médias exponenciais de controle e toque também como features do GBDT de primeiro estágio
+    (`team_gbdt_ema`): melhoram o primeiro estágio sozinho (AUC fora da dobra 0,9688 → 0,9711), mas
+    com os dois segundos estágios não somam (`default` 0,5653 contra 0,5672 depois da mesma
+    re-varredura, `reports/stack_sweep_ema.md`): descartada pela regra de parcimônia. O código fica
+    (opcional, `ema_taus`), os modelos não foram commitados;
+  - hazard com features do `team_logit` do GBDT: +0,004 no rascunho, mas exigiria um terceiro nível de
+    aninhamento; descartada pelo prazo;
+  - `|team_logit|` como entrada do segundo estágio da bola morta: sem ganho (rascunho).
+- **Evidência (spellF1 no IDSSE degradado, 7 partidas, [`reports/stack.md`](../reports/stack.md)):**
+  - oráculos no `fused` com o `final.yaml` da D-028: time verdadeiro 0,906, bola morta verdadeira
+    0,593, os dois 0,971. A perda está no time: das 3.760 transições verdadeiras, 2.351 são de time
+    para time em jogo corrido, e só 29% delas eram achadas a menos de 12 frames;
+  - escada (decodificador re-varrido em cada passo):
+
+  | Passo | `default` | `hidelo` | `hidehi` | `fused` | `harder` | `easier` |
+  | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | `final.yaml` da D-028 | 0,5365 | 0,5166 | 0,5658 | 0,5406 | 0,5129 | 0,5680 |
+  | + hazard GBDT + segundo estágio do time | 0,5568 | 0,5375 | 0,5912 | 0,5612 | 0,5339 | 0,5823 |
+  | + segundo estágio da bola morta = **`final.yaml`** | **0,5672** | **0,5461** | **0,5984** | **0,5724** | **0,5405** | **0,5963** |
+
+  - novo contra D-028, pareado nas 7 partidas: `fused` +0,0318 ± 0,0072, `default` +0,0307 ± 0,0068,
+    `hidelo` +0,0294 ± 0,0062, `hidehi` +0,0325 ± 0,0064, `harder` +0,0276 ± 0,0079, `easier`
+    +0,0283 ± 0,0030; melhor em 7 de 7 partidas em todos os modos. macroF1 +0,010 a +0,015;
+  - config `final` hash `a84e8120…`; modelos de 0,5 MB cada; inferência em CPU, uma thread, e o
+    mesmo resultado bit a bit em dois processos (teste de fumaça num jogo do IDSSE);
+  - 1.303 testes passam (`tests/test_modeling_stack.py` e `tests/test_tools_stack_feature_shift.py`
+    novos).
+- **Checagens locais no BAR-ATH (pendentes; só `PASS`/`FAIL` e estatísticas dos rótulos previstos):**
+  `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing` (SHA-256 do CSV),
+  `tools/check_public_window.py --pred outputs/final.csv --master <master fundido>`,
+  `tools/deadball_diagnostics.py --pred outputs/final.csv --master <master fundido> --config configs/final.yaml`,
+  `tools/stack_feature_shift.py --master <master fundido>` (novo: faixa das features do hazard GBDT e
+  dos dois segundos estágios, concordância de sinal entre o `team_logit` final e o de primeiro estágio,
+  taxa média do hazard) e `tools/dead_stability.py --config configs/final.yaml`. As entradas de
+  primeiro estágio não mudaram (`gbdt_feature_shift` e `dead_feature_shift` já `PASS`, D-028). Se uma
+  eliminatória der `FAIL`, envia-se `configs/final_d028.yaml`.
 
 ## Registro de envios
 

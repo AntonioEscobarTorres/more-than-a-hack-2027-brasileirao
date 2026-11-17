@@ -26,7 +26,8 @@ DEAD_KINDS: Dict[str, VariantFn] = {}
 HAZARD_KINDS: Dict[str, VariantFn] = {}
 
 # Modules that register variants; imported by load_kinds() when they exist.
-KIND_MODULES = ("modeling.evidence.team", "modeling.deadball.dead", "modeling.evidence.hazard")
+KIND_MODULES = ("modeling.evidence.team", "modeling.deadball.dead", "modeling.evidence.hazard",
+                "modeling.evidence.hazard_gbdt")
 
 
 def _register(registry: Dict[str, VariantFn], label: str, name: str):

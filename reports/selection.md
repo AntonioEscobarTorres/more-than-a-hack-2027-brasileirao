@@ -2,6 +2,8 @@
 
 Primary metric: spellF1 on degraded IDSSE (`default`). Acceptance: paired gain > 1 SE on `default`, and no stress mode (`harder`/`easier`/`hidelo`/`hidehi`) worsens spellF1 by more than 1 SE. `fused` is gain-only on `default` (D-024). BAR-ATH filters are local PASS/FAIL only (never used to rank).
 
+> **Superseded by D-029 (2026-11-17):** `configs/final.yaml` now adds the GBDT hazard and the two second stages ([`stack.md`](stack.md)); the config below is kept as `configs/final_d028.yaml` (plan B).
+
 **Ladder winner:** `v2_gbdt_deadgbdt_nb_hzn2_fused` (spellF1 0.5399 on `fused`). **`configs/final.yaml`** is this winner **without the duration stages** (`duration_stages` D 2 → 1, same λ), after the control below (D-028, item 3).
 
 ## Step: baseline — baseline
