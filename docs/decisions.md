@@ -1323,15 +1323,27 @@ Preenchido pela F5 (F5-09; envio único, ver D-013). O CSV enviado tem de ser o 
 | Data | Envio | Config (nome e hash) | Commit ou tag | SHA-256 do CSV | `validate_submission` | Autor |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 2026-11-16 | Planejado (F5-09), não enviado; substituído pela linha de 17/11 (D-029) | `v2` (`6a992f351783382f2532c34d5299307ce61ea20326ecf1e002aee5b95d2b241b`) | `ffe5eae` (merge do #142) | `50b12bb537f1c62b6dd033da1efc6e03ab243cf2f77dfd44709c90201f0ae66a` | `PASS` (`tools/check_public_window.py`, check (i)) | Ahmed |
-| 2026-11-17 | Envio final (F5-09) | `final` (`a84e812099d2df782dd2b66576ff47cd4892c01ab7d227e0c93f0d394066f1f8`) | tag `submission-v1` (`e68d883`, merge do #158; método igual ao `7d6cd02`, merge do #157) | `25064d90ff2808ffb325f43d51253a5dd58be765d70c2ddee6d608f5fb9f0503` | `PASS` (`tools/check_public_window.py`, check (i)) | Ahmed |
+| 2026-11-17 | **Enviado** (F5-09), ≈19:10 (-03) = 23:10 CET, antes do prazo das 23:59 CET | `final` (`a84e812099d2df782dd2b66576ff47cd4892c01ab7d227e0c93f0d394066f1f8`) | tag `submission-v1.1` (`d86c045`, merge do #164; mesmo método da `submission-v1`, `e68d883`, mais os pins da F5-06) | `25064d90ff2808ffb325f43d51253a5dd58be765d70c2ddee6d608f5fb9f0503` | `OK`/`Valid` (`evaluation/validate_submission.py` no arquivo enviado) e `PASS` (`tools/check_public_window.py`, check (i)) | Ahmed |
 
 Checagens locais do CSV de 17/11 (`final`, D-029): `tools/check_public_window.py` `PASS` nas 7,
 `tools/deadball_diagnostics.py --config configs/final.yaml` `PASS`, `tools/stack_feature_shift.py` `PASS` e
 `tools/dead_stability.py --config configs/final.yaml` `PASS`. Rótulos previstos: 158.857 frames avaliados,
 H 0,3190, A 0,2207, D 0,4603; 177 posses no 1º tempo e 193 no 2º. Comando:
 `python -m modeling.make_submission --config configs/final.yaml --skip-preprocessing`. O arquivo
-o arquivo vai com o nome `brasileirao.csv` (D-013). Regerado da tag `submission-v1` com
+vai com o nome `brasileirao.csv` (D-013). Regerado da tag `submission-v1` com
 `--out outputs/brasileirao.csv`: mesmo SHA-256 (G1).
+
+Envio de 17/11 (F5-09, issue #92): o CSV enviado foi regerado no `main` em `d86c045` (= tag
+`submission-v1.1`), com pré-processamento completo, pelo comando único do README:
+`python -m modeling.make_submission --config configs/final.yaml --out outputs/brasileirao.csv`.
+`sha256sum` do arquivo enviado: `25064d90ff2808ffb325f43d51253a5dd58be765d70c2ddee6d608f5fb9f0503`, o mesmo
+da F5-06 e da linha acima; `evaluation/validate_submission.py` deu `OK`/`Valid`. Formulário: time
+`brasileirao`, os 5 integrantes, `brasileirao.csv`, a URL deste repositório (público desde 17/11, conferido
+sem login) e `brasileirao.pdf` (o `docs/technical_report/brasileirao.pdf` de `d86c045`, SHA-256
+`8429fe03d367656a…`). Comprovante: o e-mail de confirmação do Google Forms com a cópia da resposta, guardado
+pelo remetente (Ahmed). Antes de abrir o repositório, o histórico foi varrido por nome de arquivo (todos os
+branches): o único arquivo já adicionado em `data/` é o `data/README.md`, e não há `.parquet`, `.npy`,
+`.npz`, `.pkl`, `.mp4` nem `.xml` fora de `tests/fixtures/`.
 
 Checagens locais do CSV de 16/11 (`v2`, não enviado): `tools/touch_feature_shift.py` `PASS` (a informativa (c) deu `FAIL`, sem efeito
 no resultado, D-022), `tools/dead_feature_shift.py --config configs/v2.yaml` `PASS` em todas e as 7 de
