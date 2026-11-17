@@ -1,4 +1,4 @@
-"""Shared rolling-window features for evidence models (F1-07, also meant for F3-08).
+"""Shared rolling-window features for evidence models (F1-07, also used by F3-08).
 
 Computed per maximal run of equal, non-zero ``half`` values, so no window ever crosses a half
 boundary or a ``half == 0`` stretch. For a window size ``W`` (frames):
@@ -8,8 +8,8 @@ boundary or a ``half == 0`` stretch. For a window size ``W`` (frames):
 - centred ``[t - W, t + W]`` (``2 W + 1`` frames).
 
 At the start and end of a half the window keeps only the frames that exist. Statistics skip NaN
-(``nanmean`` / ``nanmin``) and are NaN where the window has no finite value. Every column is NaN
-on ``half == 0``.
+(``nanmean`` / ``nanmin`` / ``nanmax``) and are NaN where the window has no finite value. Every
+column is NaN on ``half == 0``.
 
 Columns, for each ``W`` in ``window_sizes`` (default :data:`WINDOW_SIZES`):
 
@@ -41,6 +41,8 @@ from .collective import _half_runs
 from .control import require_columns
 
 WINDOW_SIZES = (12, 25, 50)
+STAT_NAMES = tuple("{}_{}".format(w, s) for w in ("past", "fut", "cent")
+                   for s in ("mean", "min", "max"))
 REQUIRED_COLUMNS = ("half", "d_near_home", "d_near_away", "d_diff", "pressure_home",
                     "pressure_away", "ball_observed")
 
@@ -55,12 +57,17 @@ def _check_window(w) -> int:
 def rolling_window_stats(x: np.ndarray, half: np.ndarray, w: int,
                          stats: Sequence[str] = ("past_mean", "past_min", "fut_mean", "fut_min",
                                                  "cent_mean", "cent_min")) -> dict[str, np.ndarray]:
-    """NaN-skipping mean/min over the past, future and centred windows, inside each half block.
+    """NaN-skipping mean/min/max over the past, future and centred windows, inside each half block.
+
+    ``stats`` names are ``<past|fut|cent>_<mean|min|max>``.
 
     Returns float64 arrays keyed by the names in ``stats``; NaN on ``half == 0`` and where the
     window has no finite value.
     """
     w = _check_window(w)
+    unknown = sorted(set(stats) - set(STAT_NAMES))
+    if unknown:
+        raise ValueError("unknown window statistics {}".format(unknown))
     x = np.asarray(x, dtype=np.float64)
     half = np.asarray(half)
     out = {name: np.full(len(x), np.nan, dtype=np.float64) for name in stats}
@@ -77,6 +84,9 @@ def rolling_window_stats(x: np.ndarray, half: np.ndarray, w: int,
             "fut_min": lambda: fut.min().to_numpy()[::-1],
             "cent_mean": lambda: cent.mean().to_numpy(),
             "cent_min": lambda: cent.min().to_numpy(),
+            "past_max": lambda: past.max().to_numpy(),
+            "fut_max": lambda: fut.max().to_numpy()[::-1],
+            "cent_max": lambda: cent.max().to_numpy(),
         }
         for name in stats:
             out[name][start:stop] = compute[name]()
@@ -137,5 +147,5 @@ def build_window_features(master: pd.DataFrame, params: Mapping) -> pd.DataFrame
     return out
 
 
-__all__ = ["REQUIRED_COLUMNS", "WINDOW_SIZES", "build_window_features", "rolling_window_stats",
+__all__ = ["REQUIRED_COLUMNS", "STAT_NAMES", "WINDOW_SIZES", "build_window_features", "rolling_window_stats",
            "window_feature_roles", "window_sizes_from"]

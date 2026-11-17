@@ -247,6 +247,23 @@ the rule and where it is implemented.*
   as "every player stands still". Whether the calibrated variant replaces the rules
   is decided by the protocol of Section 5. Implemented in `modeling/calibration/dead.py`; results in
   `reports/calibration_dead.md`.
+
+  A gradient-boosted tree variant fits the same target on the same frames, with the per-frame inputs
+  (ball out of the pitch, gap kind and length, still players, mean player speed, fast ball inside
+  the pitch, distances to the lines) plus windows of 1, 2 and 3 s around each frame: the player
+  speed and the share of still players before and after it, and whether the ball was seen close to,
+  or beyond, a line. The trees can combine these, for example a gap that follows a ball seen leaving
+  the pitch and players slowing down after it. Missing values are routed by the trees themselves and
+  never imputed, and the windowed share of frames with the ball seen is left out, because it is the
+  part of the evidence that depends most on how the degraded ball is hidden. The output is turned
+  into a likelihood ratio in the same way and the tag priors are added unchanged. With one match
+  left out at a time, its log-loss is about 40% lower than that of the logistic regression in every
+  degradation mode, both robustness checks hold on every model, and, frame by frame, the four
+  situations of the checks follow the sign of what the IDSSE data show. The synthetic slow-possession
+  check is outside the range of the data (at that player speed the share of still players never
+  reaches the value of the check on IDSSE), so it is reported, not used. Implemented in `modeling/deadball/dead_gbdt.py` and
+  `modeling/calibration/dead_gbdt.py`; results in `reports/calibration_dead_gbdt.md`. Whether it is
+  adopted is decided by the protocol of Section 5.
 - **Before kick-off.** The graded block of the second half opens before its kick-off: those 2,934
   frames are forced to `D` by a mask that the decoder cannot override. The first half starts at the
   kick-off itself, so it has no such frames. The mask is the `pre_kickoff` column of the master

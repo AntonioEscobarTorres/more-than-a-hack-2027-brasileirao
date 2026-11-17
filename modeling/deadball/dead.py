@@ -35,6 +35,10 @@ Variant ``calibrated`` (F3-04): ``d = clip(d_fit + dead_tag_prior, +-DEAD_LOGIT_
 (:mod:`modeling.calibration.dead`, file ``params["calibrated_file"]``). The tag weights stay at the
 prior of Appendix A.3 because the external matches have no tags. ``holdout`` selects the model
 fitted without that match.
+
+Variant ``gbdt`` (F3-08): the same sum, ``d = clip(d_fit + dead_tag_prior, +-DEAD_LOGIT_MAX)``, with
+``d_fit`` from a gradient-boosted tree model fitted on the same data
+(:mod:`modeling.deadball.dead_gbdt`, :mod:`modeling.calibration.dead_gbdt`).
 """
 from __future__ import annotations
 
@@ -171,6 +175,27 @@ def dead_logit_calibrated(master: pd.DataFrame, params: dict, *, holdout=None) -
     return d.astype(np.float32)
 
 
+@register_dead("gbdt")
+def dead_logit_gbdt(master: pd.DataFrame, params: dict, *, holdout=None) -> np.ndarray:
+    """C2 dead_logit, GBDT (F3-08): float32[n], |d| <= DEAD_LOGIT_MAX, 0 where half == 0.
+
+    ``params`` is ``cfg["dead"]["params"]`` plus ``calibrated_file`` (``configs/calib/dead_gbdt.yaml``,
+    absolute, injected by ``modeling.pipeline.variant_params``). ``holdout`` selects the fold model
+    trained without that match; without it the model ``all`` is used. The tags stay at the prior of
+    Appendix A.3, as in the ``calibrated`` kind. The sum is explicit, in float64.
+    """
+    from .dead_gbdt import gbdt_d_fit
+
+    missing = [c for c in REQUIRED_COLUMNS if c not in master.columns]
+    if missing:
+        raise ValueError("master is missing columns {}".format(missing))
+    fitted = gbdt_d_fit(master, params, holdout)
+    d = fitted + dead_tag_prior(master, params)
+    d = np.clip(d, -DEAD_LOGIT_MAX, DEAD_LOGIT_MAX)
+    d = np.where(master["half"].to_numpy() != 0, d, 0.0) + 0.0
+    return d.astype(np.float32)
+
+
 __all__ = ["KINEMATIC_TERMS", "REQUIRED_COLUMNS", "RULES_V1_TERMS", "SPEED_HIGH_RAMP",
-           "SPEED_LOW_RAMP", "STILL_RAMP", "TAG_TERMS", "dead_logit_calibrated", "dead_logit_rules_v1", "dead_logit_terms",
-           "dead_tag_prior"]
+           "SPEED_LOW_RAMP", "STILL_RAMP", "TAG_TERMS", "dead_logit_calibrated", "dead_logit_gbdt",
+           "dead_logit_rules_v1", "dead_logit_terms", "dead_tag_prior"]

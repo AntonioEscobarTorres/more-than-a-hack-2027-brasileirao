@@ -60,6 +60,7 @@ Modelo:
 | [D-021](#d-021--team_logit-calibrado-com-a-variante-touch-e-o-config-v2-revisão-da-f1-05f1-06) | 2026-11-16 | `team_logit` calibrado com a variante `touch` e o config `v2` (F1-05/F1-06) | Vigente (toque substituído pela D-022) |
 | [D-022](#d-022--toque-só-por-persistência-e-o-config-v2_base-checagem-do-toque-no-bar-ath) | 2026-11-16 | Toque só por persistência e o config `v2_base` (checagem do toque no BAR-ATH) | Vigente |
 | [D-023](#d-023--team_logit-gbdt-e-o-config-v2_gbdt-revisão-da-f1-07) | 2026-11-16 | `team_logit` GBDT e o config `v2_gbdt` (revisão da F1-07) | Vigente |
+| [D-024](#d-024--dead_logit-gbdt-features-cenários-coerentes-e-resultado-f3-08) | 2026-11-16 | `dead_logit` GBDT: features, cenários coerentes e resultado (F3-08) | Vigente (adoção pela F2-06) |
 
 ## Decisões
 
@@ -900,6 +901,74 @@ Modelo:
 - **Envio:** o envio único (D-013) já foi feito com o `v2`. O `v2_gbdt` só substitui o `v2` se a equipe decidir
   reenviar e o formulário permitir; nesse caso, antes do envio, rodar `tools/gbdt_feature_shift.py` e
   `tools/check_public_window.py` e registrar o novo CSV no registro de envios.
+
+### D-024 — `dead_logit` GBDT: features, cenários coerentes e resultado (F3-08)
+
+- **Data:** 2026-11-16
+- **Autor:** Bernardo (F3, F3-08, #83)
+- **Status:** Vigente. Nada é adotado aqui: a adoção é decidida pela F2-06.
+- **Contexto:** a F3-08 testa o modelo não linear da F1-07 (mesmos hiperparâmetros) no lugar da regressão
+  logística da F3-04 (D-019), nos mesmos dados (mestres IDSSE degradados, frames dos tempos com rótulo ≠ X,
+  1 a cada 5, D × vivo) e com as dobras deixando uma partida de fora.
+- **Decisão:**
+  1. **Features sem imputação nem indicadores** (o modelo trata NaN): `out_of_pitch`, `db_gap_kind`,
+     `db_still_frac`, `db_mean_speed`, `db_fast_in_pitch`, `gap_length`, `d_touchline`, `d_goalline`, e as
+     janelas de `modeling/evidence/windows.py` por bloco de `half`, com W ∈ {25, 50, 75}: médias passada e
+     futura de `db_still_frac` e `db_mean_speed` e a diferença futuro − passado; `nanmin` centrado das
+     distâncias às linhas; máximo centrado de `out_of_pitch` (estatísticas `*_max` acrescentadas ao módulo
+     compartilhado, sem mudar o que a F1-07 usa). Fora, sempre: `db_ball_rest`, `ball_speed` e a fração de
+     `ball_observed` em janela.
+  2. **`d_fit = decision_function(x) − logit(π_D)`**, com π_D da linha de treino do próprio modelo (dobra ou
+     `all`), guardado junto do modelo e no YAML; a inferência recusa um modelo cujo π_D não bate com o YAML.
+     `d = clip(d_fit + dead_tag_prior, ±12)`, tags fixas no prior, como na F3-04 (`@register_dead("gbdt")`).
+  3. **Persistência como a F1-07:** `models/dead_gbdt/all.joblib` (0,49 MB, commitado); dobras em
+     `ext_dir()/models/dead_gbdt/` (não commitadas); versão do scikit-learn (1.5.2) no YAML e recusa de outra.
+     Treino e inferência em uma thread; uma segunda rodada regenera YAMLs, `all.joblib` e as 14 dobras
+     idênticos byte a byte.
+  4. **Candidata `pooled`** (`configs/calib/dead_gbdt_pooled.yaml`, `models/dead_gbdt_pooled/all.joblib`):
+     `default`, `hidelo` e `hidehi` juntos, 1 a cada 15 de cada modo, partida de fora nos três.
+  5. **Cenários R1–R3 com janelas coerentes.** Valores por frame da F3-04 (lacuna de 50 frames,
+     `still` 0,2 e velocidade 2,5 m/s; R3 com 0,45 e 1,8), jogadores no mesmo ritmo antes e depois:
+     - R1: lacuna longa, bola vista em volta no meio-campo ⇒ `d_fit < 0`;
+     - R2: lacuna de saída, **bola vista saindo pela lateral** (mínimo centrado de `d_touchline` = −1 m,
+       máximo de `out_of_pitch` = 1) ⇒ `d_fit > 0`;
+     - R2b (só relatado): saída com a bola vista 1 m dentro da lateral e nunca fora;
+     - R3 (só relatado): posse cadenciada.
+
+     **Por que o R2 tem a bola vista fora (regra 11, registrado aqui):** a primeira versão do R2 tinha a bola
+     vista 1 m dentro da linha e deu `FAIL` (−0,99 no `all`). Nos frames reais do IDSSE parecidos com o R2
+     (saída, lacuna ≤ 100, jogadores a 2,5 ± 0,4 m/s antes e depois), a mediana das janelas tem a bola vista
+     **fora** (`d_touchline` mínimo ≈ −1 m, `out_of_pitch` máximo 1): é a saída típica, e lá o dado dá
+     P(D) = 1,00 e o GBDT +3,1. O caso "bola vista dentro, nunca fora" é raro (48 frames, 4 lacunas) e o dado
+     aponta para jogo vivo (d = −0,49 [−3,71; +1,03]); o GBDT segue o sinal (−1,8). Por isso o R2 virou a
+     saída típica e o caso raro ficou como R2b, relatado. Os dois e mais R1 e R3 aparecem no relatório contra
+     as células dos dados, com o `d_fit` fora da dobra nos próprios frames.
+  6. **R3 fora do suporte dos dados:** com jogadores a 1,8 m/s, a fração de parados no IDSSE nunca passa de
+     0,26 (o cenário usa 0,45), então o +2,5 do GBDT ali é extrapolação. Nos frames reais dessa situação o dado
+     dá −1,13 e o GBDT −2,14 (mesmo sinal).
+- **Evidência** (`reports/calibration_dead_gbdt.md`; tudo fora da dobra, IDSSE degradado, 7 partidas):
+
+  | | `default` | `hidelo` | `hidehi` |
+  | :--- | ---: | ---: | ---: |
+  | log-loss GBDT / F3-04 (`dead_gbdt` × `dead.yaml`) | 0,148 / 0,248 | 0,165 / 0,273 | 0,123 / 0,210 |
+  | AUC GBDT / F3-04 | 0,987 / 0,963 | 0,984 / 0,955 | 0,991 / 0,974 |
+  | spellF1 `v2_gbdt`, `lam_dead` 0,2: `dead` F3-04 → GBDT | 0,490 → **0,520** | 0,466 → **0,501** | 0,524 → **0,549** |
+  | spellF1 `v2`, `lam_dead` 0,2: `dead` F3-04 → GBDT | 0,402 → 0,431 | 0,385 → 0,417 | 0,426 → 0,448 |
+
+  - GBDT com log-loss menor nas 7 partidas, nos três modos; R1 e R2 `PASS` nos 8 modelos dos dois arquivos.
+  - spellF1 pareado por partida: o GBDT ganha em 7 de 7 nas 48 combinações (2 configs base × 2 arquivos ×
+    `lam_dead` 0,1/0,2/0,3/0,5 × 3 modos). O `pooled` fica empatado com o `default` (diferenças de
+    spellF1 de no máximo 0,0033).
+  - `hidelo` piora a log-loss do GBDT em +11,5% em relação ao `default` (a F3-04 piora +10,3%): a dependência
+    da visibilidade da bola não cresceu.
+- **Limites e pendências para a F2-06:**
+  - As janelas `nanmin` das linhas são NaN quando a bola não foi vista em ±W frames (62% dos frames D contra
+    16% dos vivos em W = 25): é um "bola sumiu na janela" que a especificação não proíbe, mas que depende da
+    degradação. O teste em `hidelo`/`hidehi` acima é a proteção disponível.
+  - Nenhum `lam_dead` foi escolhido; 0,2 e 0,3 ficam no mesmo patamar. Nenhum config novo foi criado.
+  - Antes de adotar: rodar localmente `python tools/dead_feature_shift.py --config configs/v2.yaml
+    --calibration configs/calib/dead_gbdt.yaml --degrade default hidelo hidehi` (agora aceita o arquivo GBDT
+    na checagem (d)) e `tools/check_public_window.py`.
 
 ## Registro de envios
 
